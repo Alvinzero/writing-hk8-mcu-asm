@@ -307,6 +307,21 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         run_state = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         self.assertEqual(0, run_state["flash_attempts"])
 
+    def test_compile_only_profile_does_not_require_hardware_fields(self) -> None:
+        profile = self.profile()
+        profile.pop("expected_device_id")
+        profile.pop("max_flash_attempts")
+        profile["approved_tool_versions"] = {"compiler": ["sim-1.0"]}
+        self._write_json(self.profile_path, profile)
+        self._write_json(self.config_path, self.compile_only_config())
+
+        run_dir = self.new_run("minimal-compile-only-profile")
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        self.assertEqual("COMPILE_PASSED", self.payload(loop)["code"])
+        run_state = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual(0, run_state["max_flash_attempts"])
+
     def test_compile_failure_blocks_release_without_source_leakage(self) -> None:
         candidate = self.source_path.read_text(encoding="utf-8")
         self._write_json(self.config_path, self.config(failures={"compiler": "fail"}))

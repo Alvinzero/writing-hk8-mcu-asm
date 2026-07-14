@@ -6,19 +6,11 @@
   ],
   "status": "requires-local-toolchain-config",
   "validated_model": "HK64S825",
-  "expected_device_id": "REPLACE_WITH_PROGRAMMER_DEVICE_ID",
   "approved_tool_versions": {
     "compiler": [
       "REPLACE_WITH_APPROVED_COMPILER_VERSION"
-    ],
-    "programmer": [
-      "REPLACE_WITH_APPROVED_PROGRAMMER_VERSION"
-    ],
-    "verifier": [
-      "REPLACE_WITH_APPROVED_VERIFIER_VERSION"
     ]
   },
-  "max_flash_attempts": 3,
   "allowed_warnings": [],
   "spec_root": "../spec",
   "static_check": {

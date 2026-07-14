@@ -23,40 +23,6 @@ ROLES = (*MANDATORY_ROLES, *OPTIONAL_HARDWARE_ROLES)
 RUN_SCHEMA_VERSION = 1
 MAX_FLASH_ATTEMPTS = 3
 
-MACHINE_OBSERVABLE_TOKENS = (
-    "automated",
-    "counter",
-    "crc",
-    "current",
-    "fixture",
-    "frequency",
-    "gpio",
-    "i2c",
-    "logic",
-    "measurement",
-    "oscilloscope",
-    "pin",
-    "probe",
-    "readback",
-    "scope",
-    "serial",
-    "simulated",
-    "test-jig",
-    "uart",
-    "voltage",
-    "waveform",
-)
-HUMAN_OBSERVABLE_TOKENS = (
-    "human",
-    "looks",
-    "manual",
-    "naked eye",
-    "visual inspection",
-    "\u4eba\u5de5",
-    "\u76ee\u89c6",
-    "\u8089\u773c",
-)
-
 
 class GateError(Exception):
     def __init__(self, code: str, message: str, *, details: Any = None) -> None:
@@ -141,13 +107,6 @@ def contains_unresolved(value: Any) -> bool:
     return False
 
 
-def is_machine_observable(value: str) -> bool:
-    lowered = value.lower()
-    if any(token in lowered for token in HUMAN_OBSERVABLE_TOKENS):
-        return False
-    return any(token in lowered for token in MACHINE_OBSERVABLE_TOKENS)
-
-
 def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> None:
     require(profile.get("schema_version") == 1, "INVALID_PROFILE", "Unsupported profile schema")
     chip = profile.get("chip")
@@ -164,10 +123,11 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
             f"Profile for {chip} is not ready",
             details={"status": profile.get("status", "missing")},
         )
+    expected_device_id = profile.get("expected_device_id")
     require(
-        isinstance(profile.get("expected_device_id"), str),
+        expected_device_id is None or isinstance(expected_device_id, str),
         "INVALID_PROFILE",
-        "Profile expected_device_id is required",
+        "Profile expected_device_id must be a string when provided",
     )
     versions = profile.get("approved_tool_versions")
     require(isinstance(versions, dict), "INVALID_PROFILE", "Approved tool versions are required")
@@ -192,13 +152,13 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
             "INVALID_PROFILE",
             f"Approved versions for optional {role} must be a non-empty string array when provided",
         )
-    attempts = profile.get("max_flash_attempts")
+    attempts = profile.get("max_flash_attempts", 0)
     require(
         isinstance(attempts, int)
         and not isinstance(attempts, bool)
-        and 1 <= attempts <= MAX_FLASH_ATTEMPTS,
+        and 0 <= attempts <= MAX_FLASH_ATTEMPTS,
         "INVALID_PROFILE",
-        f"max_flash_attempts must be between 1 and {MAX_FLASH_ATTEMPTS}",
+        f"max_flash_attempts must be between 0 and {MAX_FLASH_ATTEMPTS}",
     )
     allowed_warnings = profile.get("allowed_warnings", [])
     require(
@@ -405,7 +365,7 @@ def adapter_payload(
         "schema_version": 1,
         "chip": profile["chip"],
         "simulate": config.get("simulate", {}),
-        "expected_device_id": profile["expected_device_id"],
+        "expected_device_id": profile.get("expected_device_id"),
         "expected_programmer_serial": config.get("programmer_serial"),
         "expected_voltage_mv": config.get("voltage_mv"),
         "board_id": config["board_id"],
@@ -487,6 +447,12 @@ def check_probe_identity(role: str, result: dict[str, Any], profile: dict[str, A
 def run_doctor(profile: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     validate_profile(profile)
     validate_config(config)
+    if "programmer" in config["adapters"]:
+        require(
+            isinstance(profile.get("expected_device_id"), str) and bool(profile["expected_device_id"]),
+            "INVALID_PROFILE",
+            "Profile expected_device_id is required when programmer adapter is configured",
+        )
     tools: dict[str, str] = {}
     with tempfile.TemporaryDirectory(prefix="hk8asm-doctor-") as temp:
         work_dir = Path(temp)
@@ -659,7 +625,7 @@ def command_new_run(args: argparse.Namespace) -> dict[str, Any]:
         "artifact_sha256": None,
         "evidence_sha256": None,
         "flash_attempts": 0,
-        "max_flash_attempts": profile["max_flash_attempts"],
+        "max_flash_attempts": profile.get("max_flash_attempts", 0),
         "history": [],
     }
     append_history(run, "CREATED")

@@ -15,6 +15,14 @@ from typing import Any
 SKILL_NAME = "writing-hk8-mcu-asm"
 EXCLUDED_DIRS = {".git", ".pytest_cache", "__pycache__", "evals", "tests"}
 EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+EXCLUDED_RELATIVE_DIRS = {
+    "references/spec/analysis",
+    "references/spec/templates",
+    "references/spec/tools/tests",
+}
+EXCLUDED_RELATIVE_FILES = {
+    "references/spec/tools/build_analysis_snapshot.py",
+}
 
 
 class InstallError(Exception):
@@ -48,10 +56,25 @@ def destination_for(target: str, project_dir: Path | None) -> Path:
     raise InstallError("INVALID_TARGET", f"Unknown target: {target}")
 
 
-def ignore_names(_directory: str, names: list[str]) -> set[str]:
+def should_exclude_relative(path: Path) -> bool:
+    relative = path.as_posix()
+    return relative in EXCLUDED_RELATIVE_DIRS or relative in EXCLUDED_RELATIVE_FILES
+
+
+def ignore_names(directory: str, names: list[str]) -> set[str]:
     ignored: set[str] = set()
+    root = skill_root().resolve()
+    base = Path(directory).resolve()
     for name in names:
         if name in EXCLUDED_DIRS or Path(name).suffix in EXCLUDED_SUFFIXES:
+            ignored.add(name)
+            continue
+        candidate = base / name
+        try:
+            relative = candidate.relative_to(root)
+        except ValueError:
+            continue
+        if should_exclude_relative(relative):
             ignored.add(name)
     return ignored
 

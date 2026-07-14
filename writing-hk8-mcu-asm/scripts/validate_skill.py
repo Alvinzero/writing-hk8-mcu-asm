@@ -23,7 +23,6 @@ REQUIRED_SPEC_FILES = (
     "rules/register-alias-policy.json",
     "tools/asm_static_check.py",
     "tools/validate_spec.py",
-    "templates/board-profile.example.json",
 )
 
 

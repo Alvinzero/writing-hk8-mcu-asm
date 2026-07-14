@@ -10,6 +10,7 @@ from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = SKILL_ROOT / "scripts" / "install.py"
+VALIDATOR = SKILL_ROOT / "scripts" / "validate_skill.py"
 
 
 class InstallContractTests(unittest.TestCase):
@@ -56,8 +57,25 @@ class InstallContractTests(unittest.TestCase):
         self.assertTrue((destination / "SKILL.md").is_file())
         self.assertTrue((destination / "scripts" / "hk8asm.py").is_file())
         self.assertTrue((destination / "references").is_dir())
+        self.assertTrue((destination / "references" / "spec" / "rules" / "asm-rules.json").is_file())
+        self.assertTrue((destination / "references" / "spec" / "tools" / "asm_static_check.py").is_file())
+        self.assertTrue((destination / "references" / "spec" / "tools" / "validate_spec.py").is_file())
         self.assertFalse((destination / "tests").exists())
         self.assertFalse((destination / "evals").exists())
+        self.assertFalse((destination / "references" / "spec" / "templates").exists())
+        self.assertFalse((destination / "references" / "spec" / "analysis").exists())
+        self.assertFalse((destination / "references" / "spec" / "tools" / "tests").exists())
+        self.assertFalse(
+            (destination / "references" / "spec" / "tools" / "build_analysis_snapshot.py").exists()
+        )
+        validation = subprocess.run(
+            [sys.executable, str(VALIDATOR), str(destination)],
+            cwd=SKILL_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, validation.returncode, validation.stderr or validation.stdout)
 
     def test_existing_target_requires_force(self) -> None:
         first = self.run_install(

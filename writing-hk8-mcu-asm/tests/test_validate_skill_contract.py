@@ -108,6 +108,27 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertNotIn("烧录器序列号", release_section)
         self.assertNotIn("回读 hash", release_section)
 
+    def test_skill_forbids_copying_examples_and_uses_fast_relevant_rule_loading(self) -> None:
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        for phrase in (
+            "禁止复制 templates、example 或 sample ASM 作为候选源码",
+            "示例文件只作反例或格式参考，不进入生成上下文",
+            "简单 LED/GPIO 任务使用快速路径",
+            "只读取当前任务相关规则",
+            "不得加载无关 OLED、数码管或分析快照资料",
+        ):
+            self.assertIn(phrase, skill_text)
+        self.assertNotIn("references/spec/templates/", skill_text)
+
+    def test_skill_forbids_local_disk_scans_for_compiler_discovery(self) -> None:
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        for phrase in (
+            "编译器路径必须来自 profile、config 或 spec 明确配置",
+            "禁止扫盘、遍历本机目录或猜测 IDE/CLI 路径",
+            "不得使用 Get-ChildItem、os.walk、rglob、where 或全盘搜索寻找编译器",
+        ):
+            self.assertIn(phrase, skill_text)
+
 
 if __name__ == "__main__":
     unittest.main()
