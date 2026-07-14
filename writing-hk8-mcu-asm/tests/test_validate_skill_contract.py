@@ -78,6 +78,21 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("LED、OLED、数码管", skill_text)
         self.assertIn("不得追问与当前功能无关的输入", skill_text)
 
+    def test_required_inputs_only_ask_for_task_gaps_not_known_spec_defaults(self) -> None:
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        required_section = skill_text.split("## 必需输入", 1)[1].split("## 资源导航", 1)[0]
+        for phrase in (
+            "资料库已知规则",
+            "不得重复追问用户",
+            "本次要实现的具体功能",
+            "无法从 spec 推断",
+            "普通代码生成阶段",
+            "open_items",
+        ):
+            self.assertIn(phrase, required_section)
+        for phrase in ("板卡 ID", "烧录器序列号", "可机器观测的验收条件"):
+            self.assertNotIn(phrase, required_section)
+
 
 if __name__ == "__main__":
     unittest.main()
