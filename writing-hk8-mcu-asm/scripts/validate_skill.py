@@ -73,8 +73,8 @@ def validate(root: Path) -> list[str]:
         findings.append("description is required")
     if "TODO" in description or "[TODO" in description:
         findings.append("description still contains TODO text")
-    if not description.startswith("Use when"):
-        findings.append('description must start with "Use when"')
+    if not description.startswith(("Use when", "用于", "当")):
+        findings.append('description must start with "Use when", "用于", or "当"')
     if "TODO" in body or "[TODO" in body:
         findings.append("SKILL.md body still contains TODO text")
     for relative in (

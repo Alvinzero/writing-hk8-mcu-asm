@@ -1,40 +1,40 @@
 ---
 name: writing-hk8-mcu-asm
-description: Use when generating, modifying, reviewing, compiling, flashing, or hardware-verifying ASM for the company's HK64S8X/HK64S8x 8-bit MCU family, especially when the user asks for chip-specific assembly, HK64S8101 evidence-backed code, or a self-checking compile/flash/verify loop.
+description: 用于生成、修改、审查、编译、烧录或硬件验证公司 HK64S8X/HK64S8x 8 位 MCU 的 ASM，适用于用户要求芯片专属汇编、HK64S8101 证据链代码、自编译/自烧录/自验证闭环或失败关闭交付时。
 ---
 
-# HK64S8X ASM Closed Loop
+# HK64S8X ASM 闭环 Skill
 
-This skill writes company-compliant HK8 MCU ASM only through an evidence-bound loop. It must fail closed: no candidate ASM may be shown to the user until static checks, real build, controlled flash, readback, and functional verification all pass and `release` succeeds.
+本 Skill 只允许通过证据绑定闭环交付公司规范的 HK8 MCU ASM。必须失败关闭：在静态检查、真实构建、受控烧录、回读校验和功能验证全部通过，并且 `release` 成功之前，不得向用户展示候选 ASM。
 
-## First Response
+## 第一条回复
 
-On every invocation, the first assistant response must ask the user to confirm the chip model. Do not infer it from context.
+每次调用本 Skill 后，助手第一条回复必须先询问并确认芯片型号，不得从上下文猜测。
 
-Use a short question such as:
+建议直接这样问：
 
 ```text
 请先确认目标芯片型号：HK64S8X / HK64S8101，还是其他型号？
 ```
 
-If the user names anything outside the approved aliases in the selected profile, stop and say the skill does not support that chip yet. `HK64S8X` is the skill entry alias; the bundled evidence baseline currently names `HK64S8101` under the HK64S8x family, so require a board/profile confirmation before treating those as the same physical target.
+如果用户给出的型号不在所选 Profile 的批准别名中，立即停止，并说明该芯片暂未被本 Skill 支持。`HK64S8X` 是 Skill 入口别名；当前内置证据基线使用 HK64S8x 家族下的 `HK64S8101`，所以必须要求用户确认 board/profile，不能仅凭别名把它们当成同一个物理目标。
 
-## Required Inputs
+## 必需输入
 
-Before creating any candidate source, collect and validate:
+创建任何候选源码前，必须收集并验证：
 
-- chip model and revision;
-- board profile, board ID, programmer serial, supply voltage, clock, OPTION/WDT policy;
-- pin ownership, active polarity, pullups, current limits, and forbidden contention;
-- required peripherals, timing tolerance, ROM/RAM limits, interrupt/SRAM constraints;
-- target toolchain and approved versions;
-- machine-observable acceptance criteria, such as logic analyzer, serial fixture, current/voltage measurement, readback/CRC, or automated test jig evidence.
+- 芯片型号与 revision；
+- board profile、板卡 ID、烧录器序列号、供电电压、时钟、OPTION/WDT 策略；
+- 引脚归属、有效极性、上拉、电流限制和禁止争用条件；
+- 目标外设、时序容差、ROM/RAM 限制、中断和 SRAM 约束；
+- 目标工具链及批准版本；
+- 可机器观测的验收条件，例如逻辑分析仪、串口测试治具、电流/电压测量、回读/CRC 或自动化测试夹具证据。
 
-If any safety, timing, addressing, memory, toolchain, or hardware-observation input is unresolved, return a diagnostic with `unresolved_inputs`. Do not generate or reveal ASM.
+只要安全、时序、地址、内存、工具链或硬件观测相关输入仍未解析，就只返回诊断和 `unresolved_inputs`。不得生成或泄露 ASM。
 
-## Resources
+## 资源导航
 
-Load only what the task needs, but always treat these as authoritative:
+按任务需要加载资料，但以下资源始终视为权威：
 
 - `references/spec/AGENTS.md`
 - `references/spec/rules/asm-rules.json`
@@ -42,20 +42,20 @@ Load only what the task needs, but always treat these as authoritative:
 - `references/spec/rules/register-reference.json`
 - `references/spec/rules/register-alias-policy.json`
 - `references/spec/09-AI智能体生成与审查协议.md`
-- task-specific docs/checklists under `references/spec/`
+- `references/spec/` 下与任务相关的专题文档和 checklist
 
-Useful examples:
+常用示例：
 
 - `references/profiles/HK64S8X.profile.example.json`
 - `references/configs/local-adapter.example.json`
 - `references/requests/gpio-request.example.json`
 - `references/spec/templates/`
 
-Do not copy a template directly into production. Treat templates as auditable skeletons that still require board profile, toolchain, build, flash, and E1 hardware evidence.
+禁止把模板直接复制成量产代码。模板只是可审查骨架，仍然必须补齐 board profile、工具链、构建、烧录和 E1 实板证据。
 
-## Closed Loop Commands
+## 闭环命令
 
-Use Python 3.10+ and standard library only. The stable command entry point is:
+运行环境要求 Python 3.10+，脚本只依赖标准库。稳定命令入口如下：
 
 ```powershell
 python scripts/hk8asm.py doctor --profile profile.json --config local-config.json
@@ -64,41 +64,41 @@ python scripts/hk8asm.py close-loop --run-dir .hk8asm/run-id
 python scripts/hk8asm.py release --run-dir .hk8asm/run-id --output verified.asm
 ```
 
-`doctor` checks local adapters, approved tool versions, programmer serial, device ID, and voltage. `new-run` snapshots inputs into an isolated run directory. `close-loop` runs static checks, compiler, programmer, readback, and functional verifier. `release` is the only command allowed to expose the final ASM.
+`doctor` 检查本机 adapter、批准工具版本、烧录器序列号、器件 ID 和电压。`new-run` 把输入快照到隔离运行目录。`close-loop` 依次执行静态检查、编译器、烧录器、回读和功能验证器。`release` 是唯一允许释放最终 ASM 的命令。
 
-Adapters must be configured as string arrays and are invoked with:
+Adapter 命令必须配置为字符串数组，并按以下协议调用：
 
 ```text
 <command...> <role> <probe|run> --input input.json --output output.json
 ```
 
-They may either write the JSON result to `--output` or emit one JSON object on stdout. Never use shell strings for adapter commands.
+Adapter 可以把 JSON 结果写入 `--output`，也可以在 stdout 输出单个 JSON 对象。禁止把 adapter command 写成 shell 字符串。
 
-## Hard Gates
+## 硬门禁
 
-- Candidate ASM lives only in the isolated run directory before release.
-- Static checking must use the bundled spec checker when the profile provides `spec_root` and `static_check`.
-- Compiler warnings are failures unless listed in `allowed_warnings`.
-- Default and maximum automatic flash attempts is three.
-- Readback/CRC only proves transfer. Functional verification must also satisfy the request acceptance contract.
-- Default policy forbids fuse, lock, security bit, OPTION, protection, and other nonvolatile changes unless a separate approved flow is provided.
-- Any source or evidence change after verification invalidates release.
-- If any gate fails, return diagnosis and evidence paths only; do not reveal candidate ASM.
+- 候选 ASM 在 release 前只能存在于隔离运行目录中。
+- Profile 提供 `spec_root` 和 `static_check` 时，静态检查必须使用内置规范检查器。
+- 编译 warning 一律视为失败，除非明确列入 `allowed_warnings`。
+- 自动烧录默认且最高只能尝试 3 次。
+- 回读/CRC 只证明传输成功，不代表功能正确；功能验证必须满足 request 中的 acceptance contract。
+- 默认禁止修改 fuse、lock、security bit、OPTION、保护位或其他非易失配置，除非另有批准流程。
+- 验证后源码或 evidence 发生任何变化，release 必须失效。
+- 任一门禁失败时，只返回诊断和 evidence 路径，不得展示候选 ASM。
 
-## Final Response After Release
+## Release 后最终回复
 
-Only after `release` returns `RELEASED`, provide:
+只有 `release` 返回 `RELEASED` 后，才可以向用户交付：
 
-- the verified ASM content or file path requested by the user;
-- chip/model and run ID;
-- source, artifact, and evidence hashes;
-- compact verification credentials: static check, compiler version, programmer serial/device ID/voltage, readback hash, and functional test names.
+- 用户要求的已验证 ASM 内容或文件路径；
+- 芯片/型号和 run ID；
+- source、artifact 和 evidence hash；
+- 简短验证凭据：静态检查结果、编译器版本、烧录器序列号、device ID、电压、回读 hash 和功能测试名称。
 
-If release did not succeed, state the failed gate and next required input/action. Do not include unreleased source code.
+如果 release 没有成功，只说明失败门禁和下一步所需输入/动作。不得包含未 release 的源码。
 
-## Installation
+## 安装
 
-Install copies of this skill with:
+可用以下命令安装本 Skill：
 
 ```powershell
 python scripts/install.py --target codex-user --mode copy
@@ -107,4 +107,4 @@ python scripts/install.py --target codex-project --project-dir <project> --mode 
 python scripts/install.py --target claude-project --project-dir <project> --mode copy
 ```
 
-Codex can invoke it as `$writing-hk8-mcu-asm`; Claude Code can invoke it as `/writing-hk8-mcu-asm`. Description matching may also trigger it implicitly.
+Codex 可用 `$writing-hk8-mcu-asm` 显式调用；Claude Code 可用 `/writing-hk8-mcu-asm` 显式调用。描述匹配时也可以隐式触发。

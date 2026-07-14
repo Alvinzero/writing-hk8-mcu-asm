@@ -43,6 +43,18 @@ class ValidateSkillContractTests(unittest.TestCase):
             self.assertNotEqual(0, result.returncode)
             self.assertEqual("SKILL_INVALID", self.payload(result)["code"])
 
+    def test_skill_instructions_and_openai_metadata_are_chinese(self) -> None:
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        openai_text = (SKILL_ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        self.assertIn("description: 用于", skill_text)
+        for phrase in ("## 第一条回复", "## 必需输入", "## 闭环命令", "## 硬门禁", "## 安装"):
+            self.assertIn(phrase, skill_text)
+        for phrase in ("## First Response", "## Required Inputs", "This skill writes"):
+            self.assertNotIn(phrase, skill_text)
+        for phrase in ("生成", "验证", "芯片型号"):
+            self.assertIn(phrase, openai_text)
+        self.assertNotIn("Generate HK8 ASM", openai_text)
+
 
 if __name__ == "__main__":
     unittest.main()
