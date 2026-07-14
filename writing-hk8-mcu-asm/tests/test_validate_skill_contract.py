@@ -51,7 +51,7 @@ class ValidateSkillContractTests(unittest.TestCase):
             self.assertIn(phrase, skill_text)
         for phrase in ("## First Response", "## Required Inputs", "This skill writes"):
             self.assertNotIn(phrase, skill_text)
-        for phrase in ("生成", "验证", "芯片型号"):
+        for phrase in ("生成", "编译", "芯片型号"):
             self.assertIn(phrase, openai_text)
         self.assertNotIn("Generate HK8 ASM", openai_text)
 
@@ -92,6 +92,21 @@ class ValidateSkillContractTests(unittest.TestCase):
             self.assertIn(phrase, required_section)
         for phrase in ("板卡 ID", "烧录器序列号", "可机器观测的验收条件"):
             self.assertNotIn(phrase, required_section)
+
+    def test_release_gate_is_compile_only_with_hardware_verification_deferred(self) -> None:
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        for phrase in (
+            "静态检查和目标编译通过后即可 release",
+            "烧录、回读、逻辑分析仪或其他实板验证暂不作为输出 ASM 的前置条件",
+            "close-loop` 只执行静态检查和目标编译",
+            "release` 是唯一允许释放已编译 ASM 的命令",
+        ):
+            self.assertIn(phrase, skill_text)
+        self.assertNotIn("受控烧录、回读校验和功能验证全部通过", skill_text)
+        release_section = skill_text.split("## Release 后最终回复", 1)[1].split("## 安装", 1)[0]
+        self.assertIn("编译器版本", release_section)
+        self.assertNotIn("烧录器序列号", release_section)
+        self.assertNotIn("回读 hash", release_section)
 
 
 if __name__ == "__main__":

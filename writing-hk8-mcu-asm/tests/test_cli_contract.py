@@ -96,6 +96,18 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         }
 
     @staticmethod
+    def compile_only_config(*, failures: dict[str, str] | None = None) -> dict:
+        command = [sys.executable, str(FAKE_ADAPTER)]
+        return {
+            "schema_version": 1,
+            "board_id": "HK64S825-SIM-BOARD",
+            "simulate": failures or {},
+            "adapters": {
+                "compiler": {"command": command},
+            },
+        }
+
+    @staticmethod
     def config_with_command(command: list[str], *, failures: dict[str, str] | None = None) -> dict:
         config = ClosedLoopCliContractTests.config(failures=failures)
         for role in ("compiler", "programmer", "verifier"):
@@ -174,7 +186,7 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         self.assertTrue((run_dir / "request.json").is_file())
         self.assertTrue((run_dir / "src" / "candidate.asm").is_file())
 
-    def test_new_run_rejects_request_without_machine_observable_acceptance(self) -> None:
+    def test_new_run_allows_request_without_hardware_acceptance(self) -> None:
         request = self.request()
         request["acceptance"] = []
         self._write_json(self.request_path, request)
@@ -189,26 +201,14 @@ class ClosedLoopCliContractTests(unittest.TestCase):
             "--source",
             str(self.source_path),
             "--run-dir",
-            str(self.root / "invalid"),
+            str(self.root / "no-hardware-acceptance"),
         )
-        self.assertNotEqual(0, result.returncode)
-        self.assertEqual("INVALID_REQUEST", self.payload(result)["code"])
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+        self.assertEqual("RUN_CREATED", self.payload(result)["code"])
 
-    def test_new_run_rejects_unstructured_or_human_observable_inputs(self) -> None:
+    def test_new_run_rejects_unstructured_or_forbidden_inputs(self) -> None:
         cases = [
             ("bad-peripheral", {"peripherals": [123]}),
-            (
-                "human-observable",
-                {
-                    "acceptance": [
-                        {
-                            "name": "human-led-check",
-                            "observable": "human looks at LED",
-                            "expected": "looks blinking",
-                        }
-                    ]
-                },
-            ),
             ("nonvolatile", {"allow_nonvolatile_changes": True}),
         ]
         for name, patch in cases:
@@ -282,7 +282,7 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         run_dir = self.new_run()
         loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
         self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
-        self.assertEqual("LOOP_PASSED", self.payload(loop)["code"])
+        self.assertEqual("COMPILE_PASSED", self.payload(loop)["code"])
         output = self.root / "released.asm"
         release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(output))
         self.assertEqual(0, release.returncode, release.stderr or release.stdout)
@@ -293,23 +293,46 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         self.assertIn("source_sha256", receipt)
         self.assertIn("artifact_sha256", receipt)
 
-    def test_each_failed_hardware_gate_blocks_release_without_source_leakage(self) -> None:
+    def test_compile_pass_releases_without_hardware_adapters(self) -> None:
+        self._write_json(self.config_path, self.compile_only_config())
+        run_dir = self.new_run("compile-only")
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        self.assertEqual("COMPILE_PASSED", self.payload(loop)["code"])
+        output = self.root / "compile-only-released.asm"
+        release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(output))
+        self.assertEqual(0, release.returncode, release.stderr or release.stdout)
+        self.assertEqual("RELEASED", self.payload(release)["code"])
+        self.assertEqual(self.source_path.read_text(encoding="utf-8"), output.read_text(encoding="utf-8"))
+        run_state = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual(0, run_state["flash_attempts"])
+
+    def test_compile_failure_blocks_release_without_source_leakage(self) -> None:
         candidate = self.source_path.read_text(encoding="utf-8")
-        for role in ("compiler", "programmer", "verifier"):
+        self._write_json(self.config_path, self.config(failures={"compiler": "fail"}))
+        run_dir = self.new_run("fail-compiler")
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertNotEqual(0, loop.returncode)
+        self.assertNotIn(candidate, loop.stdout)
+        output = self.root / "leaked-compiler.asm"
+        release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(output))
+        self.assertNotEqual(0, release.returncode)
+        self.assertEqual("RELEASE_BLOCKED", self.payload(release)["code"])
+        self.assertFalse(output.exists())
+        self.assertNotIn(candidate, release.stdout)
+
+    def test_hardware_run_failures_are_deferred_after_compile_release(self) -> None:
+        for role in ("programmer", "verifier"):
             with self.subTest(role=role):
                 self._write_json(self.config_path, self.config(failures={role: "fail"}))
-                run_dir = self.new_run(f"fail-{role}")
+                run_dir = self.new_run(f"defer-{role}")
                 loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
-                self.assertNotEqual(0, loop.returncode)
-                self.assertNotIn(candidate, loop.stdout)
-                output = self.root / f"leaked-{role}.asm"
-                release = self.run_cli(
-                    "release", "--run-dir", str(run_dir), "--output", str(output)
-                )
-                self.assertNotEqual(0, release.returncode)
-                self.assertEqual("RELEASE_BLOCKED", self.payload(release)["code"])
-                self.assertFalse(output.exists())
-                self.assertNotIn(candidate, release.stdout)
+                self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+                self.assertEqual("COMPILE_PASSED", self.payload(loop)["code"])
+                output = self.root / f"released-with-{role}-failure-deferred.asm"
+                release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(output))
+                self.assertEqual(0, release.returncode, release.stderr or release.stdout)
+                self.assertEqual("RELEASED", self.payload(release)["code"])
 
     def test_failed_loop_writes_failure_evidence_without_source_leakage(self) -> None:
         candidate = self.source_path.read_text(encoding="utf-8")
@@ -341,21 +364,29 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         self.assertNotEqual(0, unapproved_loop.returncode)
         self.assertEqual("COMPILE_FAILED", self.payload(unapproved_loop)["code"])
 
-    def test_program_readback_mismatch_blocks_release(self) -> None:
+    def test_program_readback_mismatch_is_deferred_after_compile_release(self) -> None:
         self._write_json(self.config_path, self.config(failures={"programmer": "readback-mismatch"}))
         run_dir = self.new_run("readback-mismatch")
         loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
-        self.assertNotEqual(0, loop.returncode)
-        self.assertEqual("PROGRAM_FAILED", self.payload(loop)["code"])
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        self.assertEqual("COMPILE_PASSED", self.payload(loop)["code"])
+        output = self.root / "readback-deferred.asm"
+        release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(output))
+        self.assertEqual(0, release.returncode, release.stderr or release.stdout)
+        self.assertEqual("RELEASED", self.payload(release)["code"])
 
-    def test_verifier_must_match_acceptance_contract(self) -> None:
+    def test_verifier_contract_checks_are_deferred_after_compile_release(self) -> None:
         for mode in ("contract-mismatch", "missing-tests"):
             with self.subTest(mode=mode):
                 self._write_json(self.config_path, self.config(failures={"verifier": mode}))
                 run_dir = self.new_run(f"verify-{mode}")
                 loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
-                self.assertNotEqual(0, loop.returncode)
-                self.assertEqual("VERIFY_FAILED", self.payload(loop)["code"])
+                self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+                self.assertEqual("COMPILE_PASSED", self.payload(loop)["code"])
+                output = self.root / f"verify-{mode}-deferred.asm"
+                release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(output))
+                self.assertEqual(0, release.returncode, release.stderr or release.stdout)
+                self.assertEqual("RELEASED", self.payload(release)["code"])
 
     def test_release_detects_evidence_tampering(self) -> None:
         run_dir = self.new_run()
@@ -397,18 +428,15 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         self.assertEqual("INVALID_CONFIG", self.payload(result)["code"])
         self.assertFalse(sentinel.exists())
 
-    def test_flash_attempt_limit_is_enforced_at_three(self) -> None:
+    def test_compile_gate_does_not_increment_flash_attempts(self) -> None:
         self._write_json(self.config_path, self.config(failures={"programmer": "fail"}))
         run_dir = self.new_run()
-        for expected_attempt in range(1, 4):
+        for _ in range(3):
             result = self.run_cli("close-loop", "--run-dir", str(run_dir))
-            self.assertNotEqual(0, result.returncode)
-            self.assertEqual("PROGRAM_FAILED", self.payload(result)["code"])
+            self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+            self.assertEqual("COMPILE_PASSED", self.payload(result)["code"])
             run_state = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
-            self.assertEqual(expected_attempt, run_state["flash_attempts"])
-        fourth = self.run_cli("close-loop", "--run-dir", str(run_dir))
-        self.assertNotEqual(0, fourth.returncode)
-        self.assertEqual("FLASH_LIMIT_REACHED", self.payload(fourth)["code"])
+            self.assertEqual(0, run_state["flash_attempts"])
 
 
 if __name__ == "__main__":

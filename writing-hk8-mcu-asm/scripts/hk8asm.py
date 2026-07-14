@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed orchestration for HK8 ASM compile, flash, and verification."""
+"""Fail-closed orchestration for HK8 ASM static check, compile, and release."""
 
 from __future__ import annotations
 
@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Any
 
 
-ROLES = ("compiler", "programmer", "verifier")
+MANDATORY_ROLES = ("compiler",)
+OPTIONAL_HARDWARE_ROLES = ("programmer", "verifier")
+ROLES = (*MANDATORY_ROLES, *OPTIONAL_HARDWARE_ROLES)
 RUN_SCHEMA_VERSION = 1
 MAX_FLASH_ATTEMPTS = 3
 
@@ -169,7 +171,7 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
     )
     versions = profile.get("approved_tool_versions")
     require(isinstance(versions, dict), "INVALID_PROFILE", "Approved tool versions are required")
-    for role in ROLES:
+    for role in MANDATORY_ROLES:
         approved = versions.get(role)
         require(
             isinstance(approved, list)
@@ -177,6 +179,18 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
             and all(isinstance(item, str) for item in approved),
             "INVALID_PROFILE",
             f"Approved versions for {role} must be a non-empty string array",
+        )
+    for role in OPTIONAL_HARDWARE_ROLES:
+        approved = versions.get(role)
+        require(
+            approved is None
+            or (
+                isinstance(approved, list)
+                and bool(approved)
+                and all(isinstance(item, str) for item in approved)
+            ),
+            "INVALID_PROFILE",
+            f"Approved versions for optional {role} must be a non-empty string array when provided",
         )
     attempts = profile.get("max_flash_attempts")
     require(
@@ -240,21 +254,14 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
 
 def validate_config(config: dict[str, Any]) -> None:
     require(config.get("schema_version") == 1, "INVALID_CONFIG", "Unsupported config schema")
-    for key in ("board_id", "programmer_serial"):
-        require(
-            isinstance(config.get(key), str) and bool(config[key]),
-            "INVALID_CONFIG",
-            f"Config {key} is required",
-        )
-    voltage = config.get("voltage_mv")
     require(
-        isinstance(voltage, int) and not isinstance(voltage, bool) and voltage > 0,
+        isinstance(config.get("board_id"), str) and bool(config["board_id"]),
         "INVALID_CONFIG",
-        "Config voltage_mv must be a positive integer",
+        "Config board_id is required",
     )
     adapters = config.get("adapters")
     require(isinstance(adapters, dict), "INVALID_CONFIG", "Config adapters are required")
-    for role in ROLES:
+    for role in MANDATORY_ROLES:
         adapter = adapters.get(role)
         require(isinstance(adapter, dict), "INVALID_CONFIG", f"Missing {role} adapter")
         command = adapter.get("command")
@@ -270,6 +277,37 @@ def validate_config(config: dict[str, Any]) -> None:
             isinstance(timeout, int) and not isinstance(timeout, bool) and 1 <= timeout <= 3600,
             "INVALID_CONFIG",
             f"{role} timeout_seconds must be between 1 and 3600",
+        )
+    for role in OPTIONAL_HARDWARE_ROLES:
+        adapter = adapters.get(role)
+        if adapter is None:
+            continue
+        require(isinstance(adapter, dict), "INVALID_CONFIG", f"{role} adapter must be an object")
+        command = adapter.get("command")
+        require(
+            isinstance(command, list)
+            and bool(command)
+            and all(isinstance(item, str) and bool(item) for item in command),
+            "INVALID_CONFIG",
+            f"{role} adapter command must be a non-empty string array",
+        )
+        timeout = adapter.get("timeout_seconds", 60)
+        require(
+            isinstance(timeout, int) and not isinstance(timeout, bool) and 1 <= timeout <= 3600,
+            "INVALID_CONFIG",
+            f"{role} timeout_seconds must be between 1 and 3600",
+        )
+    if "programmer" in adapters:
+        require(
+            isinstance(config.get("programmer_serial"), str) and bool(config["programmer_serial"]),
+            "INVALID_CONFIG",
+            "Config programmer_serial is required when programmer adapter is configured",
+        )
+        voltage = config.get("voltage_mv")
+        require(
+            isinstance(voltage, int) and not isinstance(voltage, bool) and voltage > 0,
+            "INVALID_CONFIG",
+            "Config voltage_mv must be a positive integer when programmer adapter is configured",
         )
     simulate = config.get("simulate", {})
     require(isinstance(simulate, dict), "INVALID_CONFIG", "simulate must be an object")
@@ -343,8 +381,8 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
     require(isinstance(board, dict), "INVALID_REQUEST", "board must be an object")
     require(not contains_unresolved(board), "INVALID_REQUEST", "board contains unresolved values")
     require(board.get("id") == config["board_id"], "INVALID_REQUEST", "Request board does not match config")
-    acceptance = request.get("acceptance")
-    require(isinstance(acceptance, list) and bool(acceptance), "INVALID_REQUEST", "acceptance is required")
+    acceptance = request.get("acceptance", [])
+    require(isinstance(acceptance, list), "INVALID_REQUEST", "acceptance must be an array when provided")
     for item in acceptance:
         require(isinstance(item, dict), "INVALID_REQUEST", "Each acceptance item must be an object")
         for key in ("name", "observable", "expected"):
@@ -353,11 +391,6 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
                 "INVALID_REQUEST",
                 f"Acceptance {key} is required",
             )
-        require(
-            is_machine_observable(item["observable"]),
-            "INVALID_REQUEST",
-            "Acceptance observable must be machine-observable",
-        )
     require(
         request.get("allow_nonvolatile_changes") is False,
         "INVALID_REQUEST",
@@ -373,8 +406,8 @@ def adapter_payload(
         "chip": profile["chip"],
         "simulate": config.get("simulate", {}),
         "expected_device_id": profile["expected_device_id"],
-        "expected_programmer_serial": config["programmer_serial"],
-        "expected_voltage_mv": config["voltage_mv"],
+        "expected_programmer_serial": config.get("programmer_serial"),
+        "expected_voltage_mv": config.get("voltage_mv"),
         "board_id": config["board_id"],
     }
     if extra:
@@ -433,7 +466,8 @@ def invoke_adapter(
 
 def check_version(role: str, result: dict[str, Any], profile: dict[str, Any]) -> None:
     version = result.get("tool_version")
-    if version not in profile["approved_tool_versions"][role]:
+    approved = profile["approved_tool_versions"].get(role)
+    if not isinstance(approved, list) or version not in approved:
         raise AdapterError(role, f"Unapproved {role} version: {version!r}")
 
 
@@ -456,7 +490,10 @@ def run_doctor(profile: dict[str, Any], config: dict[str, Any]) -> dict[str, Any
     tools: dict[str, str] = {}
     with tempfile.TemporaryDirectory(prefix="hk8asm-doctor-") as temp:
         work_dir = Path(temp)
-        for role in ROLES:
+        roles_to_probe = [
+            role for role in ROLES if role in MANDATORY_ROLES or role in config["adapters"]
+        ]
+        for role in roles_to_probe:
             try:
                 result = invoke_adapter(
                     role,
@@ -647,10 +684,6 @@ def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
     (run_dir / "evidence.json").unlink(missing_ok=True)
     write_json(run_dir / "run.json", run)
 
-    if run["flash_attempts"] >= run["max_flash_attempts"]:
-        save_failure(run_dir, run, "program", "FLASH_LIMIT_REACHED", "Flash attempt limit reached")
-        raise GateError("FLASH_LIMIT_REACHED", "Flash attempt limit reached")
-
     try:
         static_result = static_check(source, profile)
         run_doctor(profile, config)
@@ -699,120 +732,29 @@ def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
 
     run["state"] = "BUILT"
     run["artifact_sha256"] = artifact_hash
-    append_history(run, "BUILT")
-    write_json(run_dir / "run.json", run)
-
-    run["flash_attempts"] += 1
-    write_json(run_dir / "run.json", run)
-    try:
-        program_result = invoke_adapter(
-            "programmer",
-            "run",
-            adapter_payload(
-                profile,
-                config,
-                {"artifact_path": str(artifact), "artifact_sha256": artifact_hash},
-            ),
-            config,
-            run_dir,
-            f"programmer-run-{run['flash_attempts']}",
-        )
-        check_version("programmer", program_result, profile)
-        require(
-            program_result.get("device_id") == profile["expected_device_id"],
-            "PROGRAM_FAILED",
-            "Connected device ID does not match profile",
-        )
-        require(
-            program_result.get("programmer_serial") == config["programmer_serial"],
-            "PROGRAM_FAILED",
-            "Programmer serial does not match config",
-        )
-        require(
-            program_result.get("voltage_mv") == config["voltage_mv"],
-            "PROGRAM_FAILED",
-            "Target voltage does not match config",
-        )
-        require(
-            program_result.get("artifact_sha256") == artifact_hash
-            and program_result.get("readback_sha256") == artifact_hash,
-            "PROGRAM_FAILED",
-            "Program/readback hash verification failed",
-        )
-    except AdapterError as exc:
-        save_failure(run_dir, run, "program", "PROGRAM_FAILED", exc.message)
-        raise GateError("PROGRAM_FAILED", "Programming gate failed") from exc
-    except GateError as exc:
-        save_failure(run_dir, run, "program", exc.code, exc.message)
-        raise
-
-    run["state"] = "FLASHED"
-    append_history(run, "FLASHED", attempt=run["flash_attempts"])
-    write_json(run_dir / "run.json", run)
-
-    try:
-        verify_result = invoke_adapter(
-            "verifier",
-            "run",
-            adapter_payload(
-                profile,
-                config,
-                {"artifact_path": str(artifact), "artifact_sha256": artifact_hash, "request": request},
-            ),
-            config,
-            run_dir,
-            f"verifier-run-{run['flash_attempts']}",
-        )
-        check_version("verifier", verify_result, profile)
-        observed = verify_result.get("tests")
-        require(isinstance(observed, list) and bool(observed), "VERIFY_FAILED", "No functional tests reported")
-        by_name = {item.get("name"): item for item in observed if isinstance(item, dict)}
-        for expected in request["acceptance"]:
-            actual = by_name.get(expected["name"])
-            require(isinstance(actual, dict), "VERIFY_FAILED", f"Missing test: {expected['name']}")
-            require(actual.get("status") == "pass", "VERIFY_FAILED", f"Test failed: {expected['name']}")
-            require(
-                actual.get("observable") == expected["observable"]
-                and actual.get("expected") == expected["expected"],
-                "VERIFY_FAILED",
-                f"Test contract mismatch: {expected['name']}",
-            )
-    except AdapterError as exc:
-        save_failure(run_dir, run, "verify", "VERIFY_FAILED", exc.message)
-        raise GateError("VERIFY_FAILED", "Functional verification gate failed") from exc
-    except GateError as exc:
-        save_failure(run_dir, run, "verify", exc.code, exc.message)
-        raise
-
-    run["state"] = "VERIFIED"
     run["verified_source_sha256"] = current_hash
-    append_history(run, "VERIFIED")
-    write_json(run_dir / "run.json", run)
+    append_history(run, "BUILT")
     evidence = {
         "schema_version": 1,
         "run_id": run["run_id"],
         "chip": profile["chip"],
-        "state": "VERIFIED",
-        "verified_at": now_utc(),
+        "state": "BUILT",
+        "compiled_at": now_utc(),
         "source_sha256": current_hash,
         "artifact_sha256": artifact_hash,
-        "device_id": program_result["device_id"],
-        "programmer_serial": program_result["programmer_serial"],
-        "voltage_mv": program_result["voltage_mv"],
-        "flash_attempt": run["flash_attempts"],
+        "flash_attempts": run["flash_attempts"],
         "gates": {
             "static": static_result,
             "compile": compile_result,
-            "program": program_result,
-            "verify": verify_result,
         },
+        "deferred_gates": ["program", "readback", "hardware_verify"],
     }
     run["evidence_sha256"] = write_evidence(run_dir, evidence)
     write_json(run_dir / "run.json", run)
     return {
-        "code": "LOOP_PASSED",
+        "code": "COMPILE_PASSED",
         "run_id": run["run_id"],
-        "state": "VERIFIED",
+        "state": "BUILT",
         "source_sha256": current_hash,
         "artifact_sha256": artifact_hash,
     }
@@ -822,22 +764,22 @@ def command_release(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = args.run_dir
     run, profile, _config, _request = load_run(run_dir)
     source = run_dir / "src" / "candidate.asm"
-    if run.get("state") not in {"VERIFIED", "RELEASED"}:
-        raise GateError("RELEASE_BLOCKED", "Run has not passed every verification gate")
+    if run.get("state") not in {"BUILT", "VERIFIED", "RELEASED"}:
+        raise GateError("RELEASE_BLOCKED", "Run has not passed the static check and compile gates")
     require(source.is_file(), "SOURCE_CHANGED", "Verified source is missing")
     current_hash = sha256_file(source)
     evidence_path = run_dir / "evidence.json"
-    require(evidence_path.is_file(), "RELEASE_BLOCKED", "Verified evidence is missing")
+    require(evidence_path.is_file(), "RELEASE_BLOCKED", "Compile evidence is missing")
     expected_evidence_hash = run.get("evidence_sha256")
     require(
         isinstance(expected_evidence_hash, str) and bool(expected_evidence_hash),
         "RELEASE_BLOCKED",
-        "Verified evidence hash is missing",
+        "Compile evidence hash is missing",
     )
     require(
         sha256_file(evidence_path) == expected_evidence_hash,
         "RELEASE_BLOCKED",
-        "Verified evidence changed after verification",
+        "Compile evidence changed after build",
     )
     evidence = read_json(evidence_path, "RELEASE_BLOCKED")
     if current_hash != run.get("verified_source_sha256") or current_hash != evidence.get("source_sha256"):
@@ -846,14 +788,14 @@ def command_release(args: argparse.Namespace) -> dict[str, Any]:
         append_history(run, "SOURCE_CHANGED_RESET")
         write_json(run_dir / "run.json", run)
         evidence_path.unlink(missing_ok=True)
-        raise GateError("SOURCE_CHANGED", "Candidate source changed after verification")
+        raise GateError("SOURCE_CHANGED", "Candidate source changed after compile")
     artifact = run_dir / "build" / "firmware.hex"
-    require(artifact.is_file(), "RELEASE_BLOCKED", "Verified artifact is missing")
+    require(artifact.is_file(), "RELEASE_BLOCKED", "Compiled artifact is missing")
     artifact_hash = sha256_file(artifact)
     require(
         artifact_hash == evidence.get("artifact_sha256") == run.get("artifact_sha256"),
         "RELEASE_BLOCKED",
-        "Verified artifact hash changed",
+        "Compiled artifact hash changed",
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temp_output = args.output.with_name(f".{args.output.name}.{uuid.uuid4().hex}.tmp")
@@ -878,7 +820,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hk8asm", description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    doctor = subparsers.add_parser("doctor", help="Probe the configured toolchain and hardware")
+    doctor = subparsers.add_parser("doctor", help="Probe the configured compiler and optional hardware adapters")
     doctor.add_argument("--profile", required=True, type=Path)
     doctor.add_argument("--config", required=True, type=Path)
     doctor.set_defaults(handler=command_doctor)
@@ -891,11 +833,11 @@ def build_parser() -> argparse.ArgumentParser:
     new_run.add_argument("--run-dir", required=True, type=Path)
     new_run.set_defaults(handler=command_new_run)
 
-    close_loop = subparsers.add_parser("close-loop", help="Lint, compile, flash, and verify")
+    close_loop = subparsers.add_parser("close-loop", help="Run static checks and compile the candidate")
     close_loop.add_argument("--run-dir", required=True, type=Path)
     close_loop.set_defaults(handler=command_close_loop)
 
-    release = subparsers.add_parser("release", help="Release only a verified source")
+    release = subparsers.add_parser("release", help="Release only a compiled source")
     release.add_argument("--run-dir", required=True, type=Path)
     release.add_argument("--output", required=True, type=Path)
     release.set_defaults(handler=command_release)
