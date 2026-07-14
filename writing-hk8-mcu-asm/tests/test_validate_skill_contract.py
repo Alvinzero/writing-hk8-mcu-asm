@@ -129,6 +129,15 @@ class ValidateSkillContractTests(unittest.TestCase):
         ):
             self.assertIn(phrase, skill_text)
 
+    def test_released_asm_comments_must_be_chinese(self) -> None:
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        for phrase in (
+            "最终 release 的 ASM 中，说明性注释必须使用中文",
+            "寄存器名、指令名、标号、宏名、文件名和英文专有名词可以原样保留",
+            "不得使用英文句子作为 ASM 注释",
+        ):
+            self.assertIn(phrase, skill_text)
+
 
 if __name__ == "__main__":
     unittest.main()
