@@ -1,0 +1,21 @@
+﻿{
+  "name": "hk64s8x_example",
+  "files": [
+    "D:/project/main.asm"
+  ],
+  "build_path": "D:/project/build",
+  "settings": {
+    "mcu_type": "HK64S8101",
+    "inc_path": "",
+    "macros": "",
+    "generate_list_file": false,
+    "generate_symbol_table": false,
+    "case_sensitive": true,
+    "output_format": "BIN + HEX + MAP",
+    "optimization": "无优化",
+    "warning_level": "显示警告",
+    "simulator": "软件仿真器",
+    "enable_breakpoints": true,
+    "enable_register_watch": true
+  }
+}

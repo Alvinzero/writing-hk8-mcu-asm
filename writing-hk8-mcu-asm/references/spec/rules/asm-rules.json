@@ -1,0 +1,2445 @@
+{
+  "schema_version": "1.0.0",
+  "rule_set_id": "HK64S8X-ASM-CORPORATE",
+  "rule_set_version": "1.1.0",
+  "generated_at": "2026-07-10T20:37:05+08:00",
+  "language": "zh-CN",
+  "chip_family": "HK64S8x",
+  "validated_chip_model": "HK64S8101",
+  "normative_levels": {
+    "MUST": "强制，违反即不合规",
+    "SHOULD": "原则上遵守，偏离需书面理由",
+    "MAY": "可选"
+  },
+  "severity": {
+    "BLOCKER": "阻断构建/烧录/交付",
+    "ERROR": "必须修正后交付",
+    "WARNING": "需评审或记录豁免",
+    "INFO": "提示"
+  },
+  "toolchain_ids": {
+    "company_ide": "公司 HK_ASM_Compiler IDE 真实构建路径",
+    "python_source_module_cli": "asmc_compile.py 直接调用 Python assembler 模块",
+    "simulator": "公司 Python simulator",
+    "hardware": "真实 HK64S8x 开发板"
+  },
+  "evidence_levels": {
+    "E1": "实板确认",
+    "E2": "公司 IDE 真实产物",
+    "E3": "编译器源码",
+    "E4": "自动测试/编译探针",
+    "E5": "项目文档/注释",
+    "E6": "合理推断",
+    "OPEN": "待确认"
+  },
+  "rules": [
+    {
+      "rule_id": "HK-GOV-001",
+      "title": "证据冲突按实板优先级裁决",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "governance"
+      ],
+      "requirement": "当不同资料互相冲突时，必须按“实板 > 公司 IDE 真实产物 > 当前编译器源码 > 自动探针 > 模拟器 > 注释/推断”裁决，并记录被舍弃结论。",
+      "rationale": "本项目已经出现 BIN 表面排列与实板读取语义相反的案例。",
+      "bad_example": "仅依据 HxD 看到的 DB 字节顺序改写源码。",
+      "good_example": "保留原始 DB，并以实板 TABL→TABH 结果为准。",
+      "verification": [
+        "审查 evidence 字段",
+        "确认交付说明列出冲突与裁决"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "README.md / verified ASM",
+          "note": "实板结果最高优先级"
+        },
+        {
+          "level": "E2",
+          "source": "build/*.bin",
+          "note": "真实产物次优先"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "evidence"
+      ]
+    },
+    {
+      "rule_id": "HK-GOV-002",
+      "title": "未知硬件参数不得猜测",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "generation",
+        "hardware"
+      ],
+      "requirement": "AI 或工程师不得猜测引脚、I2C 地址、有效电平、COM 位序、晶振、供电、存储容量或 OPTION 值；未知项必须向需求方确认或标为 OPEN 并阻断烧录。",
+      "rationale": "猜测会产生可编译但可能损坏硬件或完全不可见的代码。",
+      "bad_example": "默认 SDA=PB7、地址=0x78，未说明依据。",
+      "good_example": "在文件头列出 board_profile，并给每项 evidence/assumption。",
+      "verification": [
+        "检查文件头硬件参数表",
+        "检查 OPEN 项是否阻断 pre-flash"
+      ],
+      "evidence": [
+        {
+          "level": "E5",
+          "source": "asmc/SKILL.md",
+          "note": "不确定外设参数先确认"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "hardware"
+      ],
+      "tags": [
+        "ai",
+        "hardware"
+      ]
+    },
+    {
+      "rule_id": "HK-GOV-003",
+      "title": "交付必须声明目标工具链",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "delivery"
+      ],
+      "requirement": "每个 ASM 交付必须声明 company_ide、python_source_module_cli、simulator、hardware 中哪些是目标与验收工具，并说明已知限制。",
+      "rationale": "同一源码在不同路径的 DB 行为不同。",
+      "bad_example": "只写“编译通过”。",
+      "good_example": "写明“公司 IDE 构建；Python CLI 仅作无 DB 代码检查；实板验收”。",
+      "verification": [
+        "检查交付清单 toolchain 字段"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "asmc/scripts/asmc_compile.py",
+          "note": "CLI 直接调用源码模块"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "toolchain"
+      ]
+    },
+    {
+      "rule_id": "HK-GOV-004",
+      "title": "历史探针不得直接作为量产模板",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "reuse"
+      ],
+      "requirement": "文件名含 probe/check/sanity 或证据等级低于 E1 的代码不得直接复制为正式驱动；必须与 verified 基线对照并删除已被推翻的补偿。",
+      "rationale": "历史探针包含为定位问题而故意写入的错误假设。",
+      "bad_example": "复制 hello_db_tabl_tabh_hxd_probe.asm 的 nibble_swap 逻辑。",
+      "good_example": "从 ssd1306_oled_*_db_raw_verified.asm 提取结构。",
+      "verification": [
+        "静态检查文件来源标签",
+        "代码评审核对 evidence matrix"
+      ],
+      "evidence": [
+        {
+          "level": "E5",
+          "source": "hello_db_tabl_tabh_hxd_probe.asm",
+          "note": "旧假设反例"
+        },
+        {
+          "level": "E1",
+          "source": "ssd1306_oled_heello_db_raw_verified.asm",
+          "note": "新基线"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "reuse"
+      ]
+    },
+    {
+      "rule_id": "HK-GOV-005",
+      "title": "OPEN 项集中管理",
+      "normative_level": "MUST",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "governance"
+      ],
+      "requirement": "所有未确认结论必须进入 10-证据索引与待确认事项.md 或 analysis/evidence-matrix.json，不得以散落 TODO/TBD 伪装成已完成规则。",
+      "rationale": "集中管理才能阻止 AI 忽略不确定性。",
+      "bad_example": "在模板中留 TODO: maybe swap bytes。",
+      "good_example": "引用 OPEN-ROM-BUS，并使用已验证路径。",
+      "verification": [
+        "搜索 TODO/TBD/猜测/可能",
+        "核对 OPEN ID"
+      ],
+      "evidence": [
+        {
+          "level": "E6",
+          "source": "规范设计约束",
+          "note": "可追溯性要求"
+        }
+      ],
+      "confidence": "medium",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "open"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-001",
+      "title": "源码编码与结束标记",
+      "normative_level": "SHOULD",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "syntax"
+      ],
+      "requirement": "ASM 应使用 UTF-8、LF 或 CRLF 一致换行、分号注释，并以 END 明确结束；禁止不可见控制字符。",
+      "rationale": "稳定跨 IDE、CLI 和 AI 工具处理。",
+      "bad_example": "混合编码且无 END。",
+      "good_example": "UTF-8 源码，末尾 END。",
+      "verification": [
+        "以 utf-8-sig 解码",
+        "检查 END"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "53 个 ASM 清单",
+          "note": "当前工程格式"
+        }
+      ],
+      "confidence": "medium",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "style"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-002",
+      "title": "十六进制写法不得混搭",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "syntax"
+      ],
+      "requirement": "数值只能使用 0x80、80H 或十进制 128 等单一形式；立即数写 #0x80 或 #80H；禁止 #0x80H。",
+      "rationale": "词法器明确拒绝同时使用 0x 前缀与 H 后缀。",
+      "bad_example": "MOV A,#0x80H",
+      "good_example": "MOV A,#0x80",
+      "verification": [
+        "运行 asm_static_check.py",
+        "编译器词法检查"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "HK_ASM_Compiler/src/core/lexer.py",
+          "note": "混搭语法报错"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "number"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-003",
+      "title": "地址和常量表达清晰",
+      "normative_level": "SHOULD",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "syntax"
+      ],
+      "requirement": "SFR/SRAM 直接地址优先写 80H 或 0x80；裸十进制主要用于有名称的 EQU、计数或尺寸，避免把十进制地址混入寄存器操作。",
+      "rationale": "可减少把十进制 80 误解为 0x80。",
+      "bad_example": "MOV 80,A  ; 实际十进制 80",
+      "good_example": "MOV 80H,A",
+      "verification": [
+        "审查裸十进制地址"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "assembler.py::_parse_value",
+          "note": "支持多种数值格式"
+        }
+      ],
+      "confidence": "medium",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "number"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-004",
+      "title": "JMP/CALL 只用标签或 EQU 符号",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "control_flow"
+      ],
+      "requirement": "JMP/CALL 目标必须是代码标签；固定绝对地址必须先用 EQU 定义符号。当前兼容基线禁止直接数字字面量。",
+      "rationale": "当前源码模块把 03FFH/0x03FF 识别为 R，导致操作数匹配失败。",
+      "bad_example": "JMP 03FFH",
+      "good_example": "RESET_VECTOR EQU 03FFH\nJMP RESET_VECTOR",
+      "verification": [
+        "静态检查直接数字目标",
+        "编译探针"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "analysis/probe-results.json",
+          "note": "四种直接数字写法失败"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "python_source_module_cli",
+        "company_ide"
+      ],
+      "tags": [
+        "jump"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-005",
+      "title": "操作数字段必须在范围内",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "syntax"
+      ],
+      "requirement": "k8 必须为 0..255，位索引必须为 0..7，直接数据地址必须为 0..255，k10 必须为 0..1023。",
+      "rationale": "越界可能被截断、误寻址或只产生 warning。",
+      "bad_example": "BSET 80H,8",
+      "good_example": "BSET 80H,7",
+      "verification": [
+        "编译器诊断",
+        "静态范围检查"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "assembler.py operand handlers",
+          "note": "字段掩码与范围"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "range"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-006",
+      "title": "比较前重新装载 A",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "control_flow"
+      ],
+      "requirement": "连续使用 SE #K 或任何会读取/改写 A 的比较链时，每次比较前必须从稳定 SRAM 或常量重新装载原值，除非指令副作用已逐条证明。",
+      "rationale": "项目数码管调试中不能假设 A 在多次比较后保持不变。",
+      "bad_example": "MOV A,90H\nSE #1\nJMP D1\nSE #2",
+      "good_example": "MOV A,90H\nSE #1\nJMP D1\nMOV A,90H\nSE #2",
+      "verification": [
+        "检查连续 SE 路径",
+        "实板数字映射测试"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "seven_segment_counter_0001_9999.asm",
+          "note": "实板踩坑总结"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "hardware"
+      ],
+      "tags": [
+        "flags",
+        "accumulator"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-007",
+      "title": "子程序声明寄存器破坏集",
+      "normative_level": "MUST",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "architecture"
+      ],
+      "requirement": "可复用子程序必须在入口注释中声明输入、输出、clobbers、使用的 SRAM、是否可重入和时序；调用方不得假设 A 或 scratch 被保留。",
+      "rationale": "HK64S8x 代码大量通过 A 和固定 SRAM 传参。",
+      "bad_example": "I2C_SEND: ; 无契约",
+      "good_example": "; IN: A=data; OUT: none; CLOBBERS: A,80H,81H; NOT REENTRANT",
+      "verification": [
+        "审查子程序头注释",
+        "检查调用链 SRAM 冲突"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "项目 ASM 调用频率清单",
+          "note": "CALL 频繁且共享 scratch"
+        }
+      ],
+      "confidence": "medium",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "contract"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-008",
+      "title": "RET A,#K 暂禁量产使用",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "instruction"
+      ],
+      "requirement": "RET A,#K 虽能由当前编译器生成 0xA1KK，但在芯片/FAE 给出实板语义证据前不得用于正式交付。",
+      "rationale": "源码中存在另一路“假设操作码”实现，项目无实板证据。",
+      "bad_example": "RET A,#12H",
+      "good_example": "MOV A,#12H\nRET",
+      "verification": [
+        "静态检查 RET A,#",
+        "查询 OPEN-RET-AK"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "analysis/probe-results.json",
+          "note": "生成 0xA112/0xA101"
+        },
+        {
+          "level": "E3",
+          "source": "assembler.py::_handle_ret_ak",
+          "note": "存在假设代码"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "hardware"
+      ],
+      "tags": [
+        "restricted"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-009",
+      "title": "CPL/CPLR 关键逻辑前需语义确认",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "instruction"
+      ],
+      "requirement": "CPL/CPLR 的表格说明存在疑点；未做硬件真值表前不得用于安全或关键状态逻辑。",
+      "rationale": "操作码正确不等于语义说明正确。",
+      "bad_example": "用 CPL 实现关键极性反转且无测试。",
+      "good_example": "用 XOR A,#0xFF 或经验证的等价序列，并保留测试。",
+      "verification": [
+        "搜索 CPL/CPLR",
+        "要求实板真值表"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "instruction_set.json",
+          "note": "notes 疑似错误"
+        }
+      ],
+      "confidence": "medium",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "hardware"
+      ],
+      "tags": [
+        "restricted"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-010",
+      "title": "低功耗指令必须按板级场景验证",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "instruction"
+      ],
+      "requirement": "IDLE/STOP 前必须确认唤醒源、WDT、GPIO 电平和外设状态，并执行实板恢复测试。",
+      "rationale": "不可恢复的停止状态可能导致设备失联。",
+      "bad_example": "初始化后直接 STOP。",
+      "good_example": "先定义 wakeup contract，再单独测试 IDLE/STOP。",
+      "verification": [
+        "审查 power-mode test record"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "instruction probes",
+          "note": "只证明机器字可生成"
+        }
+      ],
+      "confidence": "medium",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "power"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-011",
+      "title": "使用修正后的指令拼写",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "syntax"
+      ],
+      "requirement": "源代码必须写 XOR A,#K、BTSZ R,b、BTSNZ R,b；MOV A,#K 按 k8 立即数处理。2026-07 元数据已修复 BTSZ/BTSNZ，但 XOR 标点和 MOV operand type 仍需规范化。",
+      "rationale": "不同元数据版本的修复进度不同，交付源码必须使用规范化 reference，而不是假定原始表格已全部修正。",
+      "bad_example": "XOR A.#1\nBTSZ,80H,3",
+      "good_example": "XOR A,#1\nBTSZ 80H,3",
+      "verification": [
+        "对照 rules/instruction-reference.json"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "instruction_parser.py",
+          "note": "运行时修正元数据"
+        },
+        {
+          "level": "E4",
+          "source": "65 变体探针",
+          "note": "规范拼写全部通过"
+        },
+        {
+          "level": "E5",
+          "source": "rules/instruction-metadata.json",
+          "note": "2026-07 导出已修复 BTSZ/BTSNZ；XOR A.#K 与 MOV A,#K operand type 仍保留历史脏字段"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "metadata"
+      ]
+    },
+    {
+      "rule_id": "HK-MEM-001",
+      "title": "交付源码使用 REG825.INC 官方 SFR 名",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "registers"
+      ],
+      "requirement": "公司 IDE 交付源码必须使用 REG825.INC 的 *_PPU/*_PPD/*_POD/*_POE/*_PIO 等官方名称。",
+      "rationale": "CLI 内部兼容名不是公司源码规范名。",
+      "bad_example": "MOV PB_OE,A",
+      "good_example": "MOV PB_POE,A",
+      "verification": [
+        "静态扫描内部别名",
+        "按地址交叉校验 INC"
+      ],
+      "evidence": [
+        {
+          "level": "E2",
+          "source": "Standards _rules/REG825.INC",
+          "note": "官方名称"
+        },
+        {
+          "level": "E3",
+          "source": "asmc_compile.py:65-101",
+          "note": "兼容转换"
+        },
+        {
+          "level": "E5",
+          "source": "rules/register-reference.json",
+          "note": "2026-07 register metadata 已统一为 PA/PB 的 *_PPU/*_PPD/*_POD/*_POE 正式名"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "register"
+      ]
+    },
+    {
+      "rule_id": "HK-MEM-002",
+      "title": "禁止无必要 SFR 二次别名",
+      "normative_level": "MUST",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "registers"
+      ],
+      "requirement": "不得把官方 SFR 再 EQU 成 REG_xxx 或业务别名后作为指令操作数；只有跨芯片适配层经评审可例外。",
+      "rationale": "别名会掩盖寄存器地址错误并触发不同解析路径。",
+      "bad_example": "REG_PA_PIO EQU 38H\nMOV REG_PA_PIO,A",
+      "good_example": "MOV PA_PIO,A",
+      "verification": [
+        "扫描 EQU 到 00H..7FH",
+        "代码评审例外说明"
+      ],
+      "evidence": [
+        {
+          "level": "E5",
+          "source": "pa0_pa5_led_marquee.asm",
+          "note": "历史兼容反例"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "register"
+      ]
+    },
+    {
+      "rule_id": "HK-MEM-003",
+      "title": "严格区分 SFR 与 SRAM",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "memory"
+      ],
+      "requirement": "0x00..0x7F 只按 SFR 使用；0x80..0xBF 只按 SRAM 使用。禁止把未定义的 SFR 地址当通用变量。",
+      "rationale": "数据空间含义不同，误用会改变硬件配置。",
+      "bad_example": "MOV 20H,A  ; 当普通变量",
+      "good_example": "MOV 80H,A  ; scratch",
+      "verification": [
+        "地址范围静态检查",
+        "查 REG825.INC"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "chip_manager.py / config",
+          "note": "SFR/SRAM 范围"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "hardware"
+      ],
+      "tags": [
+        "memory"
+      ]
+    },
+    {
+      "rule_id": "HK-MEM-004",
+      "title": "文件头必须有 SRAM 分配表",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "memory"
+      ],
+      "requirement": "使用 SRAM 的正式 ASM 必须在文件头列出地址、名称、生命周期、所有者和 clobber 关系。",
+      "rationale": "固定地址传参容易发生隐式复用。",
+      "bad_example": "多个子程序都用 80H，无说明。",
+      "good_example": "80H I2C_SHIFT scratch; 90H..93H BCD_STATE persistent",
+      "verification": [
+        "扫描 SRAM 地址并对照分配表"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "数码管状态污染案例",
+          "note": "长期状态被 scratch 覆盖"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "memory"
+      ]
+    },
+    {
+      "rule_id": "HK-MEM-005",
+      "title": "长期状态与 scratch 分区",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "memory"
+      ],
+      "requirement": "计数器、模式、通信状态等长期变量必须与延时、移位、段码等 scratch 使用不重叠地址区间。",
+      "rationale": "重叠曾导致 0000→0101→0202 等同步增长。",
+      "bad_example": "BCD 个位和 delay counter 共用 90H。",
+      "good_example": "80H..8FH scratch；90H..9FH persistent。",
+      "verification": [
+        "静态分配表冲突检查",
+        "长时间实板运行"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "seven_segment_counter_0001_9999.asm",
+          "note": "实板症状"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "hardware"
+      ],
+      "tags": [
+        "memory"
+      ]
+    },
+    {
+      "rule_id": "HK-MEM-006",
+      "title": "OPTION 空间独立管理",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "memory"
+      ],
+      "requirement": "OPTION 字节必须作为独立烧录/config 生命周期管理，不得在运行时代码中当作 SFR/SRAM 读写，也不得由 AI 猜默认值。",
+      "rationale": "同地址数值不代表同一物理空间。",
+      "bad_example": "MOV OPT_OSC16M,A",
+      "good_example": "在 hkproj/烧录配置中显式管理 OPTION；ASM 仅引用运行时 SFR。",
+      "verification": [
+        "检查烧录工件和配置",
+        "阻断未知 OPTION"
+      ],
+      "evidence": [
+        {
+          "level": "E2",
+          "source": "REG825.INC",
+          "note": "32-byte OPTION 定义"
+        },
+        {
+          "level": "E5",
+          "source": "README.md",
+          "note": "OPTION 后续独立接入"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "option"
+      ]
+    },
+    {
+      "rule_id": "HK-MEM-007",
+      "title": "寄存器地址必须双源核对",
+      "normative_level": "SHOULD",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "registers"
+      ],
+      "requirement": "新增或低频 SFR 使用前，应同时核对 REG825.INC 地址与 rules/register-reference.json 位定义；冲突时标 OPEN。当前 LVD/LVD1/LVD2/LVD3 差异不得静默消解。",
+      "rationale": "INC 适合公司 IDE 源码名称/地址，完整表适合位语义；2026-07 元数据证明两者并非始终一一对应。",
+      "bad_example": "仅凭旧示例猜寄存器位。",
+      "good_example": "PA_POE=35H，并核对 register_set 对应字段。",
+      "verification": [
+        "代码评审记录两个来源"
+      ],
+      "evidence": [
+        {
+          "level": "E2",
+          "source": "REG825.INC + rules/register-reference.json",
+          "note": "互补资料；register-alias-policy.json 记录 4 个 OPEN 差异"
+        }
+      ],
+      "confidence": "medium",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "register"
+      ]
+    },
+    {
+      "rule_id": "HK-LAYOUT-001",
+      "title": "程序地址统一按 word",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "layout"
+      ],
+      "requirement": "ORG、标签、MAP、PC、JMP、CALL 全部使用 16-bit MTP word 地址；仅 BIN/HEX 文件偏移按 byte 解释。",
+      "rationale": "混淆 word/byte 会造成表页和跳转地址翻倍。",
+      "bad_example": "把 MAP 0x0100 当作 BIN byte 0x0100。",
+      "good_example": "MAP word 0x0100 对应 BIN byte offset 0x0200。",
+      "verification": [
+        "检查地址单位注释",
+        "对照 MAP/BIN"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "assembler.py::_handle_k10_operand",
+          "note": "明确 word address"
+        },
+        {
+          "level": "E2",
+          "source": "MAP/BIN 实物",
+          "note": "2 bytes/word"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "address"
+      ]
+    },
+    {
+      "rule_id": "HK-LAYOUT-002",
+      "title": "程序空间不得越过 0x03FF",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "layout"
+      ],
+      "requirement": "HK64S8101 当前配置的所有写入 word 地址必须位于 0x0000..0x03FF，总容量 1024 words/2048 bytes。",
+      "rationale": "超范围会被拒绝或跳转字段截断。",
+      "bad_example": "ORG 0x0400",
+      "good_example": "最高写入地址 <= 0x03FF",
+      "verification": [
+        "静态布局计算",
+        "MAP/BIN 大小检查"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "chip_manager.py / asmc_compile.py",
+          "note": "program range"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "hardware"
+      ],
+      "tags": [
+        "capacity"
+      ]
+    },
+    {
+      "rule_id": "HK-LAYOUT-003",
+      "title": "ORG 仅用于向量或受控分段",
+      "normative_level": "MUST",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "layout"
+      ],
+      "requirement": "除复位/中断向量、同页数据块或明确链接布局外，不得使用不必要 ORG。每个 ORG 必须注释目的、区间和容量。",
+      "rationale": "ORG 空洞由 0x0000 填充并扩大 BIN。",
+      "bad_example": "每个函数前随意 ORG。",
+      "good_example": "函数连续布局；只为 0x0000、0x0008、表页边界使用 ORG。",
+      "verification": [
+        "统计 ORG 数和 hole_words",
+        "审查注释"
+      ],
+      "evidence": [
+        {
+          "level": "E2",
+          "source": "build/*.bin",
+          "note": "空洞实际填零"
+        },
+        {
+          "level": "E3",
+          "source": "assembler.py",
+          "note": "address index 写入"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "org"
+      ]
+    },
+    {
+      "rule_id": "HK-LAYOUT-004",
+      "title": "禁止 ORG 区间重叠",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "layout"
+      ],
+      "requirement": "任意指令或 DB word 地址不得被写入两次；编译器 warning“后续覆盖前值”必须升级为交付错误。",
+      "rationale": "覆盖会悄悄改变前段代码/数据。",
+      "bad_example": "ORG 0x20 写 16 words，随后 ORG 0x28。",
+      "good_example": "静态计算各段 [start,end] 无交集。",
+      "verification": [
+        "asm_static_check.py",
+        "将编译 warning 当 error"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "assembler.py:277",
+          "note": "重复写入后值覆盖"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "org"
+      ]
+    },
+    {
+      "rule_id": "HK-LAYOUT-005",
+      "title": "容量按最高写入地址核算",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "layout"
+      ],
+      "requirement": "容量验收必须同时报告 occupied_words、highest_written_word、span_words、hole_words 和 BIN size，不得只统计有效指令数。",
+      "rationale": "稀疏 ORG 会让少量指令生成接近满容量 BIN。",
+      "bad_example": "“只有 300 条指令，所以一定能放下”。",
+      "good_example": "最高 word=0x02FD，则 span=0x02FE words，BIN 期望 1532 bytes。",
+      "verification": [
+        "对照 MAP 代码大小与 BIN size"
+      ],
+      "evidence": [
+        {
+          "level": "E2",
+          "source": "avatar verified MAP",
+          "note": "766 words = 1532 bytes"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "capacity"
+      ]
+    },
+    {
+      "rule_id": "HK-LAYOUT-006",
+      "title": "跳转越界 warning 视为错误",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "control_flow"
+      ],
+      "requirement": "JMP/CALL 目标超 0x03FF 时必须阻断交付；不得接受编译器 warning 后的 &0x3FF 截断。",
+      "rationale": "截断会跳到完全不同地址。",
+      "bad_example": "TARGET EQU 0400H\nJMP TARGET",
+      "good_example": "目标范围静态校验为 0..03FFH。",
+      "verification": [
+        "扫描 EQU/标签地址",
+        "warnings=0 门禁"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "assembler.py:641-646",
+          "note": "warning 后掩码"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "python_source_module_cli",
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "jump"
+      ]
+    },
+    {
+      "rule_id": "HK-LAYOUT-007",
+      "title": "向量地址按芯片型号确认",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "layout"
+      ],
+      "requirement": "当前 HK64S8101 模板使用复位 0x0000、项目中断入口 0x0008；换芯片型号时必须从芯片资料重新确认，不得跨型号复制。",
+      "rationale": "芯片家族内部向量可能不同。",
+      "bad_example": "所有 HK64S8x 默认 0x0008。",
+      "good_example": "hkproj 指定 HK64S8101，并记录向量证据。",
+      "verification": [
+        "核对 mcu_type",
+        "核对芯片向量表"
+      ],
+      "evidence": [
+        {
+          "level": "E5",
+          "source": "53 个项目 ASM",
+          "note": "当前项目惯例"
+        }
+      ],
+      "confidence": "medium",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "vector"
+      ]
+    },
+    {
+      "rule_id": "HK-LAYOUT-008",
+      "title": "正式构建必须产出并审查 MAP",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "build"
+      ],
+      "requirement": "正式构建必须生成 MAP，并检查关键标签、向量、表/发送函数页、最高地址和符号数量。",
+      "rationale": "仅看 BIN 无法可靠验证源码布局意图。",
+      "bad_example": "烧录前只确认 bin 存在。",
+      "good_example": "保存 source+map+bin+hex+hash 审查记录。",
+      "verification": [
+        "pre-flash checklist",
+        "自动解析 MAP"
+      ],
+      "evidence": [
+        {
+          "level": "E2",
+          "source": "build/*.map",
+          "note": "真实布局证据"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "map"
+      ]
+    },
+    {
+      "rule_id": "HK-TOOLCHAIN-DB-001",
+      "title": "Python 源码模块 CLI 禁止构建含 DB 的交付件",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "toolchain"
+      ],
+      "requirement": "只要源码含 DB，当前 python_source_module_cli 的成功返回、BIN/HEX/MAP 都不得作为可烧录验收件；必须改用已验证能生成 DB 的公司 IDE 或修复并回归 CLI。",
+      "rationale": "assembler.py 两遍扫描均不为 DB 分配/生成机器码。",
+      "bad_example": "含 DB 项目 CLI 返回 0 error(s) 后直接烧录。",
+      "good_example": "静态发现 DB 即把 CLI 构建标记 unsupported，并要求 company_ide artifact。",
+      "verification": [
+        "扫描 DB",
+        "检查构建器标识",
+        "对 BIN 中表 marker"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "assembler.py:167-239",
+          "note": "DB 不增地址/不发机器码"
+        },
+        {
+          "level": "E4",
+          "source": ".embeddedskills/build/probe_db_table.bin",
+          "note": "0x0080 表缺失"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "db",
+        "blocker"
+      ]
+    },
+    {
+      "rule_id": "HK-TABLE-002",
+      "title": "理解 IDE DB 物理编码但不反推运行时补偿",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "table"
+      ],
+      "requirement": "公司 IDE 当前样本把 DB B0,B1 编入 word=nibble_swap(B0)<<8|B1，BIN 小端为 B1,nibble_swap(B0)；该规则只用于工件审计，不能用于改变显示源数据。",
+      "rationale": "物理编码和芯片 TABL/TABH 读出语义不是同一层。",
+      "bad_example": "看到 BIN 后把 DB 改成 nibble_swap(B1),B0。",
+      "good_example": "用 marker 检查 IDE 工件，同时保持源码原始字节。",
+      "verification": [
+        "对照 probe_db_layout_values.bin",
+        "实板显示回归"
+      ],
+      "evidence": [
+        {
+          "level": "E2",
+          "source": "build/probe_db_layout_values.bin",
+          "note": "34 21 78 65 ..."
+        },
+        {
+          "level": "E1",
+          "source": "verified OLED ASM",
+          "note": "原始 DB 正确"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "db"
+      ]
+    },
+    {
+      "rule_id": "HK-TABLE-003",
+      "title": "DB 源码保持消费者原始字节序",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "table"
+      ],
+      "requirement": "OLED/字库/协议表的 DB 必须按消费者期望的原始字节顺序写入，不得做 nibble swap、word swap 或 BIN 补偿，除非有新的 E1 证据和独立规则版本。",
+      "rationale": "旧补偿会造成字符和头像细节乱码。",
+      "bad_example": "DB NIBBLE_SWAP(B1),B0",
+      "good_example": "DB B0,B1",
+      "verification": [
+        "源码数据与原始资产哈希/脚本对照",
+        "实板小图 marker"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "ssd1306_oled_*_db_raw_verified.asm",
+          "note": "实板通过"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "db",
+        "oled"
+      ]
+    },
+    {
+      "rule_id": "HK-TABLE-004",
+      "title": "成对 DB 运行时先 TABL 后 TABH",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "table"
+      ],
+      "requirement": "对 DB B0,B1 的每个程序 word，必须以相同索引先执行 TABL 并消费，再重新装载索引执行 TABH 并消费。",
+      "rationale": "A 会被 TABL 的返回值覆盖，TABH 前必须重新装载索引。",
+      "bad_example": "MOV A,index\nTABL\nCALL SEND\nTABH",
+      "good_example": "MOV A,index\nTABL\nCALL SEND\nMOV A,index\nTABH\nCALL SEND",
+      "verification": [
+        "检查 TABL/TABH 序列",
+        "实板 marker"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "verified OLED ASM",
+          "note": "先低后高和重载索引"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "table"
+      ]
+    },
+    {
+      "rule_id": "HK-TABLE-005",
+      "title": "TABL/TABH 与数据同一 256-word 页",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "table"
+      ],
+      "requirement": "执行 TABL/TABH 的指令地址与目标 DB word 地址的高地址页必须相同，即 address>>8 相等。",
+      "rationale": "A 只提供页内低 8 位；跨页通用函数读错页。",
+      "bad_example": "0x02xx 的函数读取 0x00xx 表。",
+      "good_example": "DATA0 0x0020/SEND0 0x0090；DATA1 0x0100/SEND1 0x0170。",
+      "verification": [
+        "解析 MAP：table>>8 == sender>>8",
+        "实板跨页回归"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "avatar verified ASM",
+          "note": "224+224+64 分页实板通过"
+        },
+        {
+          "level": "E2",
+          "source": "avatar verified MAP",
+          "note": "标签页匹配"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "table",
+        "page"
+      ]
+    },
+    {
+      "rule_id": "HK-TABLE-006",
+      "title": "大表按页分块并就近放发送函数",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "table"
+      ],
+      "requirement": "超过单页可用空间的大表必须拆成多个偶数字节块，每块与自己的发送函数同页；块大小需为代码留出余量。",
+      "rationale": "单一连续表或通用发送器容易跨页。",
+      "bad_example": "512 bytes 放一表、一个发送函数。",
+      "good_example": "64x64 采用 224+224+64 bytes，发送函数分别同页。",
+      "verification": [
+        "MAP 页检查",
+        "块长度求和等于资产长度"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "ssd1306_oled_avatar_64x64_db_raw_verified.asm",
+          "note": "已验证布局"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "table",
+        "page"
+      ]
+    },
+    {
+      "rule_id": "HK-TABLE-007",
+      "title": "每个 DB 指令显式偶数字节",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "table"
+      ],
+      "requirement": "在公司 IDE 对奇数字节填充规则确认前，每个 DB 指令应包含偶数字节；总表奇数长度必须显式补 00H 并让逻辑长度排除 padding。",
+      "rationale": "TABL/TABH 按 word 成对消费，隐式填充规则仍为 OPEN。",
+      "bad_example": "DB 01H,02H,03H",
+      "good_example": "DB 01H,02H,03H,00H ; last is padding",
+      "verification": [
+        "静态检查 odd DB directive",
+        "核对逻辑长度"
+      ],
+      "evidence": [
+        {
+          "level": "OPEN",
+          "source": "OPEN-DB-ODD",
+          "note": "奇数填充未确认"
+        }
+      ],
+      "confidence": "medium",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "db"
+      ]
+    },
+    {
+      "rule_id": "HK-TABLE-008",
+      "title": "表计数使用 word 数并明确字节总量",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "table"
+      ],
+      "requirement": "查表循环索引每次递增 1 word；每次 TABL+TABH 发送 2 bytes。计数器必须写 word_count，注释同时给 byte_count。",
+      "rationale": "把 224 bytes 当 224 次循环会越界并多发一倍。",
+      "bad_example": "MOV COUNT,#0xE0 ; 224 bytes",
+      "good_example": "MOV COUNT,#0x70 ; 112 words = 224 bytes",
+      "verification": [
+        "块字节数/2 与循环计数一致"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "avatar verified ASM",
+          "note": "0x70 words 对应 224 bytes"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "table"
+      ]
+    },
+    {
+      "rule_id": "HK-TABLE-009",
+      "title": "模拟器不得证明跨页查表正确",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "simulation"
+      ],
+      "requirement": "当前 simulator.py 的 TABL/TABH 固定从 rom[A] 即 page 0 读取；任何 0x01xx 以上表的模拟结果都不得作为验收。",
+      "rationale": "模拟器模型遗漏当前 PC 页。",
+      "bad_example": "跨页头像在 simulator 通过就签收。",
+      "good_example": "用 MAP 静态页检查 + 公司 IDE 工件 + 实板验证。",
+      "verification": [
+        "检查表地址",
+        "阻断 simulator-only evidence"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "simulator.py:342-349",
+          "note": "addr=self.acc&0xFF"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "simulator"
+      ],
+      "tags": [
+        "simulation",
+        "table"
+      ]
+    },
+    {
+      "rule_id": "HK-TABLE-010",
+      "title": "数据表必须可追溯到原始资产",
+      "normative_level": "SHOULD",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "table"
+      ],
+      "requirement": "图片/字库 DB 应记录生成脚本、尺寸、格式、原始文件 hash 和生成后 byte count；禁止手工无记录改大表。",
+      "rationale": "手工编辑难以发现少字节、错页序和位方向。",
+      "bad_example": "直接粘贴 512 字节，无来源。",
+      "good_example": "记录 source.png SHA256、128x64 page converter 版本和输出 hash。",
+      "verification": [
+        "资产清单核对",
+        "byte count/hash 检查"
+      ],
+      "evidence": [
+        {
+          "level": "E6",
+          "source": "可重复构建原则",
+          "note": "数据工件追溯"
+        }
+      ],
+      "confidence": "medium",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "asset"
+      ]
+    },
+    {
+      "rule_id": "HK-GPIO-001",
+      "title": "GPIO 板级契约必须显式",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "gpio"
+      ],
+      "requirement": "每个驱动文件头必须声明端口位、方向寄存器、输出寄存器、上拉/下拉/开漏配置、空闲电平和外部电路。",
+      "rationale": "寄存器代码本身无法表达接线和电气假设。",
+      "bad_example": "仅写 BSET PB_PIO,7。",
+      "good_example": "SDA=PB7, SCL=PB6, pull-up enabled, idle high, ACK release via PB_POE.",
+      "verification": [
+        "检查 board_profile 注释",
+        "原理图/实板确认"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "verified OLED ASM",
+          "note": "当前板明确引脚"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "gpio"
+      ]
+    },
+    {
+      "rule_id": "HK-I2C-001",
+      "title": "I2C 地址必须注明 7-bit 与线上的 8-bit 值",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "i2c"
+      ],
+      "requirement": "I2C 设备地址必须同时记录 7-bit 地址和实际发送的 write/read byte，禁止只写一个含糊十六进制值。",
+      "rationale": "0x3C 与 0x78 常被混淆。",
+      "bad_example": "OLED_ADDR=0x78  ; 未说明",
+      "good_example": "SSD1306 7-bit=0x3C; write byte=0x78。",
+      "verification": [
+        "审查地址注释",
+        "逻辑分析仪确认"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "verified OLED ASM",
+          "note": "write byte 0x78"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "i2c"
+      ]
+    },
+    {
+      "rule_id": "HK-I2C-002",
+      "title": "第 9 个时钟前释放 SDA",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "i2c"
+      ],
+      "requirement": "发送 8 位后必须清 PB_POE 对应 SDA 位以释放总线，再拉高 SCL、采样 ACK，拉低 SCL，恢复输出使能并回到空闲高。",
+      "rationale": "主机推挽高与从机 ACK 拉低会总线争用。",
+      "bad_example": "第 8 位后保持 SDA 输出高并采样。",
+      "good_example": "BCLR PB_POE,7; BSET PB_PIO,6; MOV A,PB_PIO; AND A,#80H; BCLR PB_PIO,6; BSET PB_POE,7。",
+      "verification": [
+        "静态匹配 ACK 序列",
+        "示波器/逻辑分析仪看第9时钟"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "verified OLED ASM",
+          "note": "实板可通信"
+        },
+        {
+          "level": "E5",
+          "source": "README.md",
+          "note": "已记录踩坑"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "i2c",
+        "electrical"
+      ]
+    },
+    {
+      "rule_id": "HK-I2C-003",
+      "title": "不得用软件高电平对抗外设下拉",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "i2c"
+      ],
+      "requirement": "开漏型总线的“1”应通过释放输出和上拉形成；若当前板使用推挽发送数据位，至少 ACK 周期必须切换为高阻，且需确认无争用。",
+      "rationale": "电气争用可能导致通信不稳定或器件应力。",
+      "bad_example": "SDA 永远作为推挽输出。",
+      "good_example": "明确区分 data phase 与 ACK release phase。",
+      "verification": [
+        "检查 POE 切换",
+        "测量 SDA 电平/电流"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "I2C ACK 修复",
+          "note": "释放后稳定"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "i2c",
+        "electrical"
+      ]
+    },
+    {
+      "rule_id": "HK-I2C-004",
+      "title": "I2C 时序变化必须测量",
+      "normative_level": "SHOULD",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "i2c"
+      ],
+      "requirement": "修改主频、NOP 数、延时循环或上拉阻值后，必须重新测量 SCL 频率、上升时间和 setup/hold；不得假设原时序继续有效。",
+      "rationale": "bit-bang 时序直接依赖指令周期和负载。",
+      "bad_example": "换 16MHz 后不测时序。",
+      "good_example": "记录主频、电压、SCL 实测和逻辑分析截图。",
+      "verification": [
+        "硬件验收记录"
+      ],
+      "evidence": [
+        {
+          "level": "E6",
+          "source": "bit-bang 时序原理",
+          "note": "板级变化敏感"
+        }
+      ],
+      "confidence": "medium",
+      "toolchain_applicability": [
+        "hardware"
+      ],
+      "tags": [
+        "timing"
+      ]
+    },
+    {
+      "rule_id": "HK-OLED-001",
+      "title": "全亮验收必须写 GDDRAM",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "oled"
+      ],
+      "requirement": "验证 OLED 数据链路时必须设置全屏地址范围并写入 1024 个 0xFF；A5H/AFH 只能证明部分命令链路，不得作为唯一证据。",
+      "rationale": "强制全亮模式绕过 GDDRAM 内容。",
+      "bad_example": "只发送 A5H、AFH 后宣布写显存成功。",
+      "good_example": "恢复 RAM display，写 8 pages × 128 columns 的 FF。",
+      "verification": [
+        "实板全白",
+        "发送计数=1024"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "项目 OLED 调试阶梯",
+          "note": "GDDRAM 全白区分链路"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "oled"
+      ]
+    },
+    {
+      "rule_id": "HK-OLED-002",
+      "title": "OLED 按分层阶梯验证",
+      "normative_level": "MUST",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "oled"
+      ],
+      "requirement": "新驱动应依次验证：强制全亮→GDDRAM 全白→00/FF 条纹→非对称 marker→字符→目标图片；失败时停在最小层定位。",
+      "rationale": "一次上大图会混淆初始化、总线、寻址、格式和查表问题。",
+      "bad_example": "首次烧录直接显示 64x64 头像。",
+      "good_example": "每层保留可复现实验和预期截图/描述。",
+      "verification": [
+        "hardware-acceptance checklist"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "OLED 探针序列",
+          "note": "项目实际定位过程"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "oled",
+        "debug"
+      ]
+    },
+    {
+      "rule_id": "HK-OLED-003",
+      "title": "SSD1306 数据采用 page 格式",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "oled"
+      ],
+      "requirement": "128x64 SSD1306 资产必须按 8 pages × 128 columns 排列；每 byte 表示纵向 8 像素，bit0 是该 page 顶部像素。",
+      "rationale": "常见水平位图格式会旋转/打散。",
+      "bad_example": "按每字节横向8像素直接发送。",
+      "good_example": "converter 输出 page-major、column-minor、LSB-top。",
+      "verification": [
+        "用非对称图案校验方向",
+        "byte count=1024 全屏"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "verified avatar display",
+          "note": "page 格式通过"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "oled",
+        "format"
+      ]
+    },
+    {
+      "rule_id": "HK-OLED-004",
+      "title": "窗口尺寸与发送字节数一致",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "oled"
+      ],
+      "requirement": "设置的列范围、page 范围与发送字节数必须满足 bytes=(col_end-col_start+1)*(page_end-page_start+1)。",
+      "rationale": "少发或多发会移位、换行或覆盖。",
+      "bad_example": "64x64 窗口却发送 500 bytes。",
+      "good_example": "列32..95、页0..7，发送64*8=512 bytes。",
+      "verification": [
+        "静态计算范围",
+        "逻辑分析发送计数"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "verified 64x64 avatar",
+          "note": "512 bytes"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "oled"
+      ]
+    },
+    {
+      "rule_id": "HK-7SEG-001",
+      "title": "数码管接线映射写入板级配置",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "seven_segment"
+      ],
+      "requirement": "当前板必须明确 PB7=A、PB6=B、PB5=C、PB4=D、PB3=E、PB2=F、PB1=G、PB0=DP；换板必须重新确认。",
+      "rationale": "段位顺序错误会显示完全不同字符。",
+      "bad_example": "使用通用 abcdefg bit0..bit6 表。",
+      "good_example": "以当前 PB7..PB0 映射生成段码。",
+      "verification": [
+        "逐段点亮测试",
+        "board_profile 检查"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "seven_segment_1234.asm",
+          "note": "实板映射"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "7seg"
+      ]
+    },
+    {
+      "rule_id": "HK-7SEG-002",
+      "title": "混合共阳/共阴分别编码",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "seven_segment"
+      ],
+      "requirement": "当前板 COM0/COM1 为共阳高有效且段低亮，COM2/COM3 为共阴低有效且段高亮；段码必须按当前 COM 极性转换。",
+      "rationale": "按统一共阴会造成一半位反相或鬼影。",
+      "bad_example": "四位共用同一未转换段码。",
+      "good_example": "逻辑 digit pattern 根据 COM polarity 取反/保持。",
+      "verification": [
+        "逐位显示 8/0/空白",
+        "检查极性分支"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "数码管实板记录",
+          "note": "混合极性"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "7seg"
+      ]
+    },
+    {
+      "rule_id": "HK-7SEG-003",
+      "title": "物理位序使用 COM2,COM3,COM0,COM1",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "seven_segment"
+      ],
+      "requirement": "当前板从左到右物理位序为 COM2、COM3、COM0、COM1，不得按编号自然顺序扫描数据。",
+      "rationale": "1234→3412 是典型位序错误。",
+      "bad_example": "digits[0]→COM0。",
+      "good_example": "digits[0]→COM2，digits[1]→COM3，digits[2]→COM0，digits[3]→COM1。",
+      "verification": [
+        "显示 1234 方向测试"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "seven_segment_1234.asm",
+          "note": "实板位序"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "7seg"
+      ]
+    },
+    {
+      "rule_id": "HK-7SEG-004",
+      "title": "扫描必须先全关再换段码",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "seven_segment"
+      ],
+      "requirement": "每位刷新必须执行：关闭全部 COM→写段码→打开当前 COM→保持→再次关闭全部 COM。",
+      "rationale": "带电切换段线会产生鬼影。",
+      "bad_example": "COM 开启时修改 PB_PIO。",
+      "good_example": "PA_PIO=60H 全关后再写 PB_PIO。",
+      "verification": [
+        "示波器/高速摄像鬼影检查",
+        "静态扫描顺序"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "seven_segment ASM",
+          "note": "稳定扫描结构"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "7seg"
+      ]
+    },
+    {
+      "rule_id": "HK-7SEG-005",
+      "title": "当前板全关值为 PA_PIO=60H",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "seven_segment"
+      ],
+      "requirement": "当前开发板关闭全部四个 COM 时必须写 PA_PIO=60H；换板时该值必须重建而非继承。",
+      "rationale": "混合极性导致全关不是全 0 或全 1。",
+      "bad_example": "MOV A,#00H; MOV PA_PIO,A",
+      "good_example": "MOV A,#60H; MOV PA_PIO,A",
+      "verification": [
+        "空白实板测试"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "README.md / seven_segment ASM",
+          "note": "当前板全关值"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "7seg"
+      ]
+    },
+    {
+      "rule_id": "HK-7SEG-006",
+      "title": "计数状态与扫描临时变量隔离",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "seven_segment"
+      ],
+      "requirement": "千百十个 BCD 长期状态与延时、当前位、段码、比较临时值必须使用不重叠 SRAM。",
+      "rationale": "地址复用会产生成对或同步增长。",
+      "bad_example": "90H 同时作个位和 delay。",
+      "good_example": "90H..93H BCD；80H..8FH scratch。",
+      "verification": [
+        "SRAM 分配表冲突检查",
+        "跑 0000..9999 关键边界"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "0000→0101→0202 症状",
+          "note": "状态污染"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "7seg",
+        "memory"
+      ]
+    },
+    {
+      "rule_id": "HK-7SEG-007",
+      "title": "诊断先按症状映射根因",
+      "normative_level": "SHOULD",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "seven_segment"
+      ],
+      "requirement": "出现 1234→3412 优先查 COM 位序；出现 0000→0101→0202 优先查 SRAM 复用/比较副作用；整位反相优先查共阳/共阴。",
+      "rationale": "症状模式可快速排除无关代码。",
+      "bad_example": "先重写全部段码。",
+      "good_example": "按诊断手册逐层验证位序、极性、状态。",
+      "verification": [
+        "使用 08-踩坑案例与症状诊断手册.md"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "项目实板调试记录",
+          "note": "症状已对应根因"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "hardware"
+      ],
+      "tags": [
+        "debug"
+      ]
+    },
+    {
+      "rule_id": "HK-BUILD-001",
+      "title": "构建成功不是可烧录充分条件",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "build"
+      ],
+      "requirement": "0 error(s) 只证明语法/部分语义通过；必须继续检查工具链适用性、warning、MAP、BIN 内容、表 marker、容量和硬件验收。",
+      "rationale": "DB CLI 缺失即在成功返回中发生。",
+      "bad_example": "returncode=0 就烧录。",
+      "good_example": "通过 pre-build 和 pre-flash 全清单。",
+      "verification": [
+        "检查 checklist 签名"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "probe_db_table CLI",
+          "note": "成功但数据缺失"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "build"
+      ]
+    },
+    {
+      "rule_id": "HK-BUILD-002",
+      "title": "编译 warning 零容忍",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "build"
+      ],
+      "requirement": "正式交付必须 0 warning；地址覆盖、跳转截断、未知操作数等 warning 不得豁免为“编译器问题”。",
+      "rationale": "当前若干 warning 对机器码有破坏性。",
+      "bad_example": "接受“跳转地址超范围”warning。",
+      "good_example": "修复或在规范版本中显式阻断。",
+      "verification": [
+        "解析构建日志 warnings=0"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "assembler.py warnings",
+          "note": "覆盖/截断行为"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli"
+      ],
+      "tags": [
+        "build"
+      ]
+    },
+    {
+      "rule_id": "HK-BUILD-003",
+      "title": "保存四件套及哈希",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "delivery"
+      ],
+      "requirement": "每次候选烧录必须保存 ASM、MAP、BIN、HEX（若 IDE 支持）及 SHA256，并记录 compiler/toolchain 身份和时间。",
+      "rationale": "避免烧录件与评审源码不一致。",
+      "bad_example": "聊天里贴源码，手工选择旧 BIN。",
+      "good_example": "manifest 绑定 source_sha256 与 bin_sha256。",
+      "verification": [
+        "校验 source-manifest",
+        "重算 hash"
+      ],
+      "evidence": [
+        {
+          "level": "E6",
+          "source": "可追溯构建原则",
+          "note": "工件一致性"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "hardware"
+      ],
+      "tags": [
+        "artifact"
+      ]
+    },
+    {
+      "rule_id": "HK-BUILD-004",
+      "title": "BIN/HEX 字节序分别理解",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "artifact"
+      ],
+      "requirement": "BIN 为每个 16-bit word 小端输出；当前 output_generator 的 Intel HEX 数据按 word 高字节再低字节且 HEX 地址是 byte 地址。禁止直接逐字节比较两者。",
+      "rationale": "两种容器序列不同但可表示同一 word。",
+      "bad_example": "把 HEX 的 C0 10 与 BIN 的 10 C0 判为编译错误。",
+      "good_example": "先解码为 16-bit word 再比较。",
+      "verification": [
+        "工具解析后 word-wise 比较"
+      ],
+      "evidence": [
+        {
+          "level": "E3",
+          "source": "output_generator.py",
+          "note": "BIN little-endian/HEX high-low"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "python_source_module_cli",
+        "company_ide"
+      ],
+      "tags": [
+        "artifact",
+        "endian"
+      ]
+    },
+    {
+      "rule_id": "HK-BUILD-005",
+      "title": "烧录优先使用已审计 BIN",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "flash"
+      ],
+      "requirement": "在线烧录必须选择与本次源码/MAP/hash 绑定的 BIN；不得依赖目录中“最新文件”或同名旧产物。",
+      "rationale": "仓库含多个历史 probe 和同名不同路径产物。",
+      "bad_example": "手工从 build 随便选 main.bin。",
+      "good_example": "state/manifest 指向绝对文件并复核 hash。",
+      "verification": [
+        "烧录前显示路径、size、sha256"
+      ],
+      "evidence": [
+        {
+          "level": "E5",
+          "source": "README.md workflow",
+          "note": "state.last_build 设计"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "hardware"
+      ],
+      "tags": [
+        "flash"
+      ]
+    },
+    {
+      "rule_id": "HK-BUILD-006",
+      "title": "查表项目必须做 marker 工件检查",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "build"
+      ],
+      "requirement": "含 DB 的候选 BIN 必须检查已知非对称 marker 位于期望 word/byte 偏移，不能只看文件大小。",
+      "rationale": "空洞或错误编码可产生看似合理大小。",
+      "bad_example": "只确认 bin=2048 bytes。",
+      "good_example": "用首 8 个 DB marker 和 MAP 地址验证解码。",
+      "verification": [
+        "自动 binary marker check"
+      ],
+      "evidence": [
+        {
+          "level": "E2",
+          "source": "probe_db_layout_values.bin",
+          "note": "非对称 marker 可识别编码"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide"
+      ],
+      "tags": [
+        "db",
+        "artifact"
+      ]
+    },
+    {
+      "rule_id": "HK-BUILD-007",
+      "title": "烧录后按功能验收而非仅 verify",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "hardware"
+      ],
+      "requirement": "MTP verify 只证明存储写入一致；仍必须执行 GPIO/总线/显示/计数器的功能验收和异常边界测试。",
+      "rationale": "正确写入错误程序仍然会 verify 成功。",
+      "bad_example": "verify passed 即关闭任务。",
+      "good_example": "记录可见输出、逻辑分析和边界行为。",
+      "verification": [
+        "hardware-acceptance checklist"
+      ],
+      "evidence": [
+        {
+          "level": "E6",
+          "source": "验证层次原则",
+          "note": "存储一致性不等于功能正确"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "hardware"
+      ],
+      "tags": [
+        "acceptance"
+      ]
+    },
+    {
+      "rule_id": "HK-BUILD-008",
+      "title": "换工具链版本必须重跑基准探针",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "toolchain"
+      ],
+      "requirement": "公司 IDE、Python 源码模块、instruction/register XLSX 或烧录器任一变化后，必须重跑最小指令、DB 布局、TABL/TABH、跨页表和在线 verify 基准。",
+      "rationale": "当前规范绑定的是被分析版本行为，不保证未来版本不变。",
+      "bad_example": "升级 IDE 后沿用旧 DB 规则。",
+      "good_example": "重跑 analysis/probe-results 等价测试并升级规范版本。",
+      "verification": [
+        "source-manifest hash 比较",
+        "基准测试报告"
+      ],
+      "evidence": [
+        {
+          "level": "E6",
+          "source": "版本化规范原则",
+          "note": "行为可能变更"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "regression"
+      ]
+    },
+    {
+      "rule_id": "HK-BUILD-009",
+      "title": "模板先小样后大数据",
+      "normative_level": "MUST",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "development"
+      ],
+      "requirement": "新图片/字库/扫描功能先用最小非对称样例验证，再扩展完整数据；不得一次生成接近容量上限代码。",
+      "rationale": "小样更容易区分格式、页、位序和容量问题。",
+      "bad_example": "首次构建 1KB 字库。",
+      "good_example": "先 DB 12,34,56,78 marker，再 16x16，再目标资产。",
+      "verification": [
+        "开发记录包含小样阶段"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "项目 probe 序列",
+          "note": "逐层定位有效"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "development"
+      ]
+    },
+    {
+      "rule_id": "HK-AI-001",
+      "title": "AI 生成前读取机器规则和板级资料",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "ai"
+      ],
+      "requirement": "AI 智能体在生成/修改 ASM 前必须读取 AGENTS.md、rules/asm-rules.json、instruction-reference.json、register-reference.json、register-alias-policy.json 和目标 board_profile/需求。",
+      "rationale": "仅依赖通用 MCU 知识会引入不兼容语法和硬件假设。",
+      "bad_example": "直接生成类 8051 汇编。",
+      "good_example": "先输出 constraints_used 和 unresolved_inputs。",
+      "verification": [
+        "AI 输出审计字段"
+      ],
+      "evidence": [
+        {
+          "level": "E6",
+          "source": "AI 嵌入协议",
+          "note": "上下文最小集合"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "ai"
+      ]
+    },
+    {
+      "rule_id": "HK-AI-002",
+      "title": "AI 不得静默改写已验证数据",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "ai"
+      ],
+      "requirement": "AI 对 verified ASM 或 DB 资产的字节、ORG、页函数和 ACK 序列做修改时，必须给出逐项 diff、规则依据和回归计划；不得“清理”看似异常的编码。",
+      "rationale": "看似异常部分可能正是芯片/工具链兼容要求。",
+      "bad_example": "自动把 DB 重排为“正常小端”。",
+      "good_example": "保留原始字节，若要改变则创建新实验文件。",
+      "verification": [
+        "diff 审查",
+        "verified 文件保护"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "DB 补偿踩坑",
+          "note": "自动合理化会破坏实板"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "ai",
+        "verified"
+      ]
+    },
+    {
+      "rule_id": "HK-AI-003",
+      "title": "AI 输出必须含可验证契约",
+      "normative_level": "MUST",
+      "severity": "ERROR",
+      "status": "active",
+      "scope": [
+        "ai"
+      ],
+      "requirement": "AI 交付应包含：输入假设、使用规则 ID、SRAM 表、程序布局、clobbers、目标工具链、构建命令、预期 MAP/BIN 性质、硬件验收步骤和 OPEN 项。",
+      "rationale": "便于第二个智能体独立审查。",
+      "bad_example": "只返回一段 ASM。",
+      "good_example": "返回 ASM + manifest + check report。",
+      "verification": [
+        "对照 09-AI智能体生成与审查协议.md"
+      ],
+      "evidence": [
+        {
+          "level": "E6",
+          "source": "多智能体协作要求",
+          "note": "可复制审查"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "ai"
+      ]
+    },
+    {
+      "rule_id": "HK-AI-004",
+      "title": "AI 修复必须最小化并保留反例",
+      "normative_level": "SHOULD",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "ai"
+      ],
+      "requirement": "定位 bug 时应创建独立 probe，禁止直接覆盖唯一实板基线；结论确定后把失败假设登记为 anti-pattern。",
+      "rationale": "保留对照可防止同类回归。",
+      "bad_example": "在 verified 文件中反复试错。",
+      "good_example": "probe_xxx.asm 与 verified_xxx.asm 分离。",
+      "verification": [
+        "文件角色检查",
+        "evidence matrix 更新"
+      ],
+      "evidence": [
+        {
+          "level": "E5",
+          "source": "仓库实验命名",
+          "note": "probe/verified 分层"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "simulator",
+        "hardware"
+      ],
+      "tags": [
+        "ai",
+        "debug"
+      ]
+    }
+  ]
+}

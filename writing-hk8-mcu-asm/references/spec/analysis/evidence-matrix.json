@@ -1,0 +1,159 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-07-10T20:37:05+08:00",
+  "levels": {
+    "E1": "实板确认",
+    "E2": "公司 IDE 实际构建产物",
+    "E3": "编译器源码",
+    "E4": "自动测试或编译探针",
+    "E5": "项目文档/源码注释",
+    "E6": "合理推断",
+    "OPEN": "待芯片/FAE/硬件确认"
+  },
+  "conflict_precedence": [
+    "E1 实板",
+    "E2 公司 IDE 真实产物",
+    "E3 当前编译器源码",
+    "E4 自动测试/探针",
+    "模拟器",
+    "E5/E6 注释与推断"
+  ],
+  "claims": [
+    {
+      "claim_id": "EV-DB-CLI",
+      "claim": "Python 源码模块 CLI 不生成 DB 机器码",
+      "level": [
+        "E3",
+        "E4"
+      ],
+      "sources": [
+        "HK_ASM_Compiler/src/core/assembler.py:167-239",
+        ".embeddedskills/build/probe_db_table.bin"
+      ]
+    },
+    {
+      "claim_id": "EV-DB-IDE",
+      "claim": "公司 IDE 生成 DB，BIN 采用特殊 word/小端物理排列",
+      "level": [
+        "E2"
+      ],
+      "sources": [
+        "probe_db_layout_values.asm",
+        "build/probe_db_layout_values.bin",
+        "build/probe_db_layout_values.hex"
+      ]
+    },
+    {
+      "claim_id": "EV-TABLE-RUNTIME",
+      "claim": "DB 原始字节 + TABL 再 TABH 已实板验证",
+      "level": [
+        "E1"
+      ],
+      "sources": [
+        "ssd1306_oled_heello_db_raw_verified.asm",
+        "ssd1306_oled_avatar_64x64_db_raw_verified.asm",
+        "README.md"
+      ]
+    },
+    {
+      "claim_id": "EV-TABLE-PAGE",
+      "claim": "TABL/TABH 与数据 word 必须位于同一 256-word 页",
+      "level": [
+        "E1",
+        "E2"
+      ],
+      "sources": [
+        "ssd1306_oled_avatar_64x64_db_raw_verified.asm",
+        "build/ssd1306_oled_avatar_64x64_db_raw_verified.map"
+      ]
+    },
+    {
+      "claim_id": "EV-SIM-PAGE0",
+      "claim": "模拟器 TABL/TABH 固定访问 page 0",
+      "level": [
+        "E3"
+      ],
+      "sources": [
+        "HK_ASM_Compiler/src/core/simulator.py:342-349"
+      ]
+    },
+    {
+      "claim_id": "EV-JUMP-SYNTAX",
+      "claim": "当前源码模块对 JMP/CALL 直接数字目标存在 token 匹配问题",
+      "level": [
+        "E4"
+      ],
+      "sources": [
+        "analysis/probe-results.json"
+      ]
+    },
+    {
+      "claim_id": "EV-I2C-ACK",
+      "claim": "发送 8 位后释放 SDA 再采样 ACK",
+      "level": [
+        "E1",
+        "E5"
+      ],
+      "sources": [
+        "ssd1306_oled_avatar_64x64_db_raw_verified.asm",
+        "asmc/SKILL.md"
+      ]
+    },
+    {
+      "claim_id": "EV-7SEG",
+      "claim": "当前板 COM 极性、物理位序和全关值",
+      "level": [
+        "E1",
+        "E5"
+      ],
+      "sources": [
+        "seven_segment_1234.asm",
+        "seven_segment_counter_0001_9999.asm",
+        "README.md"
+      ]
+    },
+    {
+      "claim_id": "EV-METADATA-202607",
+      "claim": "2026-07 元数据修正 BTSZ/BTSNZ 拼写及 8 个 GPIO 正式寄存器名",
+      "level": [
+        "E5"
+      ],
+      "sources": [
+        "rules/instruction-metadata.json",
+        "rules/register-reference.json"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "OPEN-ROM-BUS",
+      "question": "IDE DB 半字节变换与实板 TABL/TABH 逻辑之间的芯片级 ROM 数据总线原因",
+      "owner": "芯片设计/FAE",
+      "delivery_impact": "不阻塞已验证用法，但禁止自行推导新的补偿规则"
+    },
+    {
+      "id": "OPEN-RET-AK",
+      "question": "RET A,#K 在量产硅上的确切语义与官方操作码",
+      "owner": "芯片设计/FAE",
+      "delivery_impact": "确认前正式项目禁用"
+    },
+    {
+      "id": "OPEN-CPL",
+      "question": "CPL/CPLR 的确切按位语义和写回目标",
+      "owner": "芯片设计/FAE",
+      "delivery_impact": "确认前避免关键逻辑使用"
+    },
+    {
+      "id": "OPEN-DB-ODD",
+      "question": "公司 IDE 对单个 DB 指令奇数字节末尾的填充规则",
+      "owner": "编译器维护者",
+      "delivery_impact": "当前规范要求显式偶数字节/显式补零"
+    },
+    {
+      "id": "OPEN-REG-LVD",
+      "question": "REG825.INC 的 LVD@24H 与 register metadata 的 LVD1@24H、LVD2@26H、LVD3@27H 如何映射",
+      "owner": "芯片设计/FAE + 编译器维护者",
+      "delivery_impact": "LVD2/LVD3 在 INC/编译器正式支持前限制使用；24H 交付源码继续使用 LVD"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "chip": "HK64S8X",
+  "behavior": "Drive one confirmed GPIO as a measurable heartbeat output.",
+  "clock_hz": 8000000,
+  "pins": {
+    "heartbeat_output": "REPLACE_WITH_CONFIRMED_PIN"
+  },
+  "peripherals": [
+    {
+      "name": "gpio"
+    }
+  ],
+  "timing": {
+    "period_us": 1000
+  },
+  "memory_limits": {
+    "rom_bytes": 2048,
+    "ram_bytes": 64
+  },
+  "board": {
+    "id": "REPLACE_WITH_BOARD_ID"
+  },
+  "acceptance": [
+    {
+      "name": "heartbeat-output",
+      "observable": "logic-analyzer gpio waveform",
+      "expected": "1 kHz square wave within declared tolerance"
+    }
+  ],
+  "allow_nonvolatile_changes": false
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "board_id": "REPLACE_WITH_BOARD_ID",
+  "programmer_serial": "REPLACE_WITH_PROGRAMMER_SERIAL",
+  "voltage_mv": 5000,
+  "simulate": {},
+  "adapters": {
+    "compiler": {
+      "command": [
+        "python",
+        "REPLACE_WITH_COMPILER_ADAPTER.py"
+      ],
+      "timeout_seconds": 120
+    },
+    "programmer": {
+      "command": [
+        "python",
+        "REPLACE_WITH_PROGRAMMER_ADAPTER.py"
+      ],
+      "timeout_seconds": 120
+    },
+    "verifier": {
+      "command": [
+        "python",
+        "REPLACE_WITH_VERIFIER_ADAPTER.py"
+      ],
+      "timeout_seconds": 120
+    }
+  }
+}

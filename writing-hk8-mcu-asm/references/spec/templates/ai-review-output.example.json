@@ -1,0 +1,47 @@
+﻿{
+  "schema_version": "1.0.0",
+  "task_id": "example-task-001",
+  "status": "draft",
+  "board_profile": "board-profile.example.json",
+  "target_toolchain": "company_ide",
+  "source_files": [],
+  "resolved_inputs": {},
+  "unresolved_inputs": [
+    "Target chip revision and board-critical electrical inputs are not yet confirmed."
+  ],
+  "assumptions": [],
+  "constraints_used": [
+    "HK-GOV-002",
+    "HK-GOV-003",
+    "HK-AI-001",
+    "HK-AI-003"
+  ],
+  "protected_baselines": [],
+  "changes": [],
+  "sram_allocation": [],
+  "program_layout": [],
+  "table_pairs": [],
+  "function_contracts": [],
+  "findings": [],
+  "static_check": {
+    "command": null,
+    "exit_code": null,
+    "blockers": [],
+    "errors": [],
+    "warnings": []
+  },
+  "build_result": {
+    "tool_version": null,
+    "errors": null,
+    "warnings": null
+  },
+  "artifact_manifest": {},
+  "flash_result": null,
+  "hardware_acceptance": [],
+  "open_items": [
+    "Resolve inputs, then rerun generation, static checks, build and artifact audit before considering flash."
+  ],
+  "next_actions": [
+    "Complete the board profile with measured or documented values."
+  ]
+}

@@ -1,0 +1,568 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-07-10T20:37:05+08:00",
+  "source": {
+    "reg825_inc": "D:\\hk64s8x-cli\\Standards _rules\\REG825.INC",
+    "reg825_inc_sha256": "d944f761f33181310d410db4e9b849c7e6fad58f8694b913fa954224f1b11271",
+    "register_metadata_file": "D:\\Wechat\\Wechat_Data\\xwechat_files\\wxid_tfk00zu7xz0q22_367d\\msg\\file\\2026-07\\register_set.json",
+    "register_metadata_file_sha256": "ea8344db2d0ad84462e44380212998addbc789078eb9cfd7ba385d723f59c5c9",
+    "packaged_reference_sha256": "ea8344db2d0ad84462e44380212998addbc789078eb9cfd7ba385d723f59c5c9",
+    "upstream_source_file": "D:\\Wechat\\Wechat_Data\\xwechat_files\\wxid_tfk00zu7xz0q22_367d\\msg\\file\\2026-07\\register_set.xlsx",
+    "upstream_source_sha256": "326db576eb9806c6d1c7c09c444c3ba7e7dbe0f031125907e868a3d14c302e6e",
+    "metadata_generated_at": "2026-07-10T07:35:01.661239+00:00",
+    "sheet_row_count": 407,
+    "aggregated_register_count": 96
+  },
+  "memory_spaces": {
+    "sfr": {
+      "range": [
+        "0x00",
+        "0x7F"
+      ],
+      "lifecycle": "运行时特殊功能寄存器"
+    },
+    "sram": {
+      "range": [
+        "0x80",
+        "0xBF"
+      ],
+      "size_bytes": 64,
+      "lifecycle": "运行时数据/临时状态"
+    },
+    "option": {
+      "range": [
+        "0x00",
+        "0x1F"
+      ],
+      "lifecycle": "独立配置/烧录空间，不得当作运行时 SFR"
+    },
+    "program": {
+      "range_words": [
+        "0x0000",
+        "0x03FF"
+      ],
+      "words": 1024,
+      "physical_bytes": 2048
+    }
+  },
+  "policy": {
+    "company_ide_source_names": "REG825.INC 中的官方名称是交付源代码唯一规范名",
+    "python_cli_compatibility": "CLI 可在内存中把 *_PPU/*_POE 转换为 *_PU/*_OE；不得把内部名反写进交付源码",
+    "metadata_reference": "位字段和描述读取 rules/register-reference.json；公司 IDE 源码名称仍以 REG825.INC 为准",
+    "metadata_conflict_policy": "任何 INC/metadata 名称或地址冲突必须进入 OPEN；不得由 AI 静默选边",
+    "direct_sram_style": "短小 scratch 可直接使用 80H~BFH；长期状态必须在文件头列分配表并与 scratch 分区",
+    "custom_sfr_alias": "禁止无必要给 SFR 再定义 EQU 别名；地址交叉校验用官方 INC"
+  },
+  "official_registers": [
+    {
+      "name": "STATUS",
+      "address": "0x04"
+    },
+    {
+      "name": "SCK_PS",
+      "address": "0x10"
+    },
+    {
+      "name": "T0_PS",
+      "address": "0x11"
+    },
+    {
+      "name": "T1_PS",
+      "address": "0x12"
+    },
+    {
+      "name": "T2_PS",
+      "address": "0x13"
+    },
+    {
+      "name": "WDT_PS",
+      "address": "0x14"
+    },
+    {
+      "name": "PGA",
+      "address": "0x15"
+    },
+    {
+      "name": "VR",
+      "address": "0x16"
+    },
+    {
+      "name": "PGA_RVS",
+      "address": "0x17"
+    },
+    {
+      "name": "IW1F",
+      "address": "0x18"
+    },
+    {
+      "name": "IW1E",
+      "address": "0x19"
+    },
+    {
+      "name": "IW2F",
+      "address": "0x1A"
+    },
+    {
+      "name": "IW2E",
+      "address": "0x1B"
+    },
+    {
+      "name": "TLM0",
+      "address": "0x1C"
+    },
+    {
+      "name": "TLM1",
+      "address": "0x1D"
+    },
+    {
+      "name": "SPSS",
+      "address": "0x1E"
+    },
+    {
+      "name": "WDT_CTR",
+      "address": "0x20"
+    },
+    {
+      "name": "WDT_OVR",
+      "address": "0x21"
+    },
+    {
+      "name": "LVD",
+      "address": "0x24"
+    },
+    {
+      "name": "T0_CTR",
+      "address": "0x28"
+    },
+    {
+      "name": "T0_OVR",
+      "address": "0x29"
+    },
+    {
+      "name": "EN",
+      "address": "0x2C"
+    },
+    {
+      "name": "T1PS",
+      "address": "0x2D"
+    },
+    {
+      "name": "T012C",
+      "address": "0x2E"
+    },
+    {
+      "name": "PA_PPU",
+      "address": "0x30"
+    },
+    {
+      "name": "PA_PPD",
+      "address": "0x31"
+    },
+    {
+      "name": "PA_POD",
+      "address": "0x32"
+    },
+    {
+      "name": "PA_PSL",
+      "address": "0x33"
+    },
+    {
+      "name": "PA_INS",
+      "address": "0x34"
+    },
+    {
+      "name": "PA_POE",
+      "address": "0x35"
+    },
+    {
+      "name": "PA_PCE",
+      "address": "0x36"
+    },
+    {
+      "name": "PA_PCF",
+      "address": "0x37"
+    },
+    {
+      "name": "PA_PIO",
+      "address": "0x38"
+    },
+    {
+      "name": "PA_IOPS",
+      "address": "0x39"
+    },
+    {
+      "name": "PA_IOPE",
+      "address": "0x3A"
+    },
+    {
+      "name": "PA_IOS",
+      "address": "0x3B"
+    },
+    {
+      "name": "T1BFL",
+      "address": "0x40"
+    },
+    {
+      "name": "T1BFH",
+      "address": "0x41"
+    },
+    {
+      "name": "T1D0L",
+      "address": "0x42"
+    },
+    {
+      "name": "T1D0H",
+      "address": "0x43"
+    },
+    {
+      "name": "T1D1L",
+      "address": "0x44"
+    },
+    {
+      "name": "T1D1H",
+      "address": "0x45"
+    },
+    {
+      "name": "T1D2L",
+      "address": "0x46"
+    },
+    {
+      "name": "T1D2H",
+      "address": "0x47"
+    },
+    {
+      "name": "T1OVL",
+      "address": "0x48"
+    },
+    {
+      "name": "T1OVH",
+      "address": "0x49"
+    },
+    {
+      "name": "T1CTL",
+      "address": "0x4A"
+    },
+    {
+      "name": "T1CTH",
+      "address": "0x4B"
+    },
+    {
+      "name": "T2BFL",
+      "address": "0x50"
+    },
+    {
+      "name": "T2BFH",
+      "address": "0x51"
+    },
+    {
+      "name": "T2D0L",
+      "address": "0x52"
+    },
+    {
+      "name": "T2D0H",
+      "address": "0x53"
+    },
+    {
+      "name": "T2D1L",
+      "address": "0x54"
+    },
+    {
+      "name": "T2D1H",
+      "address": "0x55"
+    },
+    {
+      "name": "T2D2L",
+      "address": "0x56"
+    },
+    {
+      "name": "T2D2H",
+      "address": "0x57"
+    },
+    {
+      "name": "T2OVL",
+      "address": "0x58"
+    },
+    {
+      "name": "T2OVH",
+      "address": "0x59"
+    },
+    {
+      "name": "T2CTL",
+      "address": "0x5A"
+    },
+    {
+      "name": "T2CTH",
+      "address": "0x5B"
+    },
+    {
+      "name": "MT",
+      "address": "0x60"
+    },
+    {
+      "name": "DICS",
+      "address": "0x61"
+    },
+    {
+      "name": "CRC",
+      "address": "0x62"
+    },
+    {
+      "name": "LDO",
+      "address": "0x63"
+    },
+    {
+      "name": "CKEY_CNT",
+      "address": "0x64"
+    },
+    {
+      "name": "DA6C0",
+      "address": "0x65"
+    },
+    {
+      "name": "DA6C1",
+      "address": "0x66"
+    },
+    {
+      "name": "DA6C2",
+      "address": "0x67"
+    },
+    {
+      "name": "RTC",
+      "address": "0x68"
+    },
+    {
+      "name": "VLD00",
+      "address": "0x69"
+    },
+    {
+      "name": "VLD01",
+      "address": "0x6A"
+    },
+    {
+      "name": "VLD02",
+      "address": "0x6B"
+    },
+    {
+      "name": "VLD10",
+      "address": "0x6D"
+    },
+    {
+      "name": "VLD11",
+      "address": "0x6E"
+    },
+    {
+      "name": "VLD12",
+      "address": "0x6F"
+    },
+    {
+      "name": "PB_PPU",
+      "address": "0x70"
+    },
+    {
+      "name": "PB_PPD",
+      "address": "0x71"
+    },
+    {
+      "name": "PB_POD",
+      "address": "0x72"
+    },
+    {
+      "name": "PB_PSL",
+      "address": "0x73"
+    },
+    {
+      "name": "PB_INS",
+      "address": "0x74"
+    },
+    {
+      "name": "PB_POE",
+      "address": "0x75"
+    },
+    {
+      "name": "PB_PCE",
+      "address": "0x76"
+    },
+    {
+      "name": "PB_PCF",
+      "address": "0x77"
+    },
+    {
+      "name": "PB_PIO",
+      "address": "0x78"
+    },
+    {
+      "name": "OPT_LVR",
+      "address": "0x00"
+    },
+    {
+      "name": "OPT_OSC16M",
+      "address": "0x01"
+    },
+    {
+      "name": "OPT_OSC8M",
+      "address": "0x02"
+    },
+    {
+      "name": "OPT_LP",
+      "address": "0x03"
+    },
+    {
+      "name": "OPT_FEN",
+      "address": "0x04"
+    },
+    {
+      "name": "OPT_MAS",
+      "address": "0x05"
+    },
+    {
+      "name": "OPT_MAE",
+      "address": "0x06"
+    },
+    {
+      "name": "OPT_MAT",
+      "address": "0x07"
+    },
+    {
+      "name": "OPT_IR1SEL",
+      "address": "0x08"
+    },
+    {
+      "name": "OPT_IR2SEL",
+      "address": "0x09"
+    },
+    {
+      "name": "OPT_OSC128K",
+      "address": "0x0A"
+    }
+  ],
+  "known_toolchain_aliases": [
+    {
+      "official": "PA_PPU",
+      "python_source_module_internal": "PA_PU",
+      "source_policy": "use_official"
+    },
+    {
+      "official": "PA_PPD",
+      "python_source_module_internal": "PA_PD",
+      "source_policy": "use_official"
+    },
+    {
+      "official": "PA_POD",
+      "python_source_module_internal": "PA_OD",
+      "source_policy": "use_official"
+    },
+    {
+      "official": "PA_POE",
+      "python_source_module_internal": "PA_OE",
+      "source_policy": "use_official"
+    },
+    {
+      "official": "PB_PPU",
+      "python_source_module_internal": "PB_PU",
+      "source_policy": "use_official"
+    },
+    {
+      "official": "PB_PPD",
+      "python_source_module_internal": "PB_PD",
+      "source_policy": "use_official"
+    },
+    {
+      "official": "PB_POD",
+      "python_source_module_internal": "PB_OD",
+      "source_policy": "use_official"
+    },
+    {
+      "official": "PB_POE",
+      "python_source_module_internal": "PB_OE",
+      "source_policy": "use_official"
+    }
+  ],
+  "critical_gpio_registers": [
+    {
+      "name": "PA_PPU",
+      "address": "0x30"
+    },
+    {
+      "name": "PA_PPD",
+      "address": "0x31"
+    },
+    {
+      "name": "PA_POD",
+      "address": "0x32"
+    },
+    {
+      "name": "PA_PSL",
+      "address": "0x33"
+    },
+    {
+      "name": "PA_POE",
+      "address": "0x35"
+    },
+    {
+      "name": "PA_PIO",
+      "address": "0x38"
+    },
+    {
+      "name": "PB_PPU",
+      "address": "0x70"
+    },
+    {
+      "name": "PB_PPD",
+      "address": "0x71"
+    },
+    {
+      "name": "PB_POD",
+      "address": "0x72"
+    },
+    {
+      "name": "PB_PSL",
+      "address": "0x73"
+    },
+    {
+      "name": "PB_POE",
+      "address": "0x75"
+    },
+    {
+      "name": "PB_PIO",
+      "address": "0x78"
+    }
+  ],
+  "metadata_conflicts": [
+    {
+      "type": "inc_only",
+      "space": "SFR",
+      "address": "0x04",
+      "reg825_inc_name": "STATUS",
+      "register_metadata_name": null,
+      "status": "OPEN",
+      "source_policy": "交付 ASM 仍以 REG825.INC 名称为准；INC 缺失或命名冲突的寄存器在 FAE/编译器确认前限制使用"
+    },
+    {
+      "type": "name_mismatch",
+      "space": "SFR",
+      "address": "0x24",
+      "reg825_inc_name": "LVD",
+      "register_metadata_name": "LVD1",
+      "status": "OPEN",
+      "source_policy": "交付 ASM 仍以 REG825.INC 名称为准；INC 缺失或命名冲突的寄存器在 FAE/编译器确认前限制使用"
+    },
+    {
+      "type": "metadata_only",
+      "space": "SFR",
+      "address": "0x26",
+      "reg825_inc_name": null,
+      "register_metadata_name": "LVD2",
+      "status": "OPEN",
+      "source_policy": "交付 ASM 仍以 REG825.INC 名称为准；INC 缺失或命名冲突的寄存器在 FAE/编译器确认前限制使用"
+    },
+    {
+      "type": "metadata_only",
+      "space": "SFR",
+      "address": "0x27",
+      "reg825_inc_name": null,
+      "register_metadata_name": "LVD3",
+      "status": "OPEN",
+      "source_policy": "交付 ASM 仍以 REG825.INC 名称为准；INC 缺失或命名冲突的寄存器在 FAE/编译器确认前限制使用"
+    }
+  ]
+}

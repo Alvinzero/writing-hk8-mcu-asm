@@ -1,0 +1,66 @@
+﻿{
+  "schema_version": "1.0.0",
+  "profile_id": "UNRESOLVED-board-revision",
+  "status": "draft",
+  "ready_for_flash": false,
+  "chip": {
+    "family": "HK64S8x",
+    "model": "HK64S8101",
+    "revision": "UNRESOLVED",
+    "program_capacity_words": 1024,
+    "vector_profile": "UNRESOLVED",
+    "option_profile": "UNRESOLVED"
+  },
+  "electrical": {
+    "supply_v": "UNRESOLVED",
+    "clock_hz": "UNRESOLVED",
+    "logic_levels_v": "UNRESOLVED",
+    "current_limits": "UNRESOLVED",
+    "shared_ground_confirmed": false
+  },
+  "pins": {
+    "ownership": {},
+    "safe_boot_states": {},
+    "active_polarity": {},
+    "forbidden_contention": []
+  },
+  "peripherals": {
+    "i2c": {
+      "enabled": false,
+      "sda": "UNRESOLVED",
+      "scl": "UNRESOLVED",
+      "pullups": "UNRESOLVED",
+      "address_7bit": "UNRESOLVED",
+      "address_write_byte": "UNRESOLVED",
+      "measured_bus_hz": "UNRESOLVED"
+    },
+    "oled": {
+      "enabled": false,
+      "controller": "UNRESOLVED",
+      "width": "UNRESOLVED",
+      "height": "UNRESOLVED",
+      "memory_format": "UNRESOLVED",
+      "orientation": "UNRESOLVED"
+    },
+    "seven_segment": {
+      "enabled": false,
+      "segment_map": {},
+      "common_map": {},
+      "common_types": {},
+      "visual_order": [],
+      "all_off_value": "UNRESOLVED",
+      "refresh_rate_hz": "UNRESOLVED"
+    }
+  },
+  "toolchain": {
+    "required": "UNRESOLVED",
+    "version": "UNRESOLVED",
+    "db_required": false,
+    "artifact_policy": "BIN + HEX + MAP + hashes"
+  },
+  "protected_baselines": [],
+  "evidence": [],
+  "unresolved_inputs": [
+    "Resolve every UNRESOLVED field that can affect safety, timing, addressing, memory layout or artifact correctness before flash approval."
+  ]
+}

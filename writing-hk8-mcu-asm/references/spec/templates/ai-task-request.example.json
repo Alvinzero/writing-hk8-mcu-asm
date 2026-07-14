@@ -1,0 +1,36 @@
+﻿{
+  "schema_version": "1.0.0",
+  "task_id": "example-task-001",
+  "intent": "generate",
+  "target_chip": {
+    "family": "HK64S8x",
+    "model": "HK64S8101",
+    "revision": "UNRESOLVED"
+  },
+  "board_profile": "board-profile.example.json",
+  "target_toolchain": "company_ide",
+  "source_files": [],
+  "artifact_files": [],
+  "functional_requirements": [
+    "Describe one observable behavior and its timing tolerance."
+  ],
+  "acceptance_criteria": [
+    "Static check has no BLOCKER or ERROR.",
+    "Target compiler reports 0 errors and 0 warnings.",
+    "BIN, HEX and MAP hashes are recorded.",
+    "Required hardware observations are recorded as evidence, not assumptions."
+  ],
+  "protected_files": [],
+  "protected_data_hashes": {},
+  "allowed_changes": [
+    "Create new source files under the task workspace."
+  ],
+  "forbidden_changes": [
+    "Do not modify verified baselines or existing hardware evidence.",
+    "Do not flash while board-critical inputs remain unresolved."
+  ],
+  "evidence_available": [],
+  "unresolved_inputs": [
+    "Target chip revision and board profile remain unresolved in this example."
+  ]
+}

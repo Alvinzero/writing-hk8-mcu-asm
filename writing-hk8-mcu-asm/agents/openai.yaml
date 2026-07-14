@@ -1,0 +1,4 @@
+interface:
+  display_name: "HK64S8X ASM Loop"
+  short_description: "Generate HK8 ASM only after static, build, flash, and hardware verification gates"
+  default_prompt: "Use $writing-hk8-mcu-asm to create a verified HK64S8X ASM run. First ask me to confirm the chip model."

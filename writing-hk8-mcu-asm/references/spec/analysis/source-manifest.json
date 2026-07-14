@@ -1,0 +1,120 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-07-10T20:37:05+08:00",
+  "files": [
+    {
+      "path": "D:\\hk64s8x-cli\\README.md",
+      "size_bytes": 6499,
+      "sha256": "b46ad72b42a03d38d9ca79723867a1e8fa5221264859c315f7c890750219ac4b",
+      "last_modified": "2026-07-07T12:58:36.873109+00:00"
+    },
+    {
+      "path": "D:\\hk64s8x-cli\\asmc\\SKILL.md",
+      "size_bytes": 7712,
+      "sha256": "a76671f8f888f29f3b3b16e7bd925ac59fa7eaf05f3788b3290572b972e7bff1",
+      "last_modified": "2026-07-07T12:58:36.870098+00:00"
+    },
+    {
+      "path": "D:\\hk64s8x-cli\\asmc\\scripts\\asmc_compile.py",
+      "size_bytes": 31039,
+      "sha256": "53d56607c3932915a6c0f39e7a968c1657a24fcd37b0799e3ace506b23ed6337",
+      "last_modified": "2026-06-30T12:29:26.333553+00:00"
+    },
+    {
+      "path": "D:\\hk64s8x-cli\\Standards _rules\\REG825.INC",
+      "size_bytes": 2958,
+      "sha256": "d944f761f33181310d410db4e9b849c7e6fad58f8694b913fa954224f1b11271",
+      "last_modified": "2026-04-22T06:46:24+00:00"
+    },
+    {
+      "path": "D:\\Wechat\\Wechat_Data\\xwechat_files\\wxid_tfk00zu7xz0q22_367d\\msg\\file\\2026-07\\instruction_set.json",
+      "size_bytes": 86547,
+      "sha256": "59c044e8b370f469201372f4e2debbc7240ee3220b46ea1e96b353bb69b2c40e",
+      "last_modified": "2026-07-10T07:35:01.736653+00:00"
+    },
+    {
+      "path": "D:\\Wechat\\Wechat_Data\\xwechat_files\\wxid_tfk00zu7xz0q22_367d\\msg\\file\\2026-07\\register_set.json",
+      "size_bytes": 891845,
+      "sha256": "ea8344db2d0ad84462e44380212998addbc789078eb9cfd7ba385d723f59c5c9",
+      "last_modified": "2026-07-10T07:35:01.704953+00:00"
+    },
+    {
+      "path": "D:\\hk64s8x-cli\\ssd1306_oled_heello_db_raw_verified.asm",
+      "size_bytes": 5973,
+      "sha256": "36dc9cff310d30c08e57b9a7dec71af8e30257203abebbc383cc05ab775bc0eb",
+      "last_modified": "2026-07-07T11:15:26.647491+00:00"
+    },
+    {
+      "path": "D:\\hk64s8x-cli\\ssd1306_oled_avatar_64x64_db_raw_verified.asm",
+      "size_bytes": 9267,
+      "sha256": "c93b6a20c58bdbefb8b71f6dfc14e2be03e9c4f6edf769420c87effe07bba1b8",
+      "last_modified": "2026-07-07T11:26:50.395106+00:00"
+    },
+    {
+      "path": "D:\\hk64s8x-cli\\build\\ssd1306_oled_avatar_64x64_db_raw_verified.map",
+      "size_bytes": 1572,
+      "sha256": "fc2a34596166f2b9aff7902430b599de9c834d4e2b12270db837c7e4dfb83f6e",
+      "last_modified": "2026-07-07T11:27:05.273164+00:00"
+    },
+    {
+      "path": "D:\\hk64s8x-cli\\probe_db_layout_values.asm",
+      "size_bytes": 121,
+      "sha256": "c27cc5c974b990bb720d246d9a360a7d3906286bdccabd598d4ae9c47a3d0113",
+      "last_modified": "2026-07-07T03:58:02.196547+00:00"
+    },
+    {
+      "path": "D:\\hk64s8x-cli\\build\\probe_db_layout_values.bin",
+      "size_bytes": 34,
+      "sha256": "11b59d7692016d7c053d5243f2e73a0020027a063ffc57f5eb8a443afa8fffa1",
+      "last_modified": "2026-07-07T03:58:03.228675+00:00"
+    },
+    {
+      "path": "D:\\hk64s8x-cli\\seven_segment_1234.asm",
+      "size_bytes": 2647,
+      "sha256": "e2167b35acf2fa4d100cfea8ca1962cf7865322aac939b35b28bae8fc7121577",
+      "last_modified": "2026-07-07T12:21:38.216754+00:00"
+    },
+    {
+      "path": "D:\\hk64s8x-cli\\seven_segment_counter_0001_9999.asm",
+      "size_bytes": 5582,
+      "sha256": "2c968f1320eb42d0bd12fa6976f8f688d86166adf981637cc5adb150565026b9",
+      "last_modified": "2026-07-07T12:33:19.492761+00:00"
+    },
+    {
+      "path": "D:\\Wechat\\Wechat_Data\\xwechat_files\\wxid_tfk00zu7xz0q22_367d\\msg\\file\\2026-06\\HK_ASM_Compiler\\HK_ASM_Compiler\\src\\core\\assembler.py",
+      "size_bytes": 36480,
+      "sha256": "cc1daa0eb2d13e84120006f463e33f569de78ee6b82862143619a0893ef3cd48",
+      "last_modified": "2026-06-24T04:02:20+00:00"
+    },
+    {
+      "path": "D:\\Wechat\\Wechat_Data\\xwechat_files\\wxid_tfk00zu7xz0q22_367d\\msg\\file\\2026-06\\HK_ASM_Compiler\\HK_ASM_Compiler\\src\\core\\lexer.py",
+      "size_bytes": 14700,
+      "sha256": "933894117892d5c0d17fed8825cabe2d58ea3db52becf66bf423bfa3c9250e6a",
+      "last_modified": "2026-06-23T12:30:54+00:00"
+    },
+    {
+      "path": "D:\\Wechat\\Wechat_Data\\xwechat_files\\wxid_tfk00zu7xz0q22_367d\\msg\\file\\2026-06\\HK_ASM_Compiler\\HK_ASM_Compiler\\src\\core\\instruction_parser.py",
+      "size_bytes": 17242,
+      "sha256": "7917ca597622520ce9b2ef10cb23e6c0261bc705b17a17ea698560ed2ed4fa52",
+      "last_modified": "2026-04-23T09:47:12+00:00"
+    },
+    {
+      "path": "D:\\Wechat\\Wechat_Data\\xwechat_files\\wxid_tfk00zu7xz0q22_367d\\msg\\file\\2026-06\\HK_ASM_Compiler\\HK_ASM_Compiler\\src\\core\\output_generator.py",
+      "size_bytes": 4660,
+      "sha256": "e749a12812bda01ffc38540e9cb40f971e5d02421cafe7d3afae67656a469e86",
+      "last_modified": "2026-04-21T13:02:56+00:00"
+    },
+    {
+      "path": "D:\\Wechat\\Wechat_Data\\xwechat_files\\wxid_tfk00zu7xz0q22_367d\\msg\\file\\2026-06\\HK_ASM_Compiler\\HK_ASM_Compiler\\src\\core\\simulator.py",
+      "size_bytes": 14881,
+      "sha256": "227bed122f6e601c3a64a22dc59a76ff939c9062c07ec101341b6f0b3b641054",
+      "last_modified": "2026-06-14T14:30:42+00:00"
+    },
+    {
+      "path": "D:\\Wechat\\Wechat_Data\\xwechat_files\\wxid_tfk00zu7xz0q22_367d\\msg\\file\\2026-06\\HK_ASM_Compiler\\HK_ASM_Compiler\\src\\core\\chip_manager.py",
+      "size_bytes": 11024,
+      "sha256": "d7edcd3a61b5a5cbcbf48a52d4a5287c5b8012fff196b9c33d1507bfd99d46e2",
+      "last_modified": "2026-06-02T08:42:00+00:00"
+    }
+  ]
+}

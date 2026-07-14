@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "chip": "HK64S8X",
+  "aliases": [
+    "HK64S8X",
+    "HK64S8x",
+    "HK64S8101"
+  ],
+  "status": "requires-local-toolchain-config",
+  "validated_model": "HK64S8101",
+  "expected_device_id": "REPLACE_WITH_PROGRAMMER_DEVICE_ID",
+  "approved_tool_versions": {
+    "compiler": [
+      "REPLACE_WITH_APPROVED_COMPILER_VERSION"
+    ],
+    "programmer": [
+      "REPLACE_WITH_APPROVED_PROGRAMMER_VERSION"
+    ],
+    "verifier": [
+      "REPLACE_WITH_APPROVED_VERIFIER_VERSION"
+    ]
+  },
+  "max_flash_attempts": 3,
+  "allowed_warnings": [],
+  "spec_root": "../spec",
+  "static_check": {
+    "toolchain": "company_ide",
+    "strict_warnings": true,
+    "map_files": [],
+    "table_pairs": []
+  },
+  "asm_rules": {
+    "required_patterns": [
+      "; CHIP:",
+      "ORG",
+      "END"
+    ],
+    "forbidden_patterns": [
+      "FUSE",
+      "LOCKBIT",
+      "SECURITYBIT"
+    ],
+    "max_line_length": 100
+  }
+}
