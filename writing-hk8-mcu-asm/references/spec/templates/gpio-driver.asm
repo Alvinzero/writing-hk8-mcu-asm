@@ -1,7 +1,7 @@
 ; ========================================================
 ; TEMPLATE: gpio-driver.asm
 ; STATUS: draft; PA2 ownership, polarity and clock must be confirmed
-; CHIP: HK64S8101 baseline
+; CHIP: HK64S825 baseline
 ; TOOLCHAIN: company_ide or python_source_module_cli (no DB)
 ; BOARD CONTRACT: this probe owns all PA configuration registers and PA2
 ; FUNCTION: blink PA2 for pin/polarity/timing validation

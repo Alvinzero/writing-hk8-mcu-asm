@@ -23,7 +23,7 @@
 ## C. 镜像身份
 
 - [ ] 将要烧录的 BIN **绝对路径** 已显示。
-- [ ] BIN size 与 manifest 一致且不超过 2048 bytes（当前 HK64S8101 基线）。
+- [ ] BIN size 与 manifest 一致且不超过 2048 bytes（当前 HK64S825 基线）。
 - [ ] BIN SHA256 与审批值逐字符一致。
 - [ ] state.last_build 不指向旧 workspace/旧 source。
 - [ ] build ID、toolchain version、时间和操作人已记录。

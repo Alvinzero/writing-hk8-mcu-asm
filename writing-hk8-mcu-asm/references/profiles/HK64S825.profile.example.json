@@ -1,13 +1,11 @@
 {
   "schema_version": 1,
-  "chip": "HK64S8X",
+  "chip": "HK64S825",
   "aliases": [
-    "HK64S8X",
-    "HK64S8x",
-    "HK64S8101"
+    "HK64S825"
   ],
   "status": "requires-local-toolchain-config",
-  "validated_model": "HK64S8101",
+  "validated_model": "HK64S825",
   "expected_device_id": "REPLACE_WITH_PROGRAMMER_DEVICE_ID",
   "approved_tool_versions": {
     "compiler": [

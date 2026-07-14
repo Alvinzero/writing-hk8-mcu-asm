@@ -2,7 +2,7 @@
 
 ## 1. 地址单位：统一按 program word
 
-HK64S8101 当前基线程序空间：
+HK64S825 当前基线程序空间：
 
 ```text
 0x0000..0x03FF program words

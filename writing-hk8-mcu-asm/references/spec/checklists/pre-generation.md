@@ -1,6 +1,6 @@
 # ASM 生成前检查清单
 
-> 适用：人工或 AI 新建/大改 HK64S8x ASM。任一 BLOCKER 未确认时，输出状态保持 `draft`。
+> 适用：人工或 AI 新建/大改 HK64S825 ASM。任一 BLOCKER 未确认时，输出状态保持 `draft`。
 
 ## A. 任务与证据
 

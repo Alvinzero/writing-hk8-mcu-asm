@@ -25,7 +25,7 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         self._write_json(self.config_path, self.config())
         self._write_json(self.request_path, self.request())
         self.source_path.write_text(
-            "; CHIP: HK64S8X\n; PURPOSE: contract fixture\nORG 0x0000\nSTART:\n    NOP\n    SJMP START\nEND\n",
+            "; CHIP: HK64S825\n; PURPOSE: contract fixture\nORG 0x0000\nSTART:\n    NOP\n    SJMP START\nEND\n",
             encoding="utf-8",
         )
 
@@ -40,10 +40,10 @@ class ClosedLoopCliContractTests(unittest.TestCase):
     def profile(*, status: str = "ready") -> dict:
         return {
             "schema_version": 1,
-            "chip": "HK64S8X",
-            "aliases": ["HK64S8X"],
+            "chip": "HK64S825",
+            "aliases": ["HK64S825"],
             "status": status,
-            "expected_device_id": "HK64S8X-SIM",
+            "expected_device_id": "HK64S825-SIM",
             "approved_tool_versions": {
                 "compiler": ["sim-1.0"],
                 "programmer": ["sim-1.0"],
@@ -51,7 +51,7 @@ class ClosedLoopCliContractTests(unittest.TestCase):
             },
             "max_flash_attempts": 3,
             "asm_rules": {
-                "required_patterns": ["; CHIP: HK64S8X", "ORG", "END"],
+                "required_patterns": ["; CHIP: HK64S825", "ORG", "END"],
                 "forbidden_patterns": ["FUSE", "LOCKBIT", "SECURITYBIT"],
                 "max_line_length": 100,
             },
@@ -61,14 +61,14 @@ class ClosedLoopCliContractTests(unittest.TestCase):
     def request() -> dict:
         return {
             "schema_version": 1,
-            "chip": "HK64S8X",
+            "chip": "HK64S825",
             "behavior": "Toggle the fixture output forever",
             "clock_hz": 8_000_000,
             "pins": {"fixture_output": "SIM.P0"},
             "peripherals": [],
             "timing": {"period_us": 1000},
             "memory_limits": {"rom_bytes": 64, "ram_bytes": 8},
-            "board": {"id": "HK64S8X-SIM-BOARD"},
+            "board": {"id": "HK64S825-SIM-BOARD"},
             "acceptance": [
                 {
                     "name": "fixture-observable",
@@ -84,7 +84,7 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         command = [sys.executable, str(FAKE_ADAPTER)]
         return {
             "schema_version": 1,
-            "board_id": "HK64S8X-SIM-BOARD",
+            "board_id": "HK64S825-SIM-BOARD",
             "programmer_serial": "SIM-PROGRAMMER-001",
             "voltage_mv": 5000,
             "simulate": failures or {},
@@ -268,7 +268,7 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         }
         self._write_json(self.profile_path, profile)
         self.source_path.write_text(
-            "; CHIP: HK64S8X\n; PURPOSE: db blocker fixture\nORG 0x0000\nTABLE0:\n    DB 12H,34H\nEND\n",
+            "; CHIP: HK64S825\n; PURPOSE: db blocker fixture\nORG 0x0000\nTABLE0:\n    DB 12H,34H\nEND\n",
             encoding="utf-8",
         )
         run_dir = self.new_run("db-blocker")

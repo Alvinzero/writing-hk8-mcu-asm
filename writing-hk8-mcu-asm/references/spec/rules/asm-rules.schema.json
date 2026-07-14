@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://internal.example/spec/hk64s8x/asm-rules.schema.json",
-  "title": "HK64S8x ASM Corporate Rules",
+  "title": "HK64S825 ASM Corporate Rules",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -24,7 +24,7 @@
       "pattern": "^\\d+\\.\\d+\\.\\d+$"
     },
     "rule_set_id": {
-      "const": "HK64S8X-ASM-CORPORATE"
+      "const": "HK64S825-ASM-CORPORATE"
     },
     "rule_set_version": {
       "type": "string",

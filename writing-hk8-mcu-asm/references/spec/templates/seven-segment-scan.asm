@@ -1,7 +1,7 @@
 ; ========================================================
 ; TEMPLATE: seven-segment-scan.asm
 ; STATUS: board-specific draft; validates fixed visual pattern 1234
-; CHIP: HK64S8101 baseline
+; CHIP: HK64S825 baseline
 ; TOOLCHAIN: company_ide or python_source_module_cli (no DB)
 ; CURRENT BOARD ONLY:
 ; PB7=A PB6=B PB5=C PB4=D PB3=E PB2=F PB1=G PB0=DP

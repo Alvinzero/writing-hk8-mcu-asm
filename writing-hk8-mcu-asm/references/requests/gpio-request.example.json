@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "chip": "HK64S8X",
+  "chip": "HK64S825",
   "behavior": "Drive one confirmed GPIO as a measurable heartbeat output.",
   "clock_hz": 8000000,
   "pins": {

@@ -1,7 +1,7 @@
 ; ========================================================
 ; TEMPLATE: i2c-bitbang.asm
 ; STATUS: draft until voltage, pull-ups, address and waveform are confirmed
-; CHIP: HK64S8101 baseline
+; CHIP: HK64S825 baseline
 ; TOOLCHAIN: company_ide or python_source_module_cli (no DB)
 ; BOARD PROFILE EXAMPLE: SDA=PB7, SCL=PB6, 7-bit addr=3CH, write byte=78H
 ; RULES: HK-GPIO-001, HK-I2C-001, HK-I2C-002, HK-I2C-003

@@ -1,7 +1,7 @@
 ; ========================================================
 ; TEMPLATE: minimal-main.asm
 ; STATUS: draft until chip/vector/OPTION/hardware acceptance are confirmed
-; CHIP: HK64S8101 baseline
+; CHIP: HK64S825 baseline
 ; TOOLCHAIN: company_ide or python_source_module_cli (no DB)
 ; RULES: HK-GOV-002, HK-GOV-003, HK-LAYOUT-001, HK-LAYOUT-002
 ;

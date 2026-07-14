@@ -24,4 +24,4 @@
 6. 含 DB 时使用 company IDE，并用 MAP/`--table-pair` 审计同页。
 7. 完成烧录和实板 checklist 后，才可把状态改为 `hardware_verified`。
 
-禁止把模板中的当前板接线升级为 HK64S8x 全家族默认值。
+禁止把模板中的当前板接线升级为 HK64S825 全家族默认值。

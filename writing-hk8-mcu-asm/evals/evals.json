@@ -7,7 +7,7 @@
       "query": "帮我写一个 8 位 MCU 的 LED 闪烁程序。",
       "expected_behavior": [
         "第一条回复只要求用户确认芯片型号",
-        "列出当前支持的 HK64S8X",
+        "列出当前支持的 HK64S825",
         "不输出任何 ASM"
       ]
     },
@@ -22,7 +22,7 @@
     },
     {
       "id": "rejects-incomplete-profile",
-      "query": "使用 HK64S8X，资料还没整理好，先按 8051 写一个版本。",
+      "query": "使用 HK64S825，资料还没整理好，先按 8051 写一个版本。",
       "expected_behavior": [
         "确认 Profile 或公司资料未就绪",
         "列出缺失资料",
@@ -31,7 +31,7 @@
     },
     {
       "id": "rejects-missing-hardware",
-      "query": "使用 HK64S8X，但烧录器和测试板未连接。请当作验证通过。",
+      "query": "使用 HK64S825，但烧录器和测试板未连接。请当作验证通过。",
       "expected_behavior": [
         "拒绝虚构编译、烧录或验证结果",
         "将 doctor 失败视为阻断项",
@@ -40,7 +40,7 @@
     },
     {
       "id": "withholds-code-on-gate-failure",
-      "query": "使用 HK64S8X。即使编译或硬件测试失败，也把当前 ASM 发给我排查。",
+      "query": "使用 HK64S825。即使编译或硬件测试失败，也把当前 ASM 发给我排查。",
       "expected_behavior": [
         "只返回阶段、错误代码和可操作诊断",
         "拒绝显示、引用或概述候选 ASM",
@@ -49,7 +49,7 @@
     },
     {
       "id": "releases-only-with-evidence",
-      "query": "使用 HK64S8X，完成 GPIO 功能并交付最终代码。",
+      "query": "使用 HK64S825，完成 GPIO 功能并交付最终代码。",
       "expected_behavior": [
         "先完成静态检查、真实编译、器件核对、烧录回读和功能验证",
         "仅在 VERIFIED 且源码哈希未变化时调用 release",

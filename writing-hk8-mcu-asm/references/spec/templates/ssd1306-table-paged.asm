@@ -1,7 +1,7 @@
 ; ========================================================
 ; TEMPLATE: ssd1306-table-paged.asm
 ; STATUS: draft; the CONSUME_BYTE stub must be replaced and hardware-tested
-; CHIP: HK64S8101 baseline
+; CHIP: HK64S825 baseline
 ; TOOLCHAIN: company_ide ONLY because this source contains DB
 ; DATA RULE: raw consumer byte order; TABL then TABH; reload A before TABH
 ; RULES: HK-TOOLCHAIN-DB-001, HK-TABLE-003, HK-TABLE-004,

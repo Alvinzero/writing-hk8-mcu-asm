@@ -1,11 +1,11 @@
-﻿{
+{
   "schema_version": "1.0.0",
   "profile_id": "UNRESOLVED-board-revision",
   "status": "draft",
   "ready_for_flash": false,
   "chip": {
-    "family": "HK64S8x",
-    "model": "HK64S8101",
+    "family": "HK64S825",
+    "model": "HK64S825",
     "revision": "UNRESOLVED",
     "program_capacity_words": 1024,
     "vector_profile": "UNRESOLVED",

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Validate the HK64S8x ASM corporate specification package."""
+"""Validate the HK64S825 ASM corporate specification package."""
 from __future__ import annotations
 
 import argparse
@@ -24,7 +24,7 @@ EXPECTED_FILES = [
     "README.md",
     "AGENTS.md",
     "00-规范适用范围与证据等级.md",
-    "01-HK64S8x-ASM编码规范.md",
+    "01-HK64S825-ASM编码规范.md",
     "02-指令与操作数规范.md",
     "03-寄存器与内存使用规范.md",
     "04-程序布局-ORG-查表规范.md",
@@ -154,7 +154,7 @@ def fallback_rule_schema_check(
         add_finding(findings, "rule-schema", path, f"missing root fields: {sorted(missing_root)}")
     if extra_root:
         add_finding(findings, "rule-schema", path, f"unexpected root fields: {sorted(extra_root)}")
-    if document.get("rule_set_id") != "HK64S8X-ASM-CORPORATE":
+    if document.get("rule_set_id") != "HK64S825-ASM-CORPORATE":
         add_finding(findings, "rule-schema", path, "invalid rule_set_id")
     for key in ("schema_version", "rule_set_version"):
         value = document.get(key)
@@ -634,7 +634,7 @@ def validate(root: Path) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Validate an HK64S8x ASM corporate specification package."
+        description="Validate an HK64S825 ASM corporate specification package."
     )
     parser.add_argument("root", nargs="?", type=Path, default=Path.cwd(), help="spec package root")
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
@@ -642,7 +642,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def render_text(payload: dict[str, Any]) -> str:
-    lines = [f"HK64S8x spec validation: {payload['root']}"]
+    lines = [f"HK64S825 spec validation: {payload['root']}"]
     for finding in payload["findings"]:
         location = finding["path"]
         if finding["line"] is not None:

@@ -1,11 +1,11 @@
 {
   "schema_version": "1.0.0",
-  "rule_set_id": "HK64S8X-ASM-CORPORATE",
+  "rule_set_id": "HK64S825-ASM-CORPORATE",
   "rule_set_version": "1.1.0",
   "generated_at": "2026-07-10T20:37:05+08:00",
   "language": "zh-CN",
-  "chip_family": "HK64S8x",
-  "validated_chip_model": "HK64S8101",
+  "chip_family": "HK64S825",
+  "validated_chip_model": "HK64S825",
   "normative_levels": {
     "MUST": "强制，违反即不合规",
     "SHOULD": "原则上遵守，偏离需书面理由",
@@ -21,7 +21,7 @@
     "company_ide": "公司 HK_ASM_Compiler IDE 真实构建路径",
     "python_source_module_cli": "asmc_compile.py 直接调用 Python assembler 模块",
     "simulator": "公司 Python simulator",
-    "hardware": "真实 HK64S8x 开发板"
+    "hardware": "真实 HK64S825 开发板"
   },
   "evidence_levels": {
     "E1": "实板确认",
@@ -427,7 +427,7 @@
         "architecture"
       ],
       "requirement": "可复用子程序必须在入口注释中声明输入、输出、clobbers、使用的 SRAM、是否可重入和时序；调用方不得假设 A 或 scratch 被保留。",
-      "rationale": "HK64S8x 代码大量通过 A 和固定 SRAM 传参。",
+      "rationale": "HK64S825 代码大量通过 A 和固定 SRAM 传参。",
       "bad_example": "I2C_SEND: ; 无契约",
       "good_example": "; IN: A=data; OUT: none; CLOBBERS: A,80H,81H; NOT REENTRANT",
       "verification": [
@@ -896,7 +896,7 @@
       "scope": [
         "layout"
       ],
-      "requirement": "HK64S8101 当前配置的所有写入 word 地址必须位于 0x0000..0x03FF，总容量 1024 words/2048 bytes。",
+      "requirement": "HK64S825 当前配置的所有写入 word 地址必须位于 0x0000..0x03FF，总容量 1024 words/2048 bytes。",
       "rationale": "超范围会被拒绝或跳转字段截断。",
       "bad_example": "ORG 0x0400",
       "good_example": "最高写入地址 <= 0x03FF",
@@ -1067,10 +1067,10 @@
       "scope": [
         "layout"
       ],
-      "requirement": "当前 HK64S8101 模板使用复位 0x0000、项目中断入口 0x0008；换芯片型号时必须从芯片资料重新确认，不得跨型号复制。",
+      "requirement": "当前 HK64S825 模板使用复位 0x0000、项目中断入口 0x0008；换芯片型号时必须从芯片资料重新确认，不得跨型号复制。",
       "rationale": "芯片家族内部向量可能不同。",
-      "bad_example": "所有 HK64S8x 默认 0x0008。",
-      "good_example": "hkproj 指定 HK64S8101，并记录向量证据。",
+      "bad_example": "所有 HK64S825 默认 0x0008。",
+      "good_example": "hkproj 指定 HK64S825，并记录向量证据。",
       "verification": [
         "核对 mcu_type",
         "核对芯片向量表"

@@ -1,10 +1,10 @@
-﻿{
+{
   "schema_version": "1.0.0",
   "task_id": "example-task-001",
   "intent": "generate",
   "target_chip": {
-    "family": "HK64S8x",
-    "model": "HK64S8101",
+    "family": "HK64S825",
+    "model": "HK64S825",
     "revision": "UNRESOLVED"
   },
   "board_profile": "board-profile.example.json",

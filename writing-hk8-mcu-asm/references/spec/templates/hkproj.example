@@ -1,11 +1,11 @@
-﻿{
+{
   "name": "hk64s8x_example",
   "files": [
     "D:/project/main.asm"
   ],
   "build_path": "D:/project/build",
   "settings": {
-    "mcu_type": "HK64S8101",
+    "mcu_type": "HK64S825",
     "inc_path": "",
     "macros": "",
     "generate_list_file": false,

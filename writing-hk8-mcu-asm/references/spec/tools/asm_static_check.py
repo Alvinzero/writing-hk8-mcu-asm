@@ -1,6 +1,6 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""HK64S8x ASM source/layout static checker.
+"""HK64S825 ASM source/layout static checker.
 
 This checker is deliberately conservative: it proves a bounded set of source and
 artifact invariants from the corporate rule package. It is not a replacement for
@@ -147,7 +147,7 @@ def occupy_words(
                     path,
                     line,
                     f"{kind} occupies out-of-range word {hexadecimal(address)}",
-                    "HK64S8101 program words are limited to 0x0000..0x03FF.",
+                    "HK64S825 program words are limited to 0x0000..0x03FF.",
                     "Reduce the image or correct ORG so the highest occupied word is at most 0x03FF.",
                 )
             )
@@ -263,7 +263,7 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
                             path,
                             line_number,
                             f"ORG sets out-of-range word address {hexadecimal(value)}",
-                            "HK64S8101 program words are limited to 0x0000..0x03FF.",
+                            "HK64S825 program words are limited to 0x0000..0x03FF.",
                             "Correct ORG to an in-range word address and re-audit the complete image.",
                         )
                     )
@@ -686,7 +686,7 @@ def audit_table_pairs(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Check HK64S8x ASM source/layout rules; this does not replace compiler or hardware acceptance."
+        description="Check HK64S825 ASM source/layout rules; this does not replace compiler or hardware acceptance."
     )
     parser.add_argument("asm", nargs="+", type=Path, help="ASM source file(s) to check")
     parser.add_argument(
@@ -711,7 +711,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def render_text(payload: dict[str, Any]) -> str:
     lines = [
-        "HK64S8x ASM static check",
+        "HK64S825 ASM static check",
         f"toolchain: {payload['toolchain']}",
         f"files: {len(payload['files'])}",
     ]

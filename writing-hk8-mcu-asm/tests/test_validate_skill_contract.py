@@ -55,6 +55,29 @@ class ValidateSkillContractTests(unittest.TestCase):
             self.assertIn(phrase, openai_text)
         self.assertNotIn("Generate HK8 ASM", openai_text)
 
+    def test_public_skill_surfaces_name_only_hk64s825(self) -> None:
+        retired_names = ["HK64S8" + suffix for suffix in ("X", "x", "101")]
+        public_paths = [
+            SKILL_ROOT / "SKILL.md",
+            SKILL_ROOT / "agents" / "openai.yaml",
+            SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.example.json",
+            SKILL_ROOT / "references" / "requests" / "gpio-request.example.json",
+        ]
+        for path in public_paths:
+            self.assertTrue(path.is_file(), f"missing public surface: {path}")
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("HK64S825", text)
+            for retired_name in retired_names:
+                self.assertNotIn(retired_name, text)
+        retired_profile = SKILL_ROOT / "references" / "profiles" / ("HK64S8" + "X.profile.example.json")
+        self.assertFalse(retired_profile.exists())
+
+    def test_skill_uses_hk64s825_rules_without_unrelated_questions(self) -> None:
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("选择 `HK64S825` 后", skill_text)
+        self.assertIn("LED、OLED、数码管", skill_text)
+        self.assertIn("不得追问与当前功能无关的输入", skill_text)
+
 
 if __name__ == "__main__":
     unittest.main()

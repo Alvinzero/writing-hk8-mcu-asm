@@ -422,7 +422,7 @@ def existing_file(value: str) -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="从 HK64S8x 源项目和公司编译器源码生成可追溯分析快照；不修改源项目文件。"
+        description="从 HK64S825 源项目和公司编译器源码生成可追溯分析快照；不修改源项目文件。"
     )
     parser.add_argument("--repo", required=True, type=existing_directory, help="被分析项目根目录")
     parser.add_argument("--compiler-root", required=True, type=existing_directory, help="公司 HK_ASM_Compiler 根目录")
@@ -506,7 +506,7 @@ def main(argv=None):
         "schema_version": "1.0.0",
         "generated_at": GENERATED_AT,
         "source_repo_root": str(REPO),
-        "scope": "HK64S8x CLI、公司汇编器源码、53 组 ASM/MAP/BIN/HEX 实验与实板记录",
+        "scope": "HK64S825 CLI、公司汇编器源码、53 组 ASM/MAP/BIN/HEX 实验与实板记录",
         "file_counts": counts,
         "asm_summary": {
             "files": len(analyses),
@@ -523,7 +523,7 @@ def main(argv=None):
             "company_ide": "公司 HK_ASM_Compiler IDE 的实际构建路径，能生成 DB；版本未提供稳定语义版本号",
             "python_source_module_cli": "asmc/scripts/asmc_compile.py 直接调用 src/core/assembler.py；当前 DB 不生成机器码",
             "simulator": "src/core/simulator.py；TABL/TABH 固定读 page 0，不能验证跨页",
-            "hardware": "HK64S8x + 当前开发板/OLED/数码管实板结果，作为冲突时最高优先级",
+            "hardware": "HK64S825 + 当前开发板/OLED/数码管实板结果，作为冲突时最高优先级",
         },
         "items": analyses,
     }

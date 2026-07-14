@@ -1,84 +1,84 @@
 {
-  "schema_version": "1.0.0",
-  "generated_at": "2026-07-10T17:18:49+08:00",
-  "scope": "规范包模板的静态检查与隔离编译验证；不代表实板功能验收",
-  "compiler": {
-    "mode": "python_source_module_cli",
-    "chip_model": "HK64S8101",
-    "compiler_source_root": "D:/Wechat/Wechat_Data/xwechat_files/wxid_tfk00zu7xz0q22_367d/msg/file/2026-06/HK_ASM_Compiler/HK_ASM_Compiler",
-    "wrapper": "asmc/scripts/asmc_compile.py",
-    "wrapper_sha256": "53d56607c3932915a6c0f39e7a968c1657a24fcd37b0799e3ace506b23ed6337"
-  },
-  "no_db_templates": [
-    {
-      "template": "templates/minimal-main.asm",
-      "source_bytes": 560,
-      "source_sha256": "c8646db6f2cb3076e5438231100abba8be8dbaf94dd4b93309fc524aa0664e16",
-      "errors": 0,
-      "warnings": 0,
-      "code_words": 18,
-      "bin_bytes": 36,
-      "bin_sha256": "d961f8f7606cf8742f569d402abb62888c3fbd3e4b5e1ab2a138a3f8d8ea2399",
-      "hex_sha256": "bfaad24a6588e26d026eb0eef70d9f59e4838c0c654d7fe8bb2b0c0be9699b94",
-      "map_sha256": "01eef83439a2b148b1c17dab39585dbf7d522ffa64235e8c49c044eef477a874",
-      "evidence_level": "E4"
-    },
-    {
-      "template": "templates/gpio-driver.asm",
-      "source_bytes": 1308,
-      "source_sha256": "4067eaafc5d68a2337b975c4aa7ce8349557f83c911d252252ef810c34a2c217",
-      "errors": 0,
-      "warnings": 0,
-      "code_words": 40,
-      "bin_bytes": 80,
-      "bin_sha256": "1045752ac82b9ef2582b393823f71b510adcd1737798a3ae3a331e5272a9588e",
-      "hex_sha256": "f343be23cd606a1c5c34f6afd9966a28610f3b8db999efe50b24601d1ec238b7",
-      "map_sha256": "9b90519bb7a5f8928e32a186e309abcbc039bd705a22dd3ad0f6c92f3eb6817f",
-      "evidence_level": "E4"
-    },
-    {
-      "template": "templates/i2c-bitbang.asm",
-      "source_bytes": 2211,
-      "source_sha256": "5a7360e3c8ba8c2fe7d0e8195941e6e9fb12dea3e31dc58a2080a35e99cbdd52",
-      "errors": 0,
-      "warnings": 0,
-      "code_words": 84,
-      "bin_bytes": 168,
-      "bin_sha256": "7a42c20a7622d33baba780d9d7df7517c4e41f1f361844c4cd1e62810bc45585",
-      "hex_sha256": "bd954682d5e57fbf0aa4154ec7e18a7452e80ec50d147988f82f2f1848c66939",
-      "map_sha256": "796a4d952a1bb9cb8b2a4b164ab4c6866b61bac01c8ec86a779146f178541930",
-      "evidence_level": "E4"
-    },
-    {
-      "template": "templates/seven-segment-scan.asm",
-      "source_bytes": 2187,
-      "source_sha256": "03e31db605272caa2db5c63b7a53b98dc998318d20d3fe30be1ef54759d0be5d",
-      "errors": 0,
-      "warnings": 0,
-      "code_words": 76,
-      "bin_bytes": 152,
-      "bin_sha256": "06836899fd347d579d52c7eeb09325a2b6cf930d0c23d885173a54d4bea7eb5c",
-      "hex_sha256": "b3573d291485149dfcb6589bf004bfe06963d4809e0865aa6f31d2b3d1f702be",
-      "map_sha256": "220370e20e234545e5f852b2938ff4a58151c662d4f39b9cc37b1ddc10469816",
-      "evidence_level": "E4"
-    }
-  ],
-  "db_template": {
-    "template": "templates/ssd1306-table-paged.asm",
-    "company_ide_static_check": {
-      "exit_code": 0,
-      "errors": 0,
-      "blockers": 0,
-      "warnings": [
-        "HK-LAYOUT-008: final MAP is required after a real company IDE build"
-      ]
-    },
-    "python_source_module_cli_static_check": {
-      "exit_code": 2,
-      "required_blocker": "HK-TOOLCHAIN-DB-001"
-    },
-    "compile_attempted_with_python_source_module_cli": false,
-    "reason": "Current Python source-module CLI omits DB machine words and is forbidden for DB deliverables."
-  },
-  "qualification_limit": "compile_probe_only; board profile, controlled flash and E1 hardware acceptance remain mandatory"
+    "schema_version":  "1.0.0",
+    "generated_at":  "2026-07-10T17:18:49+08:00",
+    "scope":  "规范包模板的静态检查与隔离编译验证；不代表实板功能验收",
+    "compiler":  {
+                     "mode":  "python_source_module_cli",
+                     "chip_model":  "HK64S825",
+                     "compiler_source_root":  "D:/Wechat/Wechat_Data/xwechat_files/wxid_tfk00zu7xz0q22_367d/msg/file/2026-06/HK_ASM_Compiler/HK_ASM_Compiler",
+                     "wrapper":  "asmc/scripts/asmc_compile.py",
+                     "wrapper_sha256":  "53d56607c3932915a6c0f39e7a968c1657a24fcd37b0799e3ace506b23ed6337"
+                 },
+    "no_db_templates":  [
+                            {
+                                "template":  "templates/minimal-main.asm",
+                                "source_bytes":  559,
+                                "source_sha256":  "a882c7cf253205eef952e6892f2e50bc602b18a0d69fc7dab09f7dec788aa8f5",
+                                "errors":  0,
+                                "warnings":  0,
+                                "code_words":  18,
+                                "bin_bytes":  36,
+                                "bin_sha256":  "d961f8f7606cf8742f569d402abb62888c3fbd3e4b5e1ab2a138a3f8d8ea2399",
+                                "hex_sha256":  "bfaad24a6588e26d026eb0eef70d9f59e4838c0c654d7fe8bb2b0c0be9699b94",
+                                "map_sha256":  "01eef83439a2b148b1c17dab39585dbf7d522ffa64235e8c49c044eef477a874",
+                                "evidence_level":  "E4"
+                            },
+                            {
+                                "template":  "templates/gpio-driver.asm",
+                                "source_bytes":  1307,
+                                "source_sha256":  "1bd66672cfa8c62dc36974413613bd0f282ad8de973f8452a6a223bd315ed4f4",
+                                "errors":  0,
+                                "warnings":  0,
+                                "code_words":  40,
+                                "bin_bytes":  80,
+                                "bin_sha256":  "1045752ac82b9ef2582b393823f71b510adcd1737798a3ae3a331e5272a9588e",
+                                "hex_sha256":  "f343be23cd606a1c5c34f6afd9966a28610f3b8db999efe50b24601d1ec238b7",
+                                "map_sha256":  "9b90519bb7a5f8928e32a186e309abcbc039bd705a22dd3ad0f6c92f3eb6817f",
+                                "evidence_level":  "E4"
+                            },
+                            {
+                                "template":  "templates/i2c-bitbang.asm",
+                                "source_bytes":  2210,
+                                "source_sha256":  "a7eab6095016f132ad08a2f04d9ea5d88966674a2589ca45dd9dc98a1d4aa6a3",
+                                "errors":  0,
+                                "warnings":  0,
+                                "code_words":  84,
+                                "bin_bytes":  168,
+                                "bin_sha256":  "7a42c20a7622d33baba780d9d7df7517c4e41f1f361844c4cd1e62810bc45585",
+                                "hex_sha256":  "bd954682d5e57fbf0aa4154ec7e18a7452e80ec50d147988f82f2f1848c66939",
+                                "map_sha256":  "796a4d952a1bb9cb8b2a4b164ab4c6866b61bac01c8ec86a779146f178541930",
+                                "evidence_level":  "E4"
+                            },
+                            {
+                                "template":  "templates/seven-segment-scan.asm",
+                                "source_bytes":  2186,
+                                "source_sha256":  "006a2ec2d9fedadd8f0e9018b489867911c1b3fe140a59c467ebbeb621957e92",
+                                "errors":  0,
+                                "warnings":  0,
+                                "code_words":  76,
+                                "bin_bytes":  152,
+                                "bin_sha256":  "06836899fd347d579d52c7eeb09325a2b6cf930d0c23d885173a54d4bea7eb5c",
+                                "hex_sha256":  "b3573d291485149dfcb6589bf004bfe06963d4809e0865aa6f31d2b3d1f702be",
+                                "map_sha256":  "220370e20e234545e5f852b2938ff4a58151c662d4f39b9cc37b1ddc10469816",
+                                "evidence_level":  "E4"
+                            }
+                        ],
+    "db_template":  {
+                        "template":  "templates/ssd1306-table-paged.asm",
+                        "company_ide_static_check":  {
+                                                         "exit_code":  0,
+                                                         "errors":  0,
+                                                         "blockers":  0,
+                                                         "warnings":  [
+                                                                          "HK-LAYOUT-008: final MAP is required after a real company IDE build"
+                                                                      ]
+                                                     },
+                        "python_source_module_cli_static_check":  {
+                                                                      "exit_code":  2,
+                                                                      "required_blocker":  "HK-TOOLCHAIN-DB-001"
+                                                                  },
+                        "compile_attempted_with_python_source_module_cli":  false,
+                        "reason":  "Current Python source-module CLI omits DB machine words and is forbidden for DB deliverables."
+                    },
+    "qualification_limit":  "compile_probe_only; board profile, controlled flash and E1 hardware acceptance remain mandatory"
 }
