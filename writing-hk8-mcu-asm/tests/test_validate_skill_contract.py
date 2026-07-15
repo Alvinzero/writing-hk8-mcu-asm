@@ -93,6 +93,19 @@ class ValidateSkillContractTests(unittest.TestCase):
         for phrase in ("板卡 ID", "烧录器序列号", "可机器观测的验收条件"):
             self.assertNotIn(phrase, required_section)
 
+    def test_unresolved_inputs_are_presented_as_letter_choices(self) -> None:
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        required_section = skill_text.split("## 必需输入", 1)[1].split("## 资源导航", 1)[0]
+        for phrase in (
+            "缺口问题必须以 A/B/C/D 选择题呈现",
+            "用户只需要回复选项字母",
+            "一次最多提出 3 个选择题",
+            "默认或推荐选项必须标注“推荐”",
+            "必须包含“不确定/我不知道”选项",
+            "不得要求用户自由填写一长串板级参数",
+        ):
+            self.assertIn(phrase, required_section)
+
     def test_release_gate_is_compile_only_with_hardware_verification_deferred(self) -> None:
         skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         for phrase in (
