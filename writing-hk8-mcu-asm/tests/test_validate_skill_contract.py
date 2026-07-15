@@ -215,6 +215,23 @@ class ValidateSkillContractTests(unittest.TestCase):
         ):
             self.assertIn(phrase, skill_text)
 
+    def test_missing_local_toolchain_config_reports_exact_file_locations(self) -> None:
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        for phrase in (
+            "PROFILE_NOT_READY",
+            "`references/profiles/HK64S825.profile.example.json`",
+            "`references/configs/local-adapter.example.json`",
+            "复制为工作文件，例如 `profiles/local-HK64S825.profile.json` 和 `configs/local-adapter.json`",
+            "不得直接把 `.example.json` 当作 release 配置",
+            "`<ABSOLUTE_SKILL_ROOT>\\scripts\\compiler_adapter.py`",
+            "`--asmc-cli`",
+            "`--compiler-source-root`",
+            "`--compiler-mcu-type`",
+            "`--tool-version`",
+            "python scripts/hk8asm.py doctor --profile profiles/local-HK64S825.profile.json --config configs/local-adapter.json",
+        ):
+            self.assertIn(phrase, skill_text)
+
 
 if __name__ == "__main__":
     unittest.main()

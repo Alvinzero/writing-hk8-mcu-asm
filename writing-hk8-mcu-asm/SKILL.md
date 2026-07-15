@@ -107,6 +107,15 @@ python scripts/hk8asm.py release --run-dir .hk8asm/run-id --output verified.asm
 
 `asm_static_check.py` 只是静态检查器，不是编译器；`fake_adapter.py` 只能用于自动化测试，不能用于 release。`local-adapter.example.json` 中的 `REPLACE_WITH...` 是占位符，不是遗漏文件；配置中出现 `REPLACE_WITH` 占位符时必须停止，报告缺少真实 compiler adapter 或真实工具链配置，不得把静态检查通过伪装成目标编译通过。
 
+当 `doctor` 返回 `PROFILE_NOT_READY`、`INVALID_CONFIG` 或发现 `REPLACE_WITH...` 时，回复必须给出可执行的本机配置指引，而不是只让用户“提供 profile/config 路径”。必须说明：
+
+- 模板文件在 Skill 内：`references/profiles/HK64S825.profile.example.json` 和 `references/configs/local-adapter.example.json`。
+- 先复制为工作文件，例如 `profiles/local-HK64S825.profile.json` 和 `configs/local-adapter.json`；不得直接把 `.example.json` 当作 release 配置。
+- `configs/local-adapter.json` 中的 `<ABSOLUTE_SKILL_ROOT>\scripts\compiler_adapter.py` 必须替换为当前安装 Skill 根目录下的 `scripts/compiler_adapter.py` 绝对路径，例如 Codex 用户安装通常在 `%USERPROFILE%\.agents\skills\writing-hk8-mcu-asm\scripts\compiler_adapter.py`，Claude Code 用户安装通常在 `%USERPROFILE%\.claude\skills\writing-hk8-mcu-asm\scripts\compiler_adapter.py`。
+- 必须替换 `--asmc-cli`、`--compiler-source-root`、`--compiler-mcu-type`、`--tool-version`；其中 `--compiler-mcu-type` 是公司编译器源码接受的工程型号，不一定等于对外芯片名 `HK64S825`。
+- `profiles/local-HK64S825.profile.json` 中 `status` 必须改为就绪状态，并把 `approved_tool_versions.compiler` 改为与 config 中 `--tool-version` 完全一致的批准版本。
+- 配好后先运行：`python scripts/hk8asm.py doctor --profile profiles/local-HK64S825.profile.json --config configs/local-adapter.json`。只有 doctor 通过后，才继续 `new-run -> close-loop -> release`。
+
 `local-adapter.example.json` 的 compiler 命令形态如下；复制后必须把占位符替换为真实绝对路径，因为 adapter 在隔离 run 目录执行，不能依赖当前目录：
 
 ```json
