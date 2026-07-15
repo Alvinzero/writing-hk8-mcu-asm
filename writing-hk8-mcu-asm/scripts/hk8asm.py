@@ -244,7 +244,7 @@ def validate_config(config: dict[str, Any]) -> None:
             require(
                 not contains_placeholder(item),
                 "INVALID_CONFIG",
-                f"{role} adapter command contains placeholder instead of a real compiler adapter path: {item}",
+                f"{role} adapter command contains placeholder instead of a real compiler adapter or toolchain path: {item}",
             )
         timeout = adapter.get("timeout_seconds", 60)
         require(

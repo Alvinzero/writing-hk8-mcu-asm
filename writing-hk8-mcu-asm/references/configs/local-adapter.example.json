@@ -1,12 +1,21 @@
 {
   "schema_version": 1,
   "board_id": "HK64S825-DEFAULT",
+  "_comment": "复制本文件后，把 REPLACE_WITH... 全部替换成真实绝对路径/批准版本。adapter 命令必须用字符串数组；不得写成 shell 字符串。因为 adapter 在隔离 run 目录中执行，compiler_adapter.py 路径也必须是绝对路径。",
   "simulate": {},
   "adapters": {
     "compiler": {
       "command": [
         "python",
-        "REPLACE_WITH_EXPLICIT_COMPILER_ADAPTER.py"
+        "REPLACE_WITH_ABSOLUTE_SKILL_ROOT\\scripts\\compiler_adapter.py",
+        "--asmc-cli",
+        "D:\\hk64s8x-cli\\asmc\\scripts\\asmc_compile.py",
+        "--compiler-source-root",
+        "REPLACE_WITH_ABSOLUTE_HK_ASM_COMPILER_SOURCE_ROOT",
+        "--compiler-mcu-type",
+        "REPLACE_WITH_COMPILER_MCU_TYPE_ACCEPTED_BY_COMPILER_SOURCE",
+        "--tool-version",
+        "REPLACE_WITH_APPROVED_COMPILER_VERSION"
       ],
       "timeout_seconds": 120
     }

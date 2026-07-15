@@ -10,7 +10,17 @@ from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 CLI = SKILL_ROOT / "scripts" / "hk8asm.py"
+COMPILER_ADAPTER = SKILL_ROOT / "scripts" / "compiler_adapter.py"
 FAKE_ADAPTER = Path(__file__).parent / "fixtures" / "fake_adapter.py"
+FAKE_ASMC_CLI = Path(__file__).parent / "fixtures" / "fake_asmc_cli.py"
+REQUIRED_FAKE_COMPILER_FILES = (
+    "src/core/assembler.py",
+    "src/core/output_generator.py",
+    "src/core/chip_manager.py",
+    "src/core/online_flasher.py",
+    "instruction_set.xlsx",
+    "register_set.xlsx",
+)
 
 
 class ClosedLoopCliContractTests(unittest.TestCase):
@@ -113,6 +123,31 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         for role in ("compiler", "programmer", "verifier"):
             config["adapters"][role]["command"] = command
         return config
+
+    def fake_compiler_source_root(self) -> Path:
+        root = self.root / "fake-company-compiler"
+        for relative in REQUIRED_FAKE_COMPILER_FILES:
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"fixture for {relative}\n", encoding="utf-8")
+        include = root / "include" / "REG825.INC"
+        include.parent.mkdir(parents=True, exist_ok=True)
+        include.write_text("; fixture register include\n", encoding="utf-8")
+        return root
+
+    def compiler_adapter_command(self, *, tool_version: str = "fixture-compiler-1") -> list[str]:
+        return [
+            sys.executable,
+            str(COMPILER_ADAPTER),
+            "--asmc-cli",
+            str(FAKE_ASMC_CLI),
+            "--compiler-source-root",
+            str(self.fake_compiler_source_root()),
+            "--compiler-mcu-type",
+            "HK64S8101",
+            "--tool-version",
+            tool_version,
+        ]
 
     def run_cli(self, *args: str) -> subprocess.CompletedProcess[str]:
         self.assertTrue(CLI.exists(), f"production CLI missing: {CLI}")
@@ -457,6 +492,67 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         payload = self.payload(result)
         self.assertEqual("INVALID_CONFIG", payload["code"])
         self.assertIn("placeholder", payload["message"])
+
+    def test_compiler_adapter_wraps_asmc_cli_for_full_loop(self) -> None:
+        profile = self.profile()
+        profile["approved_tool_versions"]["compiler"] = ["fixture-compiler-1"]
+        self._write_json(self.profile_path, profile)
+        self._write_json(
+            self.config_path,
+            {
+                "schema_version": 1,
+                "board_id": "HK64S825-SIM-BOARD",
+                "simulate": {},
+                "adapters": {
+                    "compiler": {"command": self.compiler_adapter_command()},
+                },
+            },
+        )
+
+        doctor = self.run_cli("doctor", "--profile", str(self.profile_path), "--config", str(self.config_path))
+        self.assertEqual(0, doctor.returncode, doctor.stderr or doctor.stdout)
+        self.assertEqual("READY", self.payload(doctor)["code"])
+
+        run_dir = self.new_run("real-compiler-adapter")
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        self.assertEqual("COMPILE_PASSED", self.payload(loop)["code"])
+        self.assertTrue((run_dir / "build" / "firmware.hex").is_file())
+        self.assertTrue((run_dir / "build" / "firmware.bin").is_file())
+        self.assertTrue((run_dir / "build" / "firmware.map").is_file())
+        evidence = json.loads((run_dir / "evidence.json").read_text(encoding="utf-8"))
+        self.assertEqual("fixture-compiler-1", evidence["gates"]["compile"]["tool_version"])
+        self.assertEqual("hk64s8x-cli asmc source-module", evidence["gates"]["compile"]["toolchain"])
+
+    def test_compiler_adapter_failure_blocks_release_without_source_leakage(self) -> None:
+        profile = self.profile()
+        profile["approved_tool_versions"]["compiler"] = ["fixture-compiler-1"]
+        self._write_json(self.profile_path, profile)
+        self._write_json(
+            self.config_path,
+            {
+                "schema_version": 1,
+                "board_id": "HK64S825-SIM-BOARD",
+                "simulate": {},
+                "adapters": {
+                    "compiler": {"command": self.compiler_adapter_command()},
+                },
+            },
+        )
+        self.source_path.write_text(
+            "; CHIP: HK64S825\n; PURPOSE: fail fixture\n; FORCE_ERROR\nORG 0x0000\nNOP\nEND\n",
+            encoding="utf-8",
+        )
+        candidate = self.source_path.read_text(encoding="utf-8")
+
+        run_dir = self.new_run("real-compiler-adapter-failure")
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertNotEqual(0, loop.returncode)
+        self.assertEqual("COMPILE_FAILED", self.payload(loop)["code"])
+        self.assertNotIn(candidate, loop.stdout)
+        release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(self.root / "blocked.asm"))
+        self.assertNotEqual(0, release.returncode)
+        self.assertEqual("RELEASE_BLOCKED", self.payload(release)["code"])
 
     def test_compile_gate_does_not_increment_flash_attempts(self) -> None:
         self._write_json(self.config_path, self.config(failures={"programmer": "fail"}))

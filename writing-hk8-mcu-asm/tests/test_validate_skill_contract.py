@@ -190,13 +190,15 @@ class ValidateSkillContractTests(unittest.TestCase):
         ):
             self.assertIn(phrase, gpio_spec)
 
-    def test_skill_explains_real_compiler_adapter_is_not_bundled(self) -> None:
+    def test_skill_explains_real_adapter_wrapper_and_external_toolchain_boundary(self) -> None:
         skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         for phrase in (
-            "资料包不内置真实 HK64S825 编译器 adapter",
+            "资料包内置 `scripts/compiler_adapter.py` 作为真实 ASMC wrapper",
+            "资料包不内置公司 `HK_ASM_Compiler` 源码、`D:\\hk64s8x-cli` 项目或本机工具链路径",
             "`asm_static_check.py` 只是静态检查器，不是编译器",
             "`fake_adapter.py` 只能用于自动化测试，不能用于 release",
             "配置中出现 `REPLACE_WITH` 占位符时必须停止",
+            "`--compiler-mcu-type` 是公司编译器源码实际接受的工程型号",
         ):
             self.assertIn(phrase, skill_text)
 
