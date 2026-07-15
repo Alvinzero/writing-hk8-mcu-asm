@@ -138,6 +138,58 @@ class ValidateSkillContractTests(unittest.TestCase):
         ):
             self.assertIn(phrase, skill_text)
 
+    def test_oled_tasks_require_project_experience_and_visible_fill_contract(self) -> None:
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        oled_spec = (
+            SKILL_ROOT / "references" / "spec" / "05-GPIO-I2C-OLED驱动规范.md"
+        ).read_text(encoding="utf-8")
+
+        for phrase in (
+            "## OLED 任务硬门禁",
+            "当用户要求依据 `D:\\hk64s8x-cli` 项目经验",
+            "生成候选 ASM 前先写 OLED 契约测试",
+            "不得只用 `A5H/AFH` 或裸 `AFH/AEH` 证明亮灭",
+            "先写入 1024 字节 `0xFF` 到 GDDRAM",
+            "`PB_PPU/PB_POD/PB_INS/PB_PIO/PB_POE`",
+            "ACK 后必须立即检查",
+            "`I2C_DELAY` 不得退回 2 个 `NOP`",
+            "旧芯片型号",
+        ):
+            self.assertIn(phrase, skill_text)
+
+        for phrase in (
+            "PB6/PB7 SSD1306 安全基线",
+            "MOV PB_POD,A",
+            "MOV PB_INS,A",
+            "先预装 `PB_PIO=0xC0`，最后再 `PB_POE=0xC0`",
+        ):
+            self.assertIn(phrase, oled_spec)
+
+    def test_led_gpio_generation_requires_minimal_init_and_wdt_safe_delays(self) -> None:
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        gpio_spec = (
+            SKILL_ROOT / "references" / "spec" / "05-GPIO-I2C-OLED驱动规范.md"
+        ).read_text(encoding="utf-8")
+
+        for phrase in (
+            "LED/GPIO 通用硬门禁",
+            "简单 LED/GPIO 不得套用端口全量初始化模板",
+            "默认只写当前功能必需的 `PIO` 和 `POE`",
+            "不得为了显得完整而批量清写 `PPU/PPD/POD/INS/IOS`",
+            "WDT 未明确关闭时，任何可见延时、长忙等或周期循环必须插入 `CLRWDT`",
+            "先判断任务需要哪些电气属性，再决定写哪些寄存器",
+        ):
+            self.assertIn(phrase, skill_text)
+
+        for phrase in (
+            "简单 LED/GPIO 最小初始化原则",
+            "不要从模板惯性写完整端口初始化序列",
+            "只有 board profile 明确要求上拉、下拉、开漏、输入通道或特殊功能选择时",
+            "长延时与 WDT",
+            "`CLRWDT` 必须放在忙等循环内部",
+        ):
+            self.assertIn(phrase, gpio_spec)
+
 
 if __name__ == "__main__":
     unittest.main()

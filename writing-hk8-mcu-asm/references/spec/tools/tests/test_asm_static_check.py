@@ -159,6 +159,91 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertEqual(strict.returncode, 1)
         self.assertEqual(strict_payload["summary"]["errors"], 0)
 
+    def test_delay_loop_without_clrwdt_is_blocked(self):
+        completed, payload = self.run_checker(
+            "; CHIP: HK64S825\n"
+            "; 功能：PA0 LED 长延时闪烁\n"
+            "ORG 0x0000\n"
+            "START:\n"
+            "  BSET PA_POE,0\n"
+            "MAIN_LOOP:\n"
+            "  BCPL PA_PIO,0\n"
+            "  CALL DELAY_2S\n"
+            "  JMP MAIN_LOOP\n"
+            "DELAY_2S:\n"
+            "  MOV A,#0FFH\n"
+            "  MOV 80H,A\n"
+            "DELAY_LOOP:\n"
+            "  DECR 80H\n"
+            "  SZR 80H\n"
+            "  JMP DELAY_LOOP\n"
+            "  RET\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+        )
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("HK-WDT-001", self.rule_ids(payload))
+
+    def test_simple_led_bulk_gpio_initialization_warns_under_strict_warnings(self):
+        completed, payload = self.run_checker(
+            "; CHIP: HK64S825\n"
+            "; 功能：PA0 LED 输出\n"
+            "ORG 0x0000\n"
+            "START:\n"
+            "  MOV A,PA_PPU\n"
+            "  AND A,#0FEH\n"
+            "  MOV PA_PPU,A\n"
+            "  MOV A,PA_PPD\n"
+            "  AND A,#0FEH\n"
+            "  MOV PA_PPD,A\n"
+            "  MOV A,PA_POD\n"
+            "  AND A,#0FEH\n"
+            "  MOV PA_POD,A\n"
+            "  MOV A,PA_INS\n"
+            "  AND A,#0FEH\n"
+            "  MOV PA_INS,A\n"
+            "  MOV A,PA_IOS\n"
+            "  AND A,#0FEH\n"
+            "  MOV PA_IOS,A\n"
+            "  BSET PA_POE,0\n"
+            "  BSET PA_PIO,0\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            "--strict-warnings",
+        )
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("HK-GPIO-INIT-001", self.rule_ids(payload))
+
+    def test_minimal_led_init_with_clrwdt_delay_passes(self):
+        completed, payload = self.run_checker(
+            "; CHIP: HK64S825\n"
+            "; 功能：PA0 LED 闪烁，WDT 未确认关闭\n"
+            "ORG 0x0000\n"
+            "START:\n"
+            "  BCLR PA_PIO,0\n"
+            "  BSET PA_POE,0\n"
+            "MAIN_LOOP:\n"
+            "  BCPL PA_PIO,0\n"
+            "  CALL DELAY_VISIBLE\n"
+            "  JMP MAIN_LOOP\n"
+            "DELAY_VISIBLE:\n"
+            "  MOV A,#20H\n"
+            "  MOV 80H,A\n"
+            "DELAY_LOOP:\n"
+            "  CLRWDT\n"
+            "  DECR 80H\n"
+            "  SZR 80H\n"
+            "  JMP DELAY_LOOP\n"
+            "  RET\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            "--strict-warnings",
+        )
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+
 
 if __name__ == "__main__":
     unittest.main()

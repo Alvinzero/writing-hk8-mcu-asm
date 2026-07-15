@@ -44,6 +44,14 @@ MAP_SYMBOL_RE = re.compile(r"^\s*(\S+)\s+0x([0-9A-Fa-f]+)\s+", re.MULTILINE)
 NUMERIC_TARGET_RE = re.compile(r"^(?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|[0-9]+)\b", re.IGNORECASE)
 MIXED_HEX_RE = re.compile(r"\b0x[0-9A-Fa-f]+H\b", re.IGNORECASE)
 NUMBER_TOKEN_RE = re.compile(r"(?<![\w])(?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|[0-9]+)(?![\w])", re.IGNORECASE)
+GPIO_CONFIG_REGISTER_RE = re.compile(r"\b(P[AB])_(PPU|PPD|POD|INS|IOS|PSL)\b", re.IGNORECASE)
+GPIO_COMPLEX_CONTEXT_RE = re.compile(
+    r"(I2C|OLED|SSD1306|数码|七段|7SEG|BOARD[_ -]?PROFILE|板级|经验证)",
+    re.IGNORECASE,
+)
+DELAY_LABEL_RE = re.compile(r"(DELAY|WAIT)", re.IGNORECASE)
+WDT_OFF_RE = re.compile(r"(WDT|看门狗).{0,20}(OFF|DISABLE|DISABLED|关闭|禁用|已关)", re.IGNORECASE)
+WRITE_FIRST_OPERAND_OPS = {"MOV", "BSET", "BCLR", "BCPL"}
 
 
 def parse_number(text: str) -> int | None:
@@ -113,6 +121,10 @@ def collect_sram_addresses(args: str) -> set[int]:
     return addresses
 
 
+def first_operand(args: str) -> str:
+    return args.split(",", 1)[0].strip()
+
+
 def occupy_words(
     occupied: dict[int, dict[str, Any]],
     start: int,
@@ -180,6 +192,7 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
     db_directives = 0
     db_source_bytes = 0
     sram_addresses: set[int] = set()
+    gpio_config_writes: dict[str, dict[str, int]] = {}
 
     for line_number, raw in enumerate(lines, 1):
         for match in TABLE_PAIR_RE.finditer(raw):
@@ -343,6 +356,14 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
         instructions.append(instruction)
         sram_addresses.update(collect_sram_addresses(args))
 
+        if op in WRITE_FIRST_OPERAND_OPS:
+            destination = first_operand(args)
+            match = GPIO_CONFIG_REGISTER_RE.fullmatch(destination)
+            if match:
+                port = match.group(1).upper()
+                register = f"{port}_{match.group(2).upper()}"
+                gpio_config_writes.setdefault(port, {}).setdefault(register, line_number)
+
         if op in {"JMP", "CALL"} and NUMERIC_TARGET_RE.match(args):
             findings.append(
                 make_finding(
@@ -397,6 +418,44 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
 
         occupy_words(occupied, address, 1, path, line_number, op, findings)
         address += 1
+
+    has_clrwdt = any(instruction["op"] == "CLRWDT" for instruction in instructions)
+    wdt_declared_off = WDT_OFF_RE.search(text) is not None
+    delay_labels = [
+        info
+        for key, info in labels.items()
+        if DELAY_LABEL_RE.search(key) is not None
+    ]
+    if delay_labels and not has_clrwdt and not wdt_declared_off:
+        first_delay = min(delay_labels, key=lambda item: item["line"])
+        findings.append(
+            make_finding(
+                "HK-WDT-001",
+                "BLOCKER",
+                path,
+                first_delay["line"],
+                f"delay/wait routine {first_delay['name']} has no CLRWDT in source",
+                "When WDT is enabled or unknown, long busy-wait loops can reset the MCU before the visible GPIO state stabilizes.",
+                "Insert CLRWDT inside the busy-wait cadence, or document an explicit board/profile WDT-off configuration.",
+            )
+        )
+
+    if not GPIO_COMPLEX_CONTEXT_RE.search(text):
+        for port, writes in sorted(gpio_config_writes.items()):
+            if len(writes) < 4:
+                continue
+            first_line = min(writes.values())
+            findings.append(
+                make_finding(
+                    "HK-GPIO-INIT-001",
+                    "WARNING",
+                    path,
+                    first_line,
+                    f"{port} writes {len(writes)} GPIO configuration registers: {', '.join(sorted(writes))}",
+                    "Simple LED/GPIO code that sweeps pull-up, pull-down, open-drain, input and special-function registers is harder to audit and can disturb unrelated pins.",
+                    "For simple LED/GPIO, write only the task-required PIO/POE bits; configure PPU/PPD/POD/INS/IOS/PSL only when the board profile requires that electrical property.",
+                )
+            )
 
     if db_directives and toolchain == "python_source_module_cli":
         first_db_line = next(
