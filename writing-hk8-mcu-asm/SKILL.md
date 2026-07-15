@@ -92,6 +92,8 @@ python scripts/hk8asm.py release --run-dir .hk8asm/run-id --output verified.asm
 
 `doctor` 只探测显式配置的 compiler adapter 和批准工具版本；若额外配置了 programmer/verifier adapter，也只做可选探测。`new-run` 把输入快照到隔离运行目录。`close-loop` 只执行静态检查和目标编译，并保存 source/artifact/evidence hash。`release` 是唯一允许释放已编译 ASM 的命令。
 
+资料包不内置真实 HK64S825 编译器 adapter。`asm_static_check.py` 只是静态检查器，不是编译器；`fake_adapter.py` 只能用于自动化测试，不能用于 release。`local-adapter.example.json` 中的 `REPLACE_WITH_EXPLICIT_COMPILER_ADAPTER.py` 是占位符，不是遗漏文件；配置中出现 `REPLACE_WITH` 占位符时必须停止，报告缺少真实 compiler adapter 或真实工具链配置，不得把静态检查通过伪装成目标编译通过。
+
 Adapter 命令必须配置为字符串数组，并按以下协议调用：
 
 ```text

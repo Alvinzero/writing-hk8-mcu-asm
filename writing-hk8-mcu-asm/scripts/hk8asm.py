@@ -22,6 +22,7 @@ OPTIONAL_HARDWARE_ROLES = ("programmer", "verifier")
 ROLES = (*MANDATORY_ROLES, *OPTIONAL_HARDWARE_ROLES)
 RUN_SCHEMA_VERSION = 1
 MAX_FLASH_ATTEMPTS = 3
+PLACEHOLDER_MARKERS = ("REPLACE_WITH", "实际路径")
 
 
 class GateError(Exception):
@@ -95,6 +96,13 @@ def is_non_empty_string(value: Any) -> bool:
 
 def is_scalar(value: Any) -> bool:
     return isinstance(value, (str, int, float)) and not isinstance(value, bool)
+
+
+def contains_placeholder(value: str) -> bool:
+    stripped = value.strip()
+    return any(marker in stripped for marker in PLACEHOLDER_MARKERS) or (
+        stripped.startswith("<") and stripped.endswith(">")
+    )
 
 
 def contains_unresolved(value: Any) -> bool:
@@ -232,6 +240,12 @@ def validate_config(config: dict[str, Any]) -> None:
             "INVALID_CONFIG",
             f"{role} adapter command must be a non-empty string array",
         )
+        for item in command:
+            require(
+                not contains_placeholder(item),
+                "INVALID_CONFIG",
+                f"{role} adapter command contains placeholder instead of a real compiler adapter path: {item}",
+            )
         timeout = adapter.get("timeout_seconds", 60)
         require(
             isinstance(timeout, int) and not isinstance(timeout, bool) and 1 <= timeout <= 3600,
@@ -251,6 +265,12 @@ def validate_config(config: dict[str, Any]) -> None:
             "INVALID_CONFIG",
             f"{role} adapter command must be a non-empty string array",
         )
+        for item in command:
+            require(
+                not contains_placeholder(item),
+                "INVALID_CONFIG",
+                f"{role} adapter command contains placeholder instead of a real adapter path: {item}",
+            )
         timeout = adapter.get("timeout_seconds", 60)
         require(
             isinstance(timeout, int) and not isinstance(timeout, bool) and 1 <= timeout <= 3600,

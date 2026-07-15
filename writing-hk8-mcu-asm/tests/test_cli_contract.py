@@ -443,6 +443,21 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         self.assertEqual("INVALID_CONFIG", self.payload(result)["code"])
         self.assertFalse(sentinel.exists())
 
+    def test_placeholder_compiler_adapter_is_rejected_before_probe(self) -> None:
+        config = self.compile_only_config()
+        config["adapters"]["compiler"]["command"] = [
+            "python",
+            "REPLACE_WITH_EXPLICIT_COMPILER_ADAPTER.py",
+        ]
+        self._write_json(self.config_path, config)
+        result = self.run_cli(
+            "doctor", "--profile", str(self.profile_path), "--config", str(self.config_path)
+        )
+        self.assertNotEqual(0, result.returncode)
+        payload = self.payload(result)
+        self.assertEqual("INVALID_CONFIG", payload["code"])
+        self.assertIn("placeholder", payload["message"])
+
     def test_compile_gate_does_not_increment_flash_attempts(self) -> None:
         self._write_json(self.config_path, self.config(failures={"programmer": "fail"}))
         run_dir = self.new_run()
