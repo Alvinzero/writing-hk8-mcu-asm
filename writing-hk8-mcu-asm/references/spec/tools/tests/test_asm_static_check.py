@@ -147,6 +147,38 @@ END
 """
 
 
+BULK_GPIO_WARNING_SOURCE = """; CHIP: HK64S825
+; 功能：PA0 LED 输出，保留非目标位
+ORG 000H
+START:
+    MOV A,PA_PPU
+    AND A,#0FEH
+    MOV PA_PPU,A
+    MOV A,PA_PPD
+    AND A,#0FEH
+    MOV PA_PPD,A
+    MOV A,PA_INS
+    AND A,#0FEH
+    MOV PA_INS,A
+    MOV A,PA_IOS
+    AND A,#0FEH
+    MOV PA_IOS,A
+    MOV A,PA_POD
+    AND A,#0FEH
+    MOV PA_POD,A
+    MOV A,PA_PIO
+    AND A,#0FEH
+    MOV PA_PIO,A
+    MOV A,PA_POE
+    OR A,#01H
+    MOV PA_POE,A
+MAIN_LOOP:
+    CLRWDT
+    JMP MAIN_LOOP
+END
+"""
+
+
 def gpio_request(*, drive: str = "push_pull", active_level: str = "high") -> dict:
     return {
         "schema_version": 1,
@@ -533,6 +565,9 @@ class AsmStaticCheckCliTests(unittest.TestCase):
                 self.assertEqual(len(reference_findings), 1)
                 self.assertEqual(reference_findings[0]["severity"], "ERROR")
                 self.assertIn(expected_evidence, reference_findings[0]["evidence"])
+                loop_audit = payload["semantic_audits"]["loop_semantics"]
+                self.assertFalse(loop_audit["audited"])
+                self.assertEqual(loop_audit["status"], "unavailable")
 
     def test_request_pins_must_be_an_object_when_present(self):
         request = gpio_request()
@@ -557,6 +592,10 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         )
         findings = self.assert_ai_error(completed, payload)
         self.assertIn("pins.led_outputs.drive", findings[0]["evidence"])
+        gpio_audit = payload["semantic_audits"]["gpio_contract"]
+        self.assertTrue(gpio_audit["audited"])
+        self.assertEqual(gpio_audit["status"], "fail")
+        self.assertEqual(gpio_audit["finding_rule_ids"], ["HK-AI-003"])
 
     def test_structured_pin_direction_must_be_explicit_and_valid(self):
         for name, direction in (("missing", None), ("misspelled", "ouput")):
@@ -591,6 +630,9 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, payload["findings"])
         self.assertNotIn("HK-AI-003", self.rule_ids(payload))
+        gpio_audit = payload["semantic_audits"]["gpio_contract"]
+        self.assertFalse(gpio_audit["audited"])
+        self.assertEqual(gpio_audit["status"], "not_applicable")
 
     def test_python_cli_blocks_sources_containing_db(self):
         completed, payload = self.run_checker(
@@ -687,6 +729,16 @@ class AsmStaticCheckCliTests(unittest.TestCase):
             <= self.rule_ids(payload),
             payload["findings"],
         )
+        gpio_audit = payload["semantic_audits"]["gpio_contract"]
+        self.assertTrue(gpio_audit["audited"])
+        self.assertEqual(gpio_audit["status"], "fail")
+        self.assertEqual(gpio_audit["finding_rule_ids"], ["HK-GPIO-002"])
+        loop_audit = payload["semantic_audits"]["loop_semantics"]
+        self.assertTrue(loop_audit["audited"])
+        self.assertEqual(loop_audit["status"], "fail")
+        self.assertEqual(
+            loop_audit["finding_rule_ids"], ["HK-SYN-012", "HK-WDT-002"]
+        )
 
     def test_compliant_led_source_passes_semantic_gates_and_timing_audit(self):
         request = gpio_request()
@@ -702,13 +754,51 @@ class AsmStaticCheckCliTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, payload["findings"])
         self.assertEqual(payload["findings"], [])
-        self.assertEqual(len(payload["semantic_audits"]["timing"]), 1)
-        audit = payload["semantic_audits"]["timing"][0]
+        audits = payload["semantic_audits"]
+        self.assertEqual(set(audits), {"gpio_contract", "loop_semantics", "timing"})
+        self.assertEqual(
+            audits["gpio_contract"],
+            {
+                "audited": True,
+                "status": "pass",
+                "structured_output_contract": True,
+                "rule_ids": ["HK-GPIO-002", "HK-GPIO-INIT-001"],
+                "finding_rule_ids": [],
+            },
+        )
+        self.assertEqual(
+            audits["loop_semantics"],
+            {
+                "audited": True,
+                "status": "pass",
+                "rule_ids": ["HK-SYN-012", "HK-WDT-001", "HK-WDT-002"],
+                "finding_rule_ids": [],
+            },
+        )
+        self.assertEqual(len(audits["timing"]), 1)
+        audit = audits["timing"][0]
         self.assertEqual(audit["status"], "pass")
         self.assertEqual(audit["actual_us"], 502_010.5)
         self.assertEqual(audit["error_percent"], 0.4021)
         for register in ("PA_PPU", "PA_PPD", "PA_INS", "PA_IOS"):
             self.assertNotIn(register, COMPLIANT_LED_SOURCE)
+
+    def test_gpio_warning_is_explicit_in_checker_semantic_audit(self):
+        request = gpio_request()
+        request["pins"]["led_outputs"]["bits"] = [0]
+        completed, payload = self.run_checker(
+            BULK_GPIO_WARNING_SOURCE,
+            "--toolchain",
+            "builtin_compiler",
+            request=request,
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        gpio_audit = payload["semantic_audits"]["gpio_contract"]
+        self.assertTrue(gpio_audit["audited"])
+        self.assertEqual(gpio_audit["status"], "warning")
+        self.assertEqual(gpio_audit["finding_rule_ids"], ["HK-GPIO-INIT-001"])
 
     def test_include_operand_does_not_count_as_business_equ_use(self):
         source = 'LED_MASK EQU 29H\nINCLUDE "LED_MASK"\nORG 0\nSTART:\n  NOP\nEND\n'

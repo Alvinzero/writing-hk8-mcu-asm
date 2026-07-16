@@ -379,12 +379,44 @@ def check_automated_rule_tests(
                 f"cannot inspect automated test definitions: {exc}",
             )
             continue
-        test_methods.update(
-            node.name
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name.startswith("test_")
+        unittest_module_imported = any(
+            isinstance(node, ast.Import)
+            and any(alias.name == "unittest" and alias.asname is None for alias in node.names)
+            for node in tree.body
         )
+        testcase_directly_imported = any(
+            isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and node.module == "unittest"
+            and any(alias.name == "TestCase" and alias.asname is None for alias in node.names)
+            for node in tree.body
+        )
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            is_testcase = any(
+                (
+                    unittest_module_imported
+                    and isinstance(base, ast.Attribute)
+                    and isinstance(base.value, ast.Name)
+                    and base.value.id == "unittest"
+                    and base.attr == "TestCase"
+                )
+                or (
+                    testcase_directly_imported
+                    and isinstance(base, ast.Name)
+                    and base.id == "TestCase"
+                )
+                for base in node.bases
+            )
+            if not is_testcase:
+                continue
+            test_methods.update(
+                member.name
+                for member in node.body
+                if isinstance(member, ast.FunctionDef)
+                and member.name.startswith("test_")
+            )
 
     checks["automated_rule_tests"] = dict(AUTOMATED_RULE_TESTS)
     checks["automated_rule_test_files"] = [

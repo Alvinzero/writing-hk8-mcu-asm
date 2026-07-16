@@ -36,6 +36,33 @@ class ValidateSpecCliTests(unittest.TestCase):
         shutil.copytree(SPEC, copied)
         return copied
 
+    def assert_missing_automated_test_is_rejected(self, spoof: str) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            copied = self.copy_spec(Path(tmp))
+            tests = copied / "tools" / "tests" / "test_asm_static_check.py"
+            source = tests.read_text(encoding="utf-8")
+            signature = "    def test_delay_loop_without_clrwdt_is_blocked(self):"
+            self.assertIn(signature, source)
+            tests.write_text(
+                source.replace(
+                    signature,
+                    "    def disabled_delay_loop_without_clrwdt_is_blocked(self):",
+                    1,
+                )
+                + spoof,
+                encoding="utf-8",
+            )
+            completed = self.run_validator_process(copied)
+
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
+        payload = json.loads(completed.stdout)
+        findings = [
+            item for item in payload["findings"] if item["code"] == "checker-rule-test"
+        ]
+        self.assertTrue(findings, payload["findings"])
+        self.assertIn("test_delay_loop_without_clrwdt_is_blocked", findings[0]["message"])
+
     def test_current_spec_package_validates(self):
         completed, payload = self.run_validator(SPEC)
         self.assertEqual(completed.returncode, 0, payload)
@@ -74,31 +101,47 @@ class ValidateSpecCliTests(unittest.TestCase):
         )
 
     def test_missing_automated_rule_test_method_fails_without_comment_spoofing(self):
+        self.assert_missing_automated_test_is_rejected(
+            "\n# def test_delay_loop_without_clrwdt_is_blocked(self):\n"
+        )
+
+    def test_nested_local_test_definition_cannot_spoof_automation_binding(self):
+        self.assert_missing_automated_test_is_rejected(
+            "\nclass NestedSpoof(unittest.TestCase):\n"
+            "    def helper(self):\n"
+            "        def test_delay_loop_without_clrwdt_is_blocked(self):\n"
+            "            pass\n"
+            "        return test_delay_loop_without_clrwdt_is_blocked\n"
+        )
+
+    def test_non_testcase_class_cannot_spoof_automation_binding(self):
+        self.assert_missing_automated_test_is_rejected(
+            "\nclass FakeTests:\n"
+            "    def test_delay_loop_without_clrwdt_is_blocked(self):\n"
+            "        pass\n"
+        )
+
+    def test_top_level_async_test_cannot_spoof_automation_binding(self):
+        self.assert_missing_automated_test_is_rejected(
+            "\nasync def test_delay_loop_without_clrwdt_is_blocked(self):\n"
+            "    pass\n"
+        )
+
+    def test_direct_testcase_import_is_a_valid_automation_binding(self):
         with tempfile.TemporaryDirectory() as tmp:
             copied = self.copy_spec(Path(tmp))
             tests = copied / "tools" / "tests" / "test_asm_static_check.py"
             source = tests.read_text(encoding="utf-8")
-            signature = "    def test_delay_loop_without_clrwdt_is_blocked(self):"
-            self.assertIn(signature, source)
-            tests.write_text(
-                source.replace(
-                    signature,
-                    "    def disabled_delay_loop_without_clrwdt_is_blocked(self):",
-                    1,
-                )
-                + "\n# def test_delay_loop_without_clrwdt_is_blocked(self):\n",
-                encoding="utf-8",
+            source = source.replace("import unittest\n", "from unittest import TestCase\n", 1)
+            source = source.replace(
+                "class AsmStaticCheckCliTests(unittest.TestCase):",
+                "class AsmStaticCheckCliTests(TestCase):",
+                1,
             )
-            completed = self.run_validator_process(copied)
+            tests.write_text(source, encoding="utf-8")
+            completed, payload = self.run_validator(copied)
 
-        self.assertEqual(completed.returncode, 2, completed.stderr)
-        self.assertNotIn("Traceback", completed.stderr)
-        payload = json.loads(completed.stdout)
-        findings = [
-            item for item in payload["findings"] if item["code"] == "checker-rule-test"
-        ]
-        self.assertTrue(findings, payload["findings"])
-        self.assertIn("test_delay_loop_without_clrwdt_is_blocked", findings[0]["message"])
+        self.assertEqual(completed.returncode, 0, payload)
 
     def test_fallback_rejects_invalid_toolchain_applicability(self):
         invalid_values = {

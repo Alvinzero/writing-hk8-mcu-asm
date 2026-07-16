@@ -67,6 +67,8 @@ GPIO_COMPLEX_CONTEXT_RE = re.compile(
     r"(I2C|OLED|SSD1306|数码|七段|7SEG|BOARD[_ -]?PROFILE|板级|经验证)",
     re.IGNORECASE,
 )
+GPIO_AUDIT_RULE_IDS = ["HK-GPIO-002", "HK-GPIO-INIT-001"]
+LOOP_AUDIT_RULE_IDS = ["HK-SYN-012", "HK-WDT-001", "HK-WDT-002"]
 DELAY_LABEL_RE = re.compile(r"(DELAY|WAIT)", re.IGNORECASE)
 WDT_OFF_RE = re.compile(r"(WDT|看门狗).{0,20}(OFF|DISABLE|DISABLED|关闭|禁用|已关)", re.IGNORECASE)
 WRITE_FIRST_OPERAND_OPS = {"MOV", "BSET", "BCLR", "BCPL"}
@@ -898,6 +900,39 @@ def render_text(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def semantic_audit_summary(
+    rule_ids: list[str],
+    findings: list[dict[str, Any]],
+    *,
+    execution_findings: list[dict[str, Any]],
+    audited: bool,
+    unavailable_status: str,
+) -> dict[str, Any]:
+    relevant = [finding for finding in findings if finding.get("rule_id") in rule_ids]
+    status_findings = [*relevant, *execution_findings]
+    severities = {finding.get("severity") for finding in status_findings}
+    if severities & {"BLOCKER", "ERROR"}:
+        status = "fail"
+    elif "WARNING" in severities:
+        status = "warning"
+    elif status_findings:
+        status = "info"
+    else:
+        status = "pass" if audited else unavailable_status
+    return {
+        "audited": audited,
+        "status": status,
+        "rule_ids": rule_ids,
+        "finding_rule_ids": sorted(
+            {
+                finding["rule_id"]
+                for finding in status_findings
+                if isinstance(finding.get("rule_id"), str)
+            }
+        ),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     files: list[dict[str, Any]] = []
@@ -987,11 +1022,21 @@ def main(argv: list[str] | None = None) -> int:
 
     table_pairs, pair_findings = audit_table_pairs(files, args.table_pair, [path.resolve() for path in args.maps])
     findings.extend(pair_findings)
+    loop_audit_calls = 0
+    gpio_audit_calls = 0
+    loop_execution_findings: list[dict[str, Any]] = []
+    gpio_execution_findings: list[dict[str, Any]] = []
     for file_result in files:
         if instruction_effects is not None:
-            findings.extend(audit_counter_loops(file_result, instruction_effects))
+            loop_audit_calls += 1
+            loop_issues = audit_counter_loops(file_result, instruction_effects)
+            loop_execution_findings.extend(loop_issues)
+            findings.extend(loop_issues)
         if request_context is not None:
-            findings.extend(audit_gpio_contract(file_result, request_context))
+            gpio_audit_calls += 1
+            gpio_issues = audit_gpio_contract(file_result, request_context)
+            gpio_execution_findings.extend(gpio_issues)
+            findings.extend(gpio_issues)
         findings.extend(audit_unused_equ(file_result))
     timing_audits, timing_findings = audit_timing_contract(
         files,
@@ -1018,6 +1063,36 @@ def main(argv: list[str] | None = None) -> int:
         if context is not None and isinstance(context.get("chip"), str):
             chip = context["chip"]
             break
+    pins = request_context.get("pins") if isinstance(request_context, dict) else None
+    has_structured_output_contract = isinstance(pins, dict) and any(
+        isinstance(pin, dict) and pin.get("direction") == "output"
+        for pin in pins.values()
+    )
+    gpio_audited = (
+        has_structured_output_contract
+        and bool(files)
+        and gpio_audit_calls == len(files)
+    )
+    loop_audited = (
+        instruction_effects is not None
+        and bool(files)
+        and loop_audit_calls == len(files)
+    )
+    gpio_audit = semantic_audit_summary(
+        GPIO_AUDIT_RULE_IDS,
+        findings,
+        execution_findings=gpio_execution_findings,
+        audited=gpio_audited,
+        unavailable_status="not_applicable" if not has_structured_output_contract else "unavailable",
+    )
+    gpio_audit["structured_output_contract"] = has_structured_output_contract
+    loop_audit = semantic_audit_summary(
+        LOOP_AUDIT_RULE_IDS,
+        findings,
+        execution_findings=loop_execution_findings,
+        audited=loop_audited,
+        unavailable_status="unavailable",
+    )
     payload = {
         "schema_version": "1.0.0",
         "toolchain": args.toolchain,
@@ -1030,7 +1105,11 @@ def main(argv: list[str] | None = None) -> int:
         "map_files": [str(path.resolve()) for path in args.maps],
         "files": files,
         "table_pairs": table_pairs,
-        "semantic_audits": {"timing": timing_audits},
+        "semantic_audits": {
+            "gpio_contract": gpio_audit,
+            "loop_semantics": loop_audit,
+            "timing": timing_audits,
+        },
         "findings": findings,
         "summary": {
             "blockers": severity_counts["BLOCKER"],

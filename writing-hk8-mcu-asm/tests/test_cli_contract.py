@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from references.spec.tools.tests.test_asm_static_check import (
+    BULK_GPIO_WARNING_SOURCE,
     COMPLIANT_LED_SOURCE,
     PROBLEM_LED_SOURCE,
 )
@@ -204,12 +205,16 @@ class ClosedLoopCliContractTests(unittest.TestCase):
             tool_version,
         ]
 
-    def context_checker_spec_root(self) -> Path:
-        spec_root = self.root / "context-checker-spec"
+    def context_checker_spec_root(
+        self,
+        name: str = "context-checker-spec",
+        *,
+        semantic_audits: dict | None = None,
+    ) -> Path:
+        spec_root = self.root / name
         checker = spec_root / "tools" / "asm_static_check.py"
         checker.parent.mkdir(parents=True)
-        checker.write_text(
-            """#!/usr/bin/env python3
+        checker_source = """#!/usr/bin/env python3
 import argparse
 import json
 from pathlib import Path
@@ -232,7 +237,14 @@ else:
     if request.get("chip") != "HK64S825" or profile.get("chip") != "HK64S825":
         errors.append("snapshot chip mismatch")
 
+audit_payload = __AUDIT_PAYLOAD__
 payload = {
+    "contract_context": {
+        "request_loaded": True,
+        "profile_loaded": True,
+        "chip": "HK64S825",
+    },
+    "files": [],
     "findings": [{"error": error} for error in errors],
     "summary": {
         "blockers": 0,
@@ -242,9 +254,13 @@ payload = {
         "exit_code": 2 if errors else 0,
     },
 }
+if audit_payload is not None:
+    payload["semantic_audits"] = audit_payload
 print(json.dumps(payload))
 raise SystemExit(payload["summary"]["exit_code"])
-""",
+"""
+        checker.write_text(
+            checker_source.replace("__AUDIT_PAYLOAD__", repr(semantic_audits)),
             encoding="utf-8",
         )
         return spec_root
@@ -659,6 +675,63 @@ raise SystemExit(payload["summary"]["exit_code"])
         evidence = json.loads((run_dir / "evidence.json").read_text(encoding="utf-8"))
         self.assertNotIn("semantic_audits", evidence["gates"]["static"])
 
+    def test_custom_checker_invalid_semantic_audits_are_not_promoted_to_pass(self) -> None:
+        valid_gpio_rules = ["HK-GPIO-002", "HK-GPIO-INIT-001"]
+        valid_loop_rules = ["HK-SYN-012", "HK-WDT-001", "HK-WDT-002"]
+        cases = {
+            "missing_sections": {"timing": []},
+            "audited_false_pass": {
+                "gpio_contract": {
+                    "audited": False,
+                    "status": "pass",
+                    "rule_ids": valid_gpio_rules,
+                    "finding_rule_ids": [],
+                },
+                "loop_semantics": {
+                    "audited": False,
+                    "status": "pass",
+                    "rule_ids": valid_loop_rules,
+                    "finding_rule_ids": [],
+                },
+                "timing": [],
+            },
+            "invalid_structure": {
+                "gpio_contract": {
+                    "audited": True,
+                    "status": "pass",
+                    "rule_ids": "HK-GPIO-002",
+                    "finding_rule_ids": [],
+                },
+                "loop_semantics": {
+                    "audited": True,
+                    "status": "pass",
+                    "rule_ids": valid_loop_rules,
+                    "finding_rule_ids": [],
+                },
+                "timing": [],
+            },
+        }
+        for case_name, audits in cases.items():
+            with self.subTest(case_name=case_name):
+                profile = self.profile()
+                profile["spec_root"] = str(
+                    self.context_checker_spec_root(
+                        f"context-checker-{case_name}", semantic_audits=audits
+                    )
+                )
+                profile["static_check"] = {
+                    "toolchain": "company_ide",
+                    "strict_warnings": False,
+                }
+                self._write_json(self.profile_path, profile)
+                run_dir = self.new_run(f"invalid-audit-{case_name}")
+                loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+                self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+                evidence = json.loads(
+                    (run_dir / "evidence.json").read_text(encoding="utf-8")
+                )
+                self.assertNotIn("semantic_audits", evidence["gates"]["static"])
+
     def test_non_strict_gpio_warning_is_not_reported_as_semantic_pass(self) -> None:
         profile = json.loads(EXAMPLE_PROFILE.read_text(encoding="utf-8-sig"))
         profile["spec_root"] = str(SKILL_ROOT / "references" / "spec")
@@ -669,38 +742,7 @@ raise SystemExit(payload["summary"]["exit_code"])
         request["board"] = {"id": "HK64S825-DEFAULT"}
         request["memory_limits"] = {"rom_bytes": 2048, "ram_bytes": 128}
         self._write_json(self.request_path, request)
-        self.source_path.write_text(
-            "; CHIP: HK64S825\n"
-            "; 功能：PA0 LED 输出，保留非目标位\n"
-            "ORG 000H\n"
-            "START:\n"
-            "    MOV A,PA_PPU\n"
-            "    AND A,#0FEH\n"
-            "    MOV PA_PPU,A\n"
-            "    MOV A,PA_PPD\n"
-            "    AND A,#0FEH\n"
-            "    MOV PA_PPD,A\n"
-            "    MOV A,PA_INS\n"
-            "    AND A,#0FEH\n"
-            "    MOV PA_INS,A\n"
-            "    MOV A,PA_IOS\n"
-            "    AND A,#0FEH\n"
-            "    MOV PA_IOS,A\n"
-            "    MOV A,PA_POD\n"
-            "    AND A,#0FEH\n"
-            "    MOV PA_POD,A\n"
-            "    MOV A,PA_PIO\n"
-            "    AND A,#0FEH\n"
-            "    MOV PA_PIO,A\n"
-            "    MOV A,PA_POE\n"
-            "    OR A,#01H\n"
-            "    MOV PA_POE,A\n"
-            "MAIN_LOOP:\n"
-            "    CLRWDT\n"
-            "    JMP MAIN_LOOP\n"
-            "END\n",
-            encoding="utf-8",
-        )
+        self.source_path.write_text(BULK_GPIO_WARNING_SOURCE, encoding="utf-8")
         run_dir = self.root / "non-strict-gpio-warning"
         new_run = self.run_cli(
             "new-run",
@@ -721,6 +763,7 @@ raise SystemExit(payload["summary"]["exit_code"])
         self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
         evidence = json.loads((run_dir / "evidence.json").read_text(encoding="utf-8"))
         audit = evidence["gates"]["static"]["semantic_audits"]["gpio_contract"]
+        self.assertTrue(audit["audited"])
         self.assertEqual("warning", audit["status"])
         self.assertEqual(["HK-GPIO-INIT-001"], audit["finding_rule_ids"])
 
@@ -826,6 +869,9 @@ raise SystemExit(payload["summary"]["exit_code"])
             "not_applicable",
             evidence["gates"]["static"]["semantic_audits"]["gpio_contract"]["status"],
         )
+        self.assertFalse(
+            evidence["gates"]["static"]["semantic_audits"]["gpio_contract"]["audited"]
+        )
 
     def test_problem_led_source_static_failure_blocks_compile_and_release(self) -> None:
         candidate = PROBLEM_LED_SOURCE
@@ -884,9 +930,11 @@ raise SystemExit(payload["summary"]["exit_code"])
             set(audits), {"gpio_contract", "loop_semantics", "timing"}
         )
         self.assertEqual(audits["gpio_contract"]["status"], "pass")
+        self.assertTrue(audits["gpio_contract"]["audited"])
         self.assertIn("HK-GPIO-002", audits["gpio_contract"]["rule_ids"])
         self.assertIn("HK-GPIO-INIT-001", audits["gpio_contract"]["rule_ids"])
         self.assertEqual(audits["loop_semantics"]["status"], "pass")
+        self.assertTrue(audits["loop_semantics"]["audited"])
         self.assertEqual(
             set(audits["loop_semantics"]["rule_ids"]),
             {"HK-SYN-012", "HK-WDT-001", "HK-WDT-002"},
