@@ -1589,6 +1589,218 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertEqual(audit["sck_hz"], 8_000_000)
         self.assertEqual(audit["status"], "pass")
 
+    def test_dead_sck_write_cannot_override_reset_clock(self):
+        body = delay_source().replace(
+            "ORG 0x0000\nDELAY_500MS:", "DELAY_500MS:", 1
+        )
+        source = (
+            "ORG 0\n"
+            "  JMP DELAY_500MS\n"
+            "DEAD:\n"
+            "  MOV A,#31H\n"
+            "  MOV SCK_PS,A\n"
+            + body
+        )
+        completed, payload = self.run_checker(
+            source,
+            "--toolchain",
+            "company_ide",
+            request=timing_request(
+                target_us=62_751.3125,
+                tolerance_percent=0.001,
+            ),
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        clock_findings = [
+            finding
+            for finding in payload["findings"]
+            if finding["rule_id"] == "HK-CLOCK-001"
+        ]
+        self.assertEqual(len(clock_findings), 1, payload["findings"])
+        audit = payload["semantic_audits"]["timing"][0]
+        self.assertEqual(audit["status"], "unproven")
+        self.assertIsNone(audit["sck_ps"])
+        self.assertIsNone(audit["sck_hz"])
+
+    def test_sck_write_must_precede_every_audited_delay_entry(self):
+        request = timing_request(target_us=1, tolerance_percent=1_000)
+        request["timing"]["delay_targets"] = [
+            {
+                "label": label,
+                "target_us": 1,
+                "tolerance_percent": 1_000,
+            }
+            for label in ("DELAY_BEFORE", "DELAY_AFTER")
+        ]
+        source = (
+            "ORG 0\n"
+            "  CALL DELAY_BEFORE\n"
+            "  MOV A,#31H\n"
+            "  MOV SCK_PS,A\n"
+            "  CALL DELAY_AFTER\n"
+            "HANG:\n"
+            "  JMP HANG\n"
+            "DELAY_BEFORE:\n"
+            "  CLRWDT\n"
+            "  RET\n"
+            "DELAY_AFTER:\n"
+            "  CLRWDT\n"
+            "  RET\n"
+            "END\n"
+        )
+        completed, payload = self.run_checker(
+            source,
+            "--toolchain",
+            "company_ide",
+            request=request,
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        clock_findings = [
+            finding
+            for finding in payload["findings"]
+            if finding["rule_id"] == "HK-CLOCK-001"
+        ]
+        self.assertEqual(len(clock_findings), 2, payload["findings"])
+        self.assertTrue(
+            all(
+                audit["status"] == "unproven"
+                for audit in payload["semantic_audits"]["timing"]
+            )
+        )
+
+    def test_jump_cannot_bypass_sck_immediate_load(self):
+        source = (
+            "ORG 0\n"
+            "  CALL BYPASS\n"
+            "  MOV A,#31H\n"
+            "STORE:\n"
+            "  MOV SCK_PS,A\n"
+            "  CALL DELAY_500MS\n"
+            "HANG:\n"
+            "  JMP HANG\n"
+            "BYPASS:\n"
+            "  JMP STORE\n"
+            "DELAY_500MS:\n"
+            "  CLRWDT\n"
+            "  RET\n"
+            "END\n"
+        )
+        completed, payload = self.run_checker(
+            source,
+            "--toolchain",
+            "company_ide",
+            request=timing_request(target_us=1, tolerance_percent=1_000),
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(
+            len(
+                [
+                    finding
+                    for finding in payload["findings"]
+                    if finding["rule_id"] == "HK-CLOCK-001"
+                ]
+            ),
+            1,
+            payload["findings"],
+        )
+        self.assertEqual(
+            payload["semantic_audits"]["timing"][0]["status"], "unproven"
+        )
+
+    def test_cross_file_path_cannot_bypass_sck_control_flow_proof(self):
+        main = (
+            "ORG 0\n"
+            "  MOV A,#31H\n"
+            "  MOV SCK_PS,A\n"
+            "  CALL DELAY_500MS\n"
+            "HANG:\n"
+            "  JMP HANG\n"
+            "DELAY_500MS:\n"
+            "  CLRWDT\n"
+            "  RET\n"
+            "END\n"
+        )
+        vector = (
+            "ORG 100H\n"
+            "VECTOR:\n"
+            "  JMP DELAY_500MS\n"
+            "END\n"
+        )
+        completed, payload = self.run_checker(
+            [("main.asm", main), ("vector.asm", vector)],
+            "--toolchain",
+            "company_ide",
+            request=timing_request(target_us=1, tolerance_percent=1_000),
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(
+            len(
+                [
+                    finding
+                    for finding in payload["findings"]
+                    if finding["rule_id"] == "HK-CLOCK-001"
+                ]
+            ),
+            1,
+            payload["findings"],
+        )
+        self.assertEqual(
+            payload["semantic_audits"]["timing"][0]["status"], "unproven"
+        )
+
+    def test_reachable_sck_store_must_dominate_every_delay_target(self):
+        request = timing_request(target_us=1, tolerance_percent=1_000)
+        request["timing"]["delay_targets"] = [
+            {
+                "label": label,
+                "target_us": 1,
+                "tolerance_percent": 1_000,
+            }
+            for label in ("DELAY_A", "DELAY_B")
+        ]
+        source = (
+            "ORG 0\n"
+            "RESET:\n"
+            "  JMP INIT\n"
+            "INIT:\n"
+            "  MOV A,#31H\n"
+            "  MOV SCK_PS,A\n"
+            "  CALL DELAY_A\n"
+            "  CALL DELAY_B\n"
+            "HANG:\n"
+            "  JMP HANG\n"
+            "DELAY_A:\n"
+            "  CLRWDT\n"
+            "  RET\n"
+            "DELAY_B:\n"
+            "  CLRWDT\n"
+            "  RET\n"
+            "END\n"
+        )
+        completed, payload = self.run_checker(
+            source,
+            "--toolchain",
+            "company_ide",
+            request=request,
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        audits = payload["semantic_audits"]["timing"]
+        self.assertEqual(len(audits), 2)
+        self.assertEqual({audit["label"] for audit in audits}, {"DELAY_A", "DELAY_B"})
+        self.assertTrue(all(audit["sck_ps"] == 0x31 for audit in audits))
+        self.assertTrue(all(audit["sck_hz"] == 16_000_000 for audit in audits))
+        self.assertTrue(all(audit["status"] == "pass" for audit in audits))
+
     def test_unknown_non_equ_destination_does_not_block_reset_clock(self):
         source = delay_source(prefix="ORG 0\n  MOV UNKNOWN_REGISTER,A\n").replace(
             "ORG 0x0000\nDELAY_500MS:", "DELAY_500MS:", 1

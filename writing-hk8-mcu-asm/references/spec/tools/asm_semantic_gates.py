@@ -1522,7 +1522,118 @@ def _classify_sck_ps_reference(
     return "potential-write"
 
 
-def _source_sck_ps_value(files: list[dict[str, Any]]) -> int | None:
+def _clock_control_flow_dominators(
+    file_model: dict[str, Any],
+) -> tuple[set[int], dict[int, set[int]]]:
+    instructions = file_model.get("_instructions", [])
+    address_to_index = {
+        address: index
+        for address, index in collect_unique_address_indices(instructions).items()
+        if instruction_uniquely_owns_word(file_model, address, index)
+    }
+    nodes = set(address_to_index.values())
+    entry_index = address_to_index.get(0)
+    if entry_index is None:
+        raise ValueError("SCK_PS control-flow proof lacks a unique address-0 entry")
+
+    successors = {index: set() for index in nodes}
+    unresolved_edges: list[str] = []
+
+    def sequential_index(index: int, distance: int = 1) -> int | None:
+        address = instructions[index].get("address")
+        if not isinstance(address, int) or isinstance(address, bool):
+            return None
+        return address_to_index.get(address + distance)
+
+    def direct_target_index(index: int) -> int | None:
+        target_address = resolve_direct_target_address(
+            file_model, instructions[index]
+        )
+        return (
+            None
+            if target_address is None
+            else address_to_index.get(target_address)
+        )
+
+    def add_required_edge(index: int, successor: int | None, kind: str) -> None:
+        if successor is None:
+            instruction = instructions[index]
+            unresolved_edges.append(
+                f"{instruction.get('op')} at line {instruction.get('line')} "
+                f"has unresolved {kind} control-flow"
+            )
+        else:
+            successors[index].add(successor)
+
+    skip_ops = GPIO_CONTROL_BOUNDARY_OPS - NONLINEAR_CONTROL_OPS
+    for index in sorted(nodes):
+        instruction = instructions[index]
+        op = instruction.get("op")
+        if op in {"RET", "RETI"}:
+            continue
+        if op == "JMP":
+            add_required_edge(index, direct_target_index(index), "jump target")
+            continue
+        if op == "CALL":
+            add_required_edge(index, direct_target_index(index), "call target")
+            add_required_edge(index, sequential_index(index), "call fallthrough")
+            continue
+        if op in skip_ops:
+            add_required_edge(index, sequential_index(index), "skip fallthrough")
+            add_required_edge(index, sequential_index(index, 2), "skip target")
+            continue
+        add_required_edge(index, sequential_index(index), "fallthrough")
+
+    if unresolved_edges:
+        raise ValueError("; ".join(unresolved_edges))
+
+    def reachable_from(starts: set[int]) -> set[int]:
+        reached: set[int] = set()
+        pending = list(starts)
+        while pending:
+            index = pending.pop()
+            if index in reached:
+                continue
+            reached.add(index)
+            pending.extend(successors[index] - reached)
+        return reached
+
+    true_reachable = reachable_from({entry_index})
+
+    # Only address 0 proves real program reachability. Disconnected instructions are
+    # also attached to the virtual root for dominance, so dead/vector-like paths can
+    # invalidate a proof but can never make an unreachable SCK store look reachable.
+    virtual_root = -1
+    virtual_entries = {entry_index} | (nodes - true_reachable)
+    predecessors = {index: set() for index in nodes}
+    for index, next_indices in successors.items():
+        for successor in next_indices:
+            predecessors[successor].add(index)
+    for index in virtual_entries:
+        predecessors[index].add(virtual_root)
+
+    all_nodes = nodes | {virtual_root}
+    dominators: dict[int, set[int]] = {virtual_root: {virtual_root}}
+    dominators.update({index: set(all_nodes) for index in nodes})
+    changed = True
+    while changed:
+        changed = False
+        for index in sorted(nodes):
+            incoming = predecessors[index]
+            common = set(all_nodes)
+            for predecessor in incoming:
+                common &= dominators[predecessor]
+            updated = {index} | common
+            if updated != dominators[index]:
+                dominators[index] = updated
+                changed = True
+    return true_reachable, dominators
+
+
+def _source_sck_ps_value(
+    files: list[dict[str, Any]],
+    delay_entries: list[tuple[dict[str, Any], int, str]],
+) -> int | None:
     writes: list[tuple[dict[str, Any], int, dict[str, Any], str]] = []
     for file_model in files:
         official_alias = file_model.get("_equ_symbols", {}).get("SCK_PS")
@@ -1581,6 +1692,28 @@ def _source_sck_ps_value(files: list[dict[str, Any]]) -> int | None:
     value = resolve_byte(load_args[1], file_model.get("_equ_symbols", {}))
     if value is None:
         raise ValueError("SCK_PS immediate value cannot be resolved")
+
+    instruction_files = [
+        candidate for candidate in files if candidate.get("_instructions")
+    ]
+    if len(instruction_files) != 1 or instruction_files[0] is not file_model:
+        raise ValueError(
+            "SCK_PS control-flow proof cannot span multiple source files"
+        )
+    if any(entry_file is not file_model for entry_file, _, _ in delay_entries):
+        raise ValueError(
+            "SCK_PS store and every audited delay entry must be in one source file"
+        )
+    true_reachable, dominators = _clock_control_flow_dominators(file_model)
+    if store_index not in true_reachable:
+        raise ValueError("SCK_PS store is not reachable from address 0")
+    if load_index not in dominators.get(store_index, set()):
+        raise ValueError("MOV A,#K does not dominate the SCK_PS store")
+    for _, entry_index, label in delay_entries:
+        if store_index not in dominators.get(entry_index, set()):
+            raise ValueError(
+                f"SCK_PS store does not dominate delay entry {label}"
+            )
     return value
 
 
@@ -1588,6 +1721,7 @@ def _prove_effective_clock(
     files: list[dict[str, Any]],
     request: dict[str, Any],
     profile: dict[str, Any] | None,
+    delay_entries: list[tuple[dict[str, Any], int, str]],
 ) -> tuple[int, int, int]:
     if not isinstance(request, dict):
         raise ValueError("precise timing requires a request object")
@@ -1608,7 +1742,7 @@ def _prove_effective_clock(
     if model.get("sck_ps_register") != "SCK_PS":
         raise ValueError("profile clock_model.sck_ps_register must be SCK_PS")
 
-    source_sck_ps = _source_sck_ps_value(files)
+    source_sck_ps = _source_sck_ps_value(files, delay_entries)
     effective_sck_ps: str | int = (
         requested_sck_ps if source_sck_ps is None else source_sck_ps
     )
@@ -1629,7 +1763,7 @@ def _prove_effective_clock(
 
 def _resolve_global_delay_label(
     files: list[dict[str, Any]], label: str
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], int]:
     definitions: list[tuple[dict[str, Any], dict[str, Any]]] = []
     key = label.upper()
     for file_model in files:
@@ -1658,7 +1792,7 @@ def _resolve_global_delay_label(
         raise ValueError(
             f"delay label {label} does not uniquely name an instruction word"
         )
-    return file_model
+    return file_model, index
 
 
 def audit_timing_contract(
@@ -1676,23 +1810,64 @@ def audit_timing_contract(
     if not isinstance(targets, list) or not targets:
         return [], []
 
-    try:
-        osc_hz, sck_ps, sck_hz = _prove_effective_clock(files, request, profile)
-        clock_reason = None
-    except ValueError as exc:
-        osc_hz = None
-        sck_ps = None
-        sck_hz = None
-        clock_reason = str(exc)
-
-    audits: list[dict[str, Any]] = []
-    issues: list[dict[str, Any]] = []
+    prepared_targets: list[dict[str, Any]] = []
+    delay_entries: list[tuple[dict[str, Any], int, str]] = []
     for position, target in enumerate(targets):
         label = target.get("label") if isinstance(target, dict) else None
         target_us = target.get("target_us") if isinstance(target, dict) else None
         tolerance = (
             target.get("tolerance_percent") if isinstance(target, dict) else None
         )
+        file_model = None
+        entry_index = None
+        validation_reason = None
+        if not isinstance(label, str) or not label.strip():
+            validation_reason = f"delay target {position} has no valid label"
+        elif (
+            not isinstance(target_us, (int, float))
+            or isinstance(target_us, bool)
+            or target_us <= 0
+            or not isinstance(tolerance, (int, float))
+            or isinstance(tolerance, bool)
+            or tolerance < 0
+        ):
+            validation_reason = "target_us/tolerance_percent is invalid"
+        else:
+            try:
+                file_model, entry_index = _resolve_global_delay_label(files, label)
+            except ValueError as exc:
+                validation_reason = str(exc)
+        if file_model is not None and entry_index is not None:
+            delay_entries.append((file_model, entry_index, label))
+        prepared_targets.append(
+            {
+                "label": label,
+                "target_us": target_us,
+                "tolerance": tolerance,
+                "file_model": file_model,
+                "validation_reason": validation_reason,
+            }
+        )
+
+    osc_hz = None
+    sck_ps = None
+    sck_hz = None
+    clock_reason = None
+    if delay_entries:
+        try:
+            osc_hz, sck_ps, sck_hz = _prove_effective_clock(
+                files, request, profile, delay_entries
+            )
+        except ValueError as exc:
+            clock_reason = str(exc)
+
+    audits: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
+    for prepared in prepared_targets:
+        label = prepared["label"]
+        target_us = prepared["target_us"]
+        tolerance = prepared["tolerance"]
+        file_model = prepared["file_model"]
         audit: dict[str, Any] = {
             "label": label,
             "osc_hz": osc_hz,
@@ -1719,29 +1894,13 @@ def audit_timing_contract(
                 )
             )
 
+        validation_reason = prepared["validation_reason"]
+        if validation_reason is not None:
+            unproven("HK-TIME-001", validation_reason)
+            audits.append(audit)
+            continue
         if clock_reason is not None:
             unproven("HK-CLOCK-001", clock_reason)
-            audits.append(audit)
-            continue
-        if not isinstance(label, str) or not label.strip():
-            unproven("HK-TIME-001", f"delay target {position} has no valid label")
-            audits.append(audit)
-            continue
-        if (
-            not isinstance(target_us, (int, float))
-            or isinstance(target_us, bool)
-            or target_us <= 0
-            or not isinstance(tolerance, (int, float))
-            or isinstance(tolerance, bool)
-            or tolerance < 0
-        ):
-            unproven("HK-TIME-001", "target_us/tolerance_percent is invalid")
-            audits.append(audit)
-            continue
-        try:
-            file_model = _resolve_global_delay_label(files, label)
-        except ValueError as exc:
-            unproven("HK-TIME-001", str(exc))
             audits.append(audit)
             continue
         if effects is None:
