@@ -265,6 +265,40 @@ raise SystemExit(payload["summary"]["exit_code"])
         )
         return spec_root
 
+    def payload_checker_spec_root(
+        self,
+        name: str,
+        payload: object,
+        *,
+        exit_code: int = 0,
+    ) -> Path:
+        spec_root = self.root / name
+        checker = spec_root / "tools" / "asm_static_check.py"
+        checker.parent.mkdir(parents=True)
+        checker_source = """#!/usr/bin/env python3
+import argparse
+import json
+
+parser = argparse.ArgumentParser()
+parser.add_argument("asm")
+parser.add_argument("--toolchain", required=True)
+parser.add_argument("--request", required=True)
+parser.add_argument("--profile", required=True)
+parser.add_argument("--json", action="store_true")
+parser.add_argument("--strict-warnings", action="store_true")
+parser.parse_args()
+
+print(json.dumps(__PAYLOAD__))
+raise SystemExit(__EXIT_CODE__)
+"""
+        checker.write_text(
+            checker_source.replace("__PAYLOAD__", repr(payload)).replace(
+                "__EXIT_CODE__", str(exit_code)
+            ),
+            encoding="utf-8",
+        )
+        return spec_root
+
     def run_cli(self, *args: str) -> subprocess.CompletedProcess[str]:
         self.assertTrue(CLI.exists(), f"production CLI missing: {CLI}")
         return subprocess.run(
@@ -731,6 +765,146 @@ raise SystemExit(payload["summary"]["exit_code"])
                     (run_dir / "evidence.json").read_text(encoding="utf-8")
                 )
                 self.assertNotIn("semantic_audits", evidence["gates"]["static"])
+
+    def test_static_checker_payload_must_cross_validate_findings_summary_and_audits(
+        self,
+    ) -> None:
+        valid_audits = {
+            "gpio_contract": {
+                "audited": False,
+                "status": "not_applicable",
+                "rule_ids": ["HK-GPIO-002", "HK-GPIO-INIT-001"],
+                "finding_rule_ids": [],
+            },
+            "loop_semantics": {
+                "audited": True,
+                "status": "pass",
+                "rule_ids": ["HK-SYN-012", "HK-WDT-001", "HK-WDT-002"],
+                "finding_rule_ids": [],
+            },
+            "timing": [],
+        }
+
+        def finding(rule_id: str, severity: str) -> dict:
+            return {
+                "rule_id": rule_id,
+                "severity": severity,
+                "file": "candidate.asm",
+                "line": 1,
+                "evidence": "fixture finding",
+                "risk": "fixture risk",
+                "required_fix": "fixture fix",
+            }
+
+        zero_summary = {
+            "blockers": 0,
+            "errors": 0,
+            "warnings": 0,
+            "info": 0,
+            "exit_code": 0,
+        }
+        warning = finding("HK-GPIO-INIT-001", "WARNING")
+        warning_summary = {**zero_summary, "warnings": 1}
+        cases = {
+            "hidden_blocker": {
+                "findings": [finding("HK-GPIO-002", "BLOCKER")],
+                "summary": zero_summary,
+                "semantic_audits": valid_audits,
+                "process_exit": 0,
+            },
+            "hidden_warning": {
+                "findings": [warning],
+                "summary": zero_summary,
+                "semantic_audits": valid_audits,
+                "process_exit": 0,
+            },
+            "invalid_severity": {
+                "findings": [finding("HK-GPIO-002", "WARN")],
+                "summary": zero_summary,
+                "semantic_audits": valid_audits,
+                "process_exit": 0,
+            },
+            "missing_finding_fields": {
+                "findings": [{"rule_id": "HK-GPIO-002", "severity": "INFO"}],
+                "summary": {**zero_summary, "info": 1},
+                "semantic_audits": valid_audits,
+                "process_exit": 0,
+            },
+            "findings_not_array": {
+                "findings": {},
+                "summary": zero_summary,
+                "semantic_audits": valid_audits,
+                "process_exit": 0,
+            },
+            "summary_count_mismatch": {
+                "findings": [finding("HK-GOV-003", "INFO")],
+                "summary": zero_summary,
+                "semantic_audits": valid_audits,
+                "process_exit": 0,
+            },
+            "summary_exit_mismatch": {
+                "findings": [],
+                "summary": {**zero_summary, "exit_code": 2},
+                "semantic_audits": valid_audits,
+                "process_exit": 0,
+            },
+            "process_exit_mismatch": {
+                "findings": [],
+                "summary": zero_summary,
+                "semantic_audits": valid_audits,
+                "process_exit": 1,
+            },
+            "audit_finding_ids_mismatch": {
+                "findings": [warning],
+                "summary": warning_summary,
+                "semantic_audits": valid_audits,
+                "process_exit": 0,
+            },
+            "audit_status_mismatch": {
+                "findings": [warning],
+                "summary": warning_summary,
+                "semantic_audits": {
+                    **valid_audits,
+                    "gpio_contract": {
+                        **valid_audits["gpio_contract"],
+                        "audited": True,
+                        "status": "pass",
+                        "finding_rule_ids": ["HK-GPIO-INIT-001"],
+                    },
+                },
+                "process_exit": 0,
+            },
+        }
+        for case_name, case in cases.items():
+            with self.subTest(case_name=case_name):
+                profile = self.profile()
+                checker_payload = {
+                    "schema_version": "1.0.0",
+                    "toolchain": "company_ide",
+                    "contract_context": {},
+                    "files": [],
+                    "findings": case["findings"],
+                    "summary": case["summary"],
+                    "semantic_audits": case["semantic_audits"],
+                }
+                profile["spec_root"] = str(
+                    self.payload_checker_spec_root(
+                        f"payload-checker-{case_name}",
+                        checker_payload,
+                        exit_code=case["process_exit"],
+                    )
+                )
+                profile["static_check"] = {
+                    "toolchain": "company_ide",
+                    "strict_warnings": False,
+                }
+                self._write_json(self.profile_path, profile)
+                run_dir = self.new_run(f"payload-mismatch-{case_name}")
+                loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+
+                self.assertNotEqual(0, loop.returncode)
+                self.assertEqual("STATIC_CHECK_FAILED", self.payload(loop)["code"])
+                self.assertFalse((run_dir / "build").exists())
 
     def test_non_strict_gpio_warning_is_not_reported_as_semantic_pass(self) -> None:
         profile = json.loads(EXAMPLE_PROFILE.read_text(encoding="utf-8-sig"))

@@ -801,18 +801,51 @@ def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[s
                 "Spec static checker did not return valid JSON",
                 details={"stderr": completed.stderr[-2000:]},
             ) from exc
-        summary = result.get("summary", {})
-        blockers = summary.get("blockers", 0)
-        errors = summary.get("errors", 0)
-        warnings = summary.get("warnings", 0)
-        if completed.returncode != 0 or blockers or errors or (strict_warnings and warnings):
-            raise GateError("STATIC_CHECK_FAILED", "Spec static checker failed", details=result)
-        static_result = {
-            "status": "pass",
-            "checker": "asm_static_check.py",
-            "toolchain": static_config["toolchain"],
-            "summary": summary,
+        finding_fields = {
+            "rule_id",
+            "severity",
+            "file",
+            "line",
+            "evidence",
+            "risk",
+            "required_fix",
         }
+        severity_summary_keys = {
+            "BLOCKER": "blockers",
+            "ERROR": "errors",
+            "WARNING": "warnings",
+            "INFO": "info",
+        }
+        checker_findings = result.get("findings")
+
+        def reject_checker_payload() -> None:
+            raise GateError(
+                "STATIC_CHECK_FAILED",
+                "Spec static checker returned inconsistent evidence",
+                details=result,
+            )
+
+        if not isinstance(checker_findings, list):
+            reject_checker_payload()
+        severity_counts = {key: 0 for key in severity_summary_keys.values()}
+        for finding in checker_findings:
+            if (
+                not isinstance(finding, dict)
+                or set(finding) != finding_fields
+                or finding.get("severity") not in severity_summary_keys
+            ):
+                reject_checker_payload()
+            severity_counts[severity_summary_keys[finding["severity"]]] += 1
+        if severity_counts["blockers"] or severity_counts["errors"]:
+            expected_exit_code = 2
+        elif strict_warnings and severity_counts["warnings"]:
+            expected_exit_code = 1
+        else:
+            expected_exit_code = 0
+        summary = {**severity_counts, "exit_code": expected_exit_code}
+        if result.get("summary") != summary or completed.returncode != expected_exit_code:
+            reject_checker_payload()
+
         checker_audits = result.get("semantic_audits")
         expected_audit_rules = {
             "gpio_contract": ["HK-GPIO-002", "HK-GPIO-INIT-001"],
@@ -845,11 +878,48 @@ def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[s
                 return audited and bool(finding_rule_ids)
             return not audited and not finding_rule_ids
 
+        audit_sections_valid: dict[str, bool] = {}
+        for name, rule_ids in expected_audit_rules.items():
+            relevant_findings = [
+                finding for finding in checker_findings if finding["rule_id"] in rule_ids
+            ]
+            audit_sections_valid[name] = valid_audit_section(name)
+            if not audit_sections_valid[name]:
+                if relevant_findings:
+                    reject_checker_payload()
+                continue
+            section = checker_audits[name]
+            expected_finding_rule_ids = sorted(
+                {finding["rule_id"] for finding in relevant_findings}
+            )
+            if section["finding_rule_ids"] != expected_finding_rule_ids:
+                reject_checker_payload()
+            severities = {finding["severity"] for finding in relevant_findings}
+            if severities & {"BLOCKER", "ERROR"}:
+                expected_status = "fail"
+            elif "WARNING" in severities:
+                expected_status = "warning"
+            elif "INFO" in severities:
+                expected_status = "info"
+            elif section["audited"]:
+                expected_status = "pass"
+            else:
+                expected_status = section["status"]
+            if section["status"] != expected_status:
+                reject_checker_payload()
+
+        if expected_exit_code != 0:
+            raise GateError("STATIC_CHECK_FAILED", "Spec static checker failed", details=result)
+        static_result = {
+            "status": "pass",
+            "checker": "asm_static_check.py",
+            "toolchain": static_config["toolchain"],
+            "summary": summary,
+        }
         if (
             isinstance(checker_audits, dict)
             and isinstance(checker_audits.get("timing"), list)
-            and valid_audit_section("gpio_contract")
-            and valid_audit_section("loop_semantics")
+            and all(audit_sections_valid.values())
         ):
             static_result["semantic_audits"] = checker_audits
         return static_result

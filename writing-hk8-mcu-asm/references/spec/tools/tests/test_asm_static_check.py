@@ -1222,6 +1222,158 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, payload["findings"])
         self.assertNotIn("HK-GPIO-002", self.rule_ids(payload))
 
+    def test_multifile_gpio_ignores_helper_without_port_effects(self):
+        completed, payload = self.run_checker(
+            [
+                (
+                    "main.asm",
+                    "ORG 0x0000\n"
+                    "START:\n"
+                    "  BCLR PA_POD,0\n"
+                    "  BCLR PA_POD,3\n"
+                    "  BCLR PA_POD,5\n"
+                    "  BCLR PA_PIO,0\n"
+                    "  BCLR PA_PIO,3\n"
+                    "  BCLR PA_PIO,5\n"
+                    "  BSET PA_POE,0\n"
+                    "  BSET PA_POE,3\n"
+                    "  BSET PA_POE,5\n"
+                    "END\n",
+                ),
+                ("helper.asm", "ORG 0x0020\nHELPER:\n  NOP\n  RET\nEND\n"),
+            ],
+            "--toolchain",
+            "company_ide",
+            "--strict-warnings",
+            request=gpio_request(),
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertNotIn("HK-GPIO-002", self.rule_ids(payload))
+        self.assertEqual(payload["semantic_audits"]["gpio_contract"]["status"], "pass")
+
+    def test_multifile_gpio_rejects_same_port_split_across_owners_once(self):
+        completed, payload = self.run_checker(
+            [
+                (
+                    "mode.asm",
+                    "ORG 0x0000\n"
+                    "MODE_INIT:\n"
+                    "  BCLR PA_POD,0\n"
+                    "  BCLR PA_POD,3\n"
+                    "  BCLR PA_POD,5\n"
+                    "END\n",
+                ),
+                (
+                    "io.asm",
+                    "ORG 0x0020\n"
+                    "IO_INIT:\n"
+                    "  BCLR PA_PIO,0\n"
+                    "  BCLR PA_PIO,3\n"
+                    "  BCLR PA_PIO,5\n"
+                    "  BSET PA_POE,0\n"
+                    "  BSET PA_POE,3\n"
+                    "  BSET PA_POE,5\n"
+                    "END\n",
+                ),
+            ],
+            "--toolchain",
+            "company_ide",
+            request=gpio_request(),
+        )
+
+        findings = self.assert_gpio_blocker(completed, payload)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("multiple source owners", findings[0]["evidence"])
+
+    def test_multifile_gpio_allows_distinct_owner_per_port(self):
+        request = gpio_request()
+        base_contract = request["pins"]["led_outputs"]
+        request["pins"] = {
+            "pa_output": {**base_contract, "bits": [0]},
+            "pb_output": {**base_contract, "port": "PB", "bits": [1]},
+        }
+        completed, payload = self.run_checker(
+            [
+                (
+                    "pa.asm",
+                    "ORG 0x0000\n"
+                    "PA_INIT:\n"
+                    "  BCLR PA_POD,0\n"
+                    "  BCLR PA_PIO,0\n"
+                    "  BSET PA_POE,0\n"
+                    "END\n",
+                ),
+                (
+                    "pb.asm",
+                    "ORG 0x0020\n"
+                    "PB_INIT:\n"
+                    "  BCLR PB_POD,1\n"
+                    "  BCLR PB_PIO,1\n"
+                    "  BSET PB_POE,1\n"
+                    "END\n",
+                ),
+            ],
+            "--toolchain",
+            "company_ide",
+            "--strict-warnings",
+            request=request,
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertNotIn("HK-GPIO-002", self.rule_ids(payload))
+        self.assertEqual(payload["semantic_audits"]["gpio_contract"]["status"], "pass")
+
+    def test_multifile_gpio_requires_owner_for_each_output_port(self):
+        completed, payload = self.run_checker(
+            [("helper.asm", "ORG 0x0000\nHELPER:\n  NOP\n  RET\nEND\n")],
+            "--toolchain",
+            "company_ide",
+            request=gpio_request(),
+        )
+
+        findings = self.assert_gpio_blocker(completed, payload)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("has no source owner", findings[0]["evidence"])
+
+    def test_multifile_gpio_keeps_same_port_contracts_on_one_owner(self):
+        request = gpio_request()
+        base_contract = request["pins"]["led_outputs"]
+        request["pins"] = {
+            "status_outputs": {**base_contract, "bits": [0, 3]},
+            "alarm_output": {**base_contract, "bits": [5]},
+        }
+        completed, payload = self.run_checker(
+            [
+                (
+                    "main.asm",
+                    "GPIO_CLEAR_MASK EQU 0D6H\n"
+                    "GPIO_SET_MASK EQU 29H\n"
+                    "ORG 0x0000\n"
+                    "START:\n"
+                    "  MOV A,PA_POD\n"
+                    "  AND A,#GPIO_CLEAR_MASK\n"
+                    "  MOV PA_POD,A\n"
+                    "  MOV A,PA_PIO\n"
+                    "  AND A,#GPIO_CLEAR_MASK\n"
+                    "  MOV PA_PIO,A\n"
+                    "  MOV A,PA_POE\n"
+                    "  OR A,#GPIO_SET_MASK\n"
+                    "  MOV PA_POE,A\n"
+                    "END\n",
+                ),
+                ("helper.asm", "ORG 0x0020\nHELPER:\n  NOP\n  RET\nEND\n"),
+            ],
+            "--toolchain",
+            "company_ide",
+            "--strict-warnings",
+            request=request,
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertNotIn("HK-GPIO-002", self.rule_ids(payload))
+        self.assertEqual(payload["semantic_audits"]["gpio_contract"]["status"], "pass")
+
     def test_open_drain_output_requires_explicit_pod_set(self):
         completed, payload = self.run_checker(
             "ORG 0x0000\n"

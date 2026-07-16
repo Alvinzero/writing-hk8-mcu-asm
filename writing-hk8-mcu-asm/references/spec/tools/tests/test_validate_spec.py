@@ -63,6 +63,67 @@ class ValidateSpecCliTests(unittest.TestCase):
         self.assertTrue(findings, payload["findings"])
         self.assertIn("test_delay_loop_without_clrwdt_is_blocked", findings[0]["message"])
 
+    def assert_mapped_test_mutation_is_rejected(
+        self,
+        *,
+        method_decorator: str | None = None,
+        class_decorator: str | None = None,
+        method_body: str | None = None,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            copied = self.copy_spec(Path(tmp))
+            tests = copied / "tools" / "tests" / "test_asm_static_check.py"
+            source = tests.read_text(encoding="utf-8")
+            signature = "    def test_delay_loop_without_clrwdt_is_blocked(self):"
+            class_signature = "class AsmStaticCheckCliTests(unittest.TestCase):"
+            self.assertIn(signature, source)
+            selected = sum(
+                value is not None
+                for value in (method_decorator, class_decorator, method_body)
+            )
+            self.assertEqual(selected, 1)
+            if method_decorator is not None:
+                mutated = source.replace(
+                    signature,
+                    f"{method_decorator}\n{signature}",
+                    1,
+                )
+            elif class_decorator is not None:
+                self.assertIn(class_signature, source)
+                mutated = source.replace(
+                    class_signature,
+                    f"{class_decorator}\n{class_signature}",
+                    1,
+                )
+            else:
+                start = source.index(signature)
+                next_method = source.find("\n    def ", start + len(signature))
+                self.assertNotEqual(next_method, -1)
+                mutated = (
+                    source[:start]
+                    + signature
+                    + "\n"
+                    + method_body
+                    + source[next_method:]
+                )
+            tests.write_text(mutated, encoding="utf-8")
+            completed = self.run_validator_process(copied)
+
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
+        payload = json.loads(completed.stdout)
+        findings = [
+            item for item in payload["findings"] if item["code"] == "checker-rule-test"
+        ]
+        self.assertTrue(findings, payload["findings"])
+        self.assertTrue(
+            any(
+                "test_delay_loop_without_clrwdt_is_blocked" in item["message"]
+                for item in findings
+            ),
+            findings,
+        )
+
     def test_current_spec_package_validates(self):
         completed, payload = self.run_validator(SPEC)
         self.assertEqual(completed.returncode, 0, payload)
@@ -126,6 +187,33 @@ class ValidateSpecCliTests(unittest.TestCase):
             "\nasync def test_delay_loop_without_clrwdt_is_blocked(self):\n"
             "    pass\n"
         )
+
+    def test_decorated_mapped_test_methods_cannot_satisfy_automation_binding(self):
+        decorators = {
+            "skip": "    @unittest.skip('disabled')",
+            "skip-if": "    @unittest.skipIf(True, 'disabled')",
+            "skip-unless": "    @unittest.skipUnless(False, 'disabled')",
+            "property": "    @property",
+            "arbitrary": "    @custom_decorator",
+        }
+        for name, decorator in decorators.items():
+            with self.subTest(name=name):
+                self.assert_mapped_test_mutation_is_rejected(
+                    method_decorator=decorator
+                )
+
+    def test_decorated_mapped_testcase_class_cannot_satisfy_automation_binding(self):
+        self.assert_mapped_test_mutation_is_rejected(
+            class_decorator="@unittest.skip('disabled')"
+        )
+
+    def test_empty_mapped_test_methods_cannot_satisfy_automation_binding(self):
+        for name, body in {
+            "pass": "        pass\n",
+            "ellipsis": "        ...\n",
+        }.items():
+            with self.subTest(name=name):
+                self.assert_mapped_test_mutation_is_rejected(method_body=body)
 
     def test_direct_testcase_import_is_a_valid_automation_binding(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -409,13 +409,23 @@ def check_automated_rule_tests(
                 )
                 for base in node.bases
             )
-            if not is_testcase:
+            if not is_testcase or node.decorator_list:
                 continue
             test_methods.update(
                 member.name
                 for member in node.body
                 if isinstance(member, ast.FunctionDef)
                 and member.name.startswith("test_")
+                and not member.decorator_list
+                and not all(
+                    isinstance(statement, ast.Pass)
+                    or (
+                        isinstance(statement, ast.Expr)
+                        and isinstance(statement.value, ast.Constant)
+                        and statement.value.value is Ellipsis
+                    )
+                    for statement in member.body
+                )
             )
 
     checks["automated_rule_tests"] = dict(AUTOMATED_RULE_TESTS)

@@ -23,6 +23,7 @@ try:
         audit_gpio_contract,
         audit_timing_contract,
         audit_unused_equ,
+        collect_gpio_effects,
         load_instruction_effects,
     )
 except ImportError:
@@ -31,6 +32,7 @@ except ImportError:
         audit_gpio_contract,
         audit_timing_contract,
         audit_unused_equ,
+        collect_gpio_effects,
         load_instruction_effects,
     )
 
@@ -933,6 +935,43 @@ def semantic_audit_summary(
     }
 
 
+def structured_output_contract_ports(request: dict[str, Any]) -> set[str] | None:
+    pins = request.get("pins")
+    if not isinstance(pins, dict):
+        return None
+    ports: set[str] = set()
+    for pin in pins.values():
+        if isinstance(pin, str):
+            continue
+        if not isinstance(pin, dict):
+            return None
+        direction = pin.get("direction")
+        if direction == "input":
+            continue
+        if direction != "output":
+            return None
+        port = pin.get("port")
+        bits = pin.get("bits")
+        if (
+            not isinstance(port, str)
+            or port.upper() not in {"PA", "PB"}
+            or not isinstance(bits, list)
+            or not bits
+            or not all(
+                isinstance(bit, int) and not isinstance(bit, bool) and 0 <= bit <= 7
+                for bit in bits
+            )
+            or len(set(bits)) != len(bits)
+            or pin.get("drive") not in {"push_pull", "open_drain"}
+            or pin.get("active_level") not in {"high", "low"}
+            or pin.get("initial_state") not in {"on", "off"}
+            or not isinstance(pin.get("preserve_unowned_bits"), bool)
+        ):
+            return None
+        ports.add(port.upper())
+    return ports
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     files: list[dict[str, Any]] = []
@@ -1032,12 +1071,75 @@ def main(argv: list[str] | None = None) -> int:
             loop_issues = audit_counter_loops(file_result, instruction_effects)
             loop_execution_findings.extend(loop_issues)
             findings.extend(loop_issues)
-        if request_context is not None:
+        findings.extend(audit_unused_equ(file_result))
+
+    gpio_contract_ports = (
+        structured_output_contract_ports(request_context)
+        if request_context is not None
+        else None
+    )
+    if request_context is not None and gpio_contract_ports:
+        pins = request_context["pins"]
+        file_effects = [
+            (file_result, collect_gpio_effects(file_result)) for file_result in files
+        ]
+        for port in sorted(gpio_contract_ports):
+            gpio_audit_calls += 1
+            port_registers = {f"{port}_POD", f"{port}_PIO", f"{port}_POE"}
+            owners = [
+                file_result
+                for file_result, effects in file_effects
+                if any(effect["register"] in port_registers for effect in effects)
+            ]
+            if len(owners) != 1:
+                if owners:
+                    owner_paths = ", ".join(str(owner["path"]) for owner in owners)
+                    evidence = (
+                        f"{port} output PinContract has multiple source owners touching "
+                        f"POD/PIO/POE: {owner_paths}"
+                    )
+                    required_fix = (
+                        f"Keep all {port} POD/PIO/POE initialization effects in one source file."
+                    )
+                else:
+                    evidence = (
+                        f"{port} output PinContract has no source owner touching POD/PIO/POE"
+                    )
+                    required_fix = (
+                        f"Add one source file that owns the complete {port} POD/PIO/POE "
+                        "initialization sequence."
+                    )
+                gpio_issues = [
+                    make_finding(
+                        "HK-GPIO-002",
+                        "BLOCKER",
+                        args.request or "<request>",
+                        None,
+                        evidence,
+                        "GPIO effects cannot be proven from a unique per-port source owner.",
+                        required_fix,
+                    )
+                ]
+            else:
+                port_request = {
+                    **request_context,
+                    "pins": {
+                        name: pin
+                        for name, pin in pins.items()
+                        if not isinstance(pin, dict)
+                        or pin.get("direction") != "output"
+                        or pin["port"].upper() == port
+                    },
+                }
+                gpio_issues = audit_gpio_contract(owners[0], port_request)
+            gpio_execution_findings.extend(gpio_issues)
+            findings.extend(gpio_issues)
+    elif request_context is not None:
+        for file_result in files:
             gpio_audit_calls += 1
             gpio_issues = audit_gpio_contract(file_result, request_context)
             gpio_execution_findings.extend(gpio_issues)
             findings.extend(gpio_issues)
-        findings.extend(audit_unused_equ(file_result))
     timing_audits, timing_findings = audit_timing_contract(
         files,
         request_context,
@@ -1068,10 +1170,11 @@ def main(argv: list[str] | None = None) -> int:
         isinstance(pin, dict) and pin.get("direction") == "output"
         for pin in pins.values()
     )
-    gpio_audited = (
-        has_structured_output_contract
-        and bool(files)
-        and gpio_audit_calls == len(files)
+    expected_gpio_audit_calls = (
+        len(gpio_contract_ports) if gpio_contract_ports else len(files)
+    )
+    gpio_audited = has_structured_output_contract and (
+        gpio_audit_calls == expected_gpio_audit_calls
     )
     loop_audited = (
         instruction_effects is not None
