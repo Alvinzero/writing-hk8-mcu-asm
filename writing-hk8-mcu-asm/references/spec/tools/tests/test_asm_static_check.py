@@ -1520,6 +1520,92 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertEqual(audit["sck_hz"], 8_000_000)
         self.assertEqual(audit["status"], "pass")
 
+    def test_sck_equ_alias_chain_cycle_and_unresolved_write_fail_closed(self):
+        prefixes = {
+            "direct": "SCK_ALIAS EQU SCK_PS\nORG 0\n  MOV SCK_ALIAS,A\n",
+            "chain": (
+                "SCK_BASE EQU SCK_PS\n"
+                "SCK_ALIAS EQU SCK_BASE\n"
+                "ORG 0\n"
+                "  MOV SCK_ALIAS,A\n"
+            ),
+            "cycle": (
+                "SCK_ALIAS EQU SCK_OTHER\n"
+                "SCK_OTHER EQU SCK_ALIAS\n"
+                "ORG 0\n"
+                "  MOV SCK_ALIAS,A\n"
+            ),
+            "unresolved": (
+                "SCK_ALIAS EQU UNKNOWN_REGISTER\n"
+                "ORG 0\n"
+                "  MOV SCK_ALIAS,A\n"
+            ),
+        }
+        for name, prefix in prefixes.items():
+            with self.subTest(name=name):
+                source = delay_source(prefix=prefix).replace(
+                    "ORG 0x0000\nDELAY_500MS:", "DELAY_500MS:", 1
+                )
+                completed, payload = self.run_checker(
+                    source,
+                    "--toolchain",
+                    "company_ide",
+                    request=timing_request(),
+                    profile=ready_profile(),
+                )
+                self.assertEqual(completed.returncode, 2)
+                clock_findings = [
+                    finding
+                    for finding in payload["findings"]
+                    if finding["rule_id"] == "HK-CLOCK-001"
+                ]
+                self.assertEqual(len(clock_findings), 1, payload["findings"])
+                self.assertEqual(
+                    payload["semantic_audits"]["timing"][0]["status"],
+                    "unproven",
+                )
+
+    def test_static_immediate_sck_equ_alias_chain_overrides_reset(self):
+        source = delay_source(
+            prefix=(
+                "SCK_BASE EQU SCK_PS\n"
+                "SCK_ALIAS EQU SCK_BASE\n"
+                "ORG 0\n"
+                "  MOV A,#32H\n"
+                "  MOV SCK_ALIAS,A\n"
+            )
+        ).replace("ORG 0x0000\nDELAY_500MS:", "DELAY_500MS:", 1)
+        completed, payload = self.run_checker(
+            source,
+            "--toolchain",
+            "company_ide",
+            request=timing_request(target_us=125_502.625, tolerance_percent=0.001),
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        audit = payload["semantic_audits"]["timing"][0]
+        self.assertEqual(audit["sck_ps"], 0x32)
+        self.assertEqual(audit["sck_hz"], 8_000_000)
+        self.assertEqual(audit["status"], "pass")
+
+    def test_unknown_non_equ_destination_does_not_block_reset_clock(self):
+        source = delay_source(prefix="ORG 0\n  MOV UNKNOWN_REGISTER,A\n").replace(
+            "ORG 0x0000\nDELAY_500MS:", "DELAY_500MS:", 1
+        )
+        completed, payload = self.run_checker(
+            source,
+            "--toolchain",
+            "company_ide",
+            request=timing_request(),
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertEqual(
+            payload["semantic_audits"]["timing"][0]["sck_hz"], 2_000_000
+        )
+
     def test_dynamic_raw_and_multiple_sck_writes_do_not_fall_back_to_reset(self):
         prefixes = {
             "dynamic": "ORG 0\n  NOP\n  MOV SCK_PS,A\n",

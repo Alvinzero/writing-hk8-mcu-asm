@@ -287,6 +287,27 @@ class ClockAndDelayTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_instruction_effects(reference)
 
+    def test_every_required_delay_form_must_have_exactly_one_variant(self):
+        base = json.loads(
+            (RULES / "instruction-reference.json").read_text(encoding="utf-8-sig")
+        )
+        for form in ("MOV A,#K", "RET", "NOP", "CALL K"):
+            with self.subTest(form=form):
+                duplicate = next(
+                    variant
+                    for variant in base["variants"]
+                    if variant["asm_syntax"] == form
+                )
+                document = {
+                    **base,
+                    "variants": [*base["variants"], dict(duplicate)],
+                }
+                with tempfile.TemporaryDirectory() as tmp:
+                    reference = Path(tmp) / "instruction-reference.json"
+                    reference.write_text(json.dumps(document), encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        load_instruction_effects(reference)
+
     def test_supported_forms_require_safe_policy_and_valid_cycle_metadata(self):
         base = json.loads(
             (RULES / "instruction-reference.json").read_text(encoding="utf-8-sig")

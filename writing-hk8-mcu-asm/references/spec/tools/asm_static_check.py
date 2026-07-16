@@ -295,12 +295,20 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
         )
         if equ_match:
             name = equ_match.group(1)
+            equ_operand = equ_match.group(2).strip()
+            alias_match = re.fullmatch(
+                r"[A-Za-z_.$?][\w.$?]*", equ_operand
+            )
+            alias = alias_match.group(0).upper() if alias_match else None
             equ_symbols[name.upper()] = {
                 "name": name,
-                "value": parse_number(equ_match.group(2)),
+                "value": parse_number(equ_operand),
+                "alias": alias,
                 "line": line_number,
                 "uses": 0,
             }
+            if alias is not None:
+                symbol_references[alias] += 1
             continue
 
         parts = rest.split(None, 1)

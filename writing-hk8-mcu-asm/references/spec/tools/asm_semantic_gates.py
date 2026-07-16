@@ -680,6 +680,12 @@ def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
         required_variants = {
             mnemonic: [] for mnemonic in REQUIRED_COUNTER_EFFECTS
         }
+        required_delay_effects = (
+            SUPPORTED_DELAY_FORMS | (SUPPORTED_DELAY_OPS - {"MOV"}) | {"CALL"}
+        )
+        required_delay_variant_counts = {
+            effect_key: 0 for effect_key in required_delay_effects
+        }
         for variant in variants:
             mnemonic = variant["mnemonic"].upper()
             form = " ".join(variant["asm_syntax"].upper().split())
@@ -708,6 +714,8 @@ def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
                 effect_key = "RET"
             else:
                 effect_key = mnemonic
+            if effect_key in required_delay_variant_counts:
+                required_delay_variant_counts[effect_key] += 1
             previous_effect = effects.get(effect_key)
             if (
                 previous_effect is not None
@@ -758,14 +766,12 @@ def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
                 f"instruction reference {mnemonic} semantic_status must be one of "
                 f"{sorted(ALLOWED_COUNTER_SEMANTIC_STATUSES)!r}; got {semantic_status!r}"
             )
-    required_delay_effects = (
-        SUPPORTED_DELAY_FORMS | (SUPPORTED_DELAY_OPS - {"MOV"}) | {"CALL"}
-    )
-    missing_forms = sorted(required_delay_effects - effects.keys())
-    if missing_forms:
-        raise ValueError(
-            f"instruction reference lacks supported delay form(s): {missing_forms!r}"
-        )
+    for effect_key, count in sorted(required_delay_variant_counts.items()):
+        if count != 1:
+            raise ValueError(
+                f"instruction reference {effect_key} must have exactly one safe variant; "
+                f"found {count}"
+            )
     skip_effects = {"DECSZ", "DECSZR", "INCSZ", "INCSZR", "SZ", "SZR"}
     for effect_key in sorted(required_delay_effects):
         effect = effects[effect_key]
@@ -933,24 +939,40 @@ def resolve_byte(token: str, equ_symbols: dict[str, dict[str, Any]]) -> int | No
     value = token.strip()
     if value.startswith("#"):
         value = value[1:].strip()
-    symbol = equ_symbols.get(value.upper())
-    if symbol is not None:
-        resolved = symbol.get("value")
-    else:
+
+    def resolve(candidate: str, seen: set[str]) -> int | None:
+        key = candidate.upper()
+        if key == "SCK_PS":
+            return 0x10
+        symbol = equ_symbols.get(key)
+        if symbol is not None:
+            if key in seen:
+                return None
+            resolved = symbol.get("value")
+            if (
+                isinstance(resolved, int)
+                and not isinstance(resolved, bool)
+                and 0 <= resolved <= 0xFF
+            ):
+                return resolved
+            alias = symbol.get("alias")
+            if isinstance(alias, str) and alias:
+                return resolve(alias, seen | {key})
+            return None
         try:
-            if value.lower().startswith("0x"):
-                resolved = int(value, 16)
-            elif value.upper().endswith("H"):
-                resolved = int(value[:-1], 16)
-            elif value.isdecimal():
-                resolved = int(value, 10)
+            if candidate.lower().startswith("0x"):
+                resolved = int(candidate, 16)
+            elif candidate.upper().endswith("H"):
+                resolved = int(candidate[:-1], 16)
+            elif candidate.isdecimal():
+                resolved = int(candidate, 10)
             else:
                 return None
         except ValueError:
             return None
-    if not isinstance(resolved, int) or isinstance(resolved, bool) or not 0 <= resolved <= 0xFF:
-        return None
-    return resolved
+        return resolved if 0 <= resolved <= 0xFF else None
+
+    return resolve(value, set())
 
 
 def gpio_written_register(instruction: dict[str, Any]) -> str | None:
@@ -1433,13 +1455,25 @@ def audit_gpio_contract(
     return issues
 
 
-def _token_is_sck_ps(token: str, file_model: dict[str, Any]) -> bool:
+def _sck_ps_token_status(
+    token: str, file_model: dict[str, Any]
+) -> str | None:
     value = token.strip()
     if not value or value.startswith("#"):
-        return False
+        return None
     if value.upper() == "SCK_PS":
-        return True
-    return resolve_byte(value, file_model.get("_equ_symbols", {})) == 0x10
+        return "sck"
+    equ_symbols = file_model.get("_equ_symbols", {})
+    resolved = resolve_byte(value, equ_symbols)
+    if resolved == 0x10:
+        return "sck"
+    if value.upper() in equ_symbols and resolved is None:
+        return "unresolved-equ"
+    return None
+
+
+def _token_is_sck_ps(token: str, file_model: dict[str, Any]) -> bool:
+    return _sck_ps_token_status(token, file_model) == "sck"
 
 
 def _classify_sck_ps_reference(
@@ -1449,23 +1483,34 @@ def _classify_sck_ps_reference(
     args = split_args(instruction.get("args", ""))
     if op in SCK_NO_REGISTER_OPS:
         return None
-    referenced = [
-        index for index, argument in enumerate(args) if _token_is_sck_ps(argument, file_model)
-    ]
+    references = {
+        index: status
+        for index, argument in enumerate(args)
+        if (status := _sck_ps_token_status(argument, file_model)) is not None
+    }
+    referenced = list(references)
     if not referenced:
         return None
+
+    def write_classification() -> str:
+        return (
+            "potential-write"
+            if "unresolved-equ" in references.values()
+            else "write"
+        )
+
     if op == "MOV" and len(args) == 2:
         if referenced == [0] and args[0].upper() != "A":
-            return "write"
+            return write_classification()
         if referenced == [1] and args[0].upper() == "A":
             return "read"
         return "potential-write"
     if op in GPIO_SECOND_OPERAND_WRITE_OPS and len(args) == 2:
-        return "write" if referenced == [1] else "potential-write"
+        return write_classification() if referenced == [1] else "potential-write"
     if op in GPIO_FIRST_OPERAND_WRITE_OPS and len(args) == 2:
-        return "write" if referenced == [0] else "potential-write"
+        return write_classification() if referenced == [0] else "potential-write"
     if op in SCK_UNARY_WRITE_OPS and len(args) == 1:
-        return "write" if referenced == [0] else "potential-write"
+        return write_classification() if referenced == [0] else "potential-write"
     if op in SCK_READ_FIRST_OPERAND_OPS:
         return "read" if referenced == [0] else "potential-write"
     if op in SCK_READ_SECOND_OPERAND_OPS and len(args) == 2:
