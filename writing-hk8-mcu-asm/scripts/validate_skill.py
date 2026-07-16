@@ -79,6 +79,7 @@ def validate(root: Path) -> list[str]:
     for relative in (
         "agents/openai.yaml",
         "scripts/hk8asm.py",
+        "scripts/builtin_compiler.py",
         "scripts/compiler_adapter.py",
         "scripts/install.py",
         "scripts/validate_skill.py",

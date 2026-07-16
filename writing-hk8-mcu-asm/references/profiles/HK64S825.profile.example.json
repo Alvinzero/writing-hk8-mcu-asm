@@ -4,17 +4,17 @@
   "aliases": [
     "HK64S825"
   ],
-  "status": "requires-local-toolchain-config",
+  "status": "ready",
   "validated_model": "HK64S825",
   "approved_tool_versions": {
     "compiler": [
-      "REPLACE_WITH_APPROVED_COMPILER_VERSION"
+      "builtin-hk64s825-assembler-1"
     ]
   },
   "allowed_warnings": [],
   "spec_root": "../spec",
   "static_check": {
-    "toolchain": "company_ide",
+    "toolchain": "builtin_compiler",
     "strict_warnings": true,
     "map_files": [],
     "table_pairs": []

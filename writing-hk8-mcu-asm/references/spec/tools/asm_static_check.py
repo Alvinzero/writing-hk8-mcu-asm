@@ -751,7 +751,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--toolchain",
         required=True,
-        choices=["company_ide", "python_source_module_cli", "simulator"],
+        choices=["company_ide", "python_source_module_cli", "simulator", "builtin_compiler"],
         help="target build/execution toolchain",
     )
     parser.add_argument("--map", dest="maps", action="append", type=Path, default=[], help="final MAP file; repeat if needed")

@@ -13,6 +13,10 @@ CLI = SKILL_ROOT / "scripts" / "hk8asm.py"
 COMPILER_ADAPTER = SKILL_ROOT / "scripts" / "compiler_adapter.py"
 FAKE_ADAPTER = Path(__file__).parent / "fixtures" / "fake_adapter.py"
 FAKE_ASMC_CLI = Path(__file__).parent / "fixtures" / "fake_asmc_cli.py"
+EXAMPLE_PROFILE = SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.example.json"
+EXAMPLE_CONFIG = SKILL_ROOT / "references" / "configs" / "local-adapter.example.json"
+BUILTIN_COMPILER = SKILL_ROOT / "scripts" / "builtin_compiler.py"
+INSTRUCTION_REFERENCE = SKILL_ROOT / "references" / "spec" / "rules" / "instruction-reference.json"
 REQUIRED_FAKE_COMPILER_FILES = (
     "src/core/assembler.py",
     "src/core/output_generator.py",
@@ -221,6 +225,35 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         self.assertTrue((run_dir / "request.json").is_file())
         self.assertTrue((run_dir / "src" / "candidate.asm").is_file())
 
+    def test_json_inputs_accept_utf8_bom_from_windows_tools(self) -> None:
+        self.profile_path.write_text(
+            "\ufeff" + json.dumps(self.profile(), indent=2),
+            encoding="utf-8",
+        )
+        self.config_path.write_text(
+            "\ufeff" + json.dumps(self.compile_only_config(), indent=2),
+            encoding="utf-8",
+        )
+        self.request_path.write_text(
+            "\ufeff" + json.dumps(self.request(), indent=2),
+            encoding="utf-8",
+        )
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "bom-json"),
+        )
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+        self.assertEqual("RUN_CREATED", self.payload(result)["code"])
+
     def test_new_run_allows_request_without_hardware_acceptance(self) -> None:
         request = self.request()
         request["acceptance"] = []
@@ -357,6 +390,123 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         run_state = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         self.assertEqual(0, run_state["max_flash_attempts"])
 
+    def test_bundled_examples_use_builtin_compiler_without_local_toolchain_config(self) -> None:
+        request = self.request()
+        request["board"] = {"id": "HK64S825-DEFAULT"}
+        request["memory_limits"] = {"rom_bytes": 2048, "ram_bytes": 128}
+        self._write_json(self.request_path, request)
+        self.source_path.write_text(
+            "; CHIP: HK64S825\n"
+            "; 目的：验证内置编译器默认可用\n"
+            "ORG 0x0000\n"
+            "START:\n"
+            "    NOP\n"
+            "    CLRWDT\n"
+            "    JMP START\n"
+            "END\n",
+            encoding="utf-8",
+        )
+
+        doctor = self.run_cli("doctor", "--profile", str(EXAMPLE_PROFILE), "--config", str(EXAMPLE_CONFIG))
+        self.assertEqual(0, doctor.returncode, doctor.stderr or doctor.stdout)
+        doctor_payload = self.payload(doctor)
+        self.assertEqual("READY", doctor_payload["code"])
+        self.assertEqual("builtin-hk64s825-assembler-1", doctor_payload["tools"]["compiler"])
+
+        run_dir = self.root / "builtin-example"
+        new_run = self.run_cli(
+            "new-run",
+            "--profile",
+            str(EXAMPLE_PROFILE),
+            "--config",
+            str(EXAMPLE_CONFIG),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+        self.assertEqual(0, new_run.returncode, new_run.stderr or new_run.stdout)
+        self.assertEqual("RUN_CREATED", self.payload(new_run)["code"])
+
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        self.assertEqual("COMPILE_PASSED", self.payload(loop)["code"])
+
+        output = self.root / "builtin-released.asm"
+        release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(output))
+        self.assertEqual(0, release.returncode, release.stderr or release.stdout)
+        self.assertEqual("RELEASED", self.payload(release)["code"])
+        self.assertEqual(self.source_path.read_text(encoding="utf-8"), output.read_text(encoding="utf-8"))
+        self.assertTrue((run_dir / "build" / "firmware.hex").is_file())
+        self.assertTrue((run_dir / "build" / "firmware.bin").is_file())
+        self.assertTrue((run_dir / "build" / "firmware.map").is_file())
+        evidence = json.loads((run_dir / "evidence.json").read_text(encoding="utf-8"))
+        self.assertEqual("hk64s825-builtin-assembler", evidence["gates"]["compile"]["toolchain"])
+
+    def test_builtin_compiler_matches_all_instruction_probe_words(self) -> None:
+        reference = json.loads(INSTRUCTION_REFERENCE.read_text(encoding="utf-8-sig"))
+        for variant in reference["variants"]:
+            probe = variant["compile_probe"]
+            instruction = probe["source_instruction"]
+            expected = int(probe["expected_word"], 16)
+            with self.subTest(variant=variant["id"], instruction=instruction):
+                case_dir = self.root / f"probe-{variant['id']}"
+                case_dir.mkdir()
+                source = case_dir / "case.asm"
+                if "TARGET" in instruction:
+                    source.write_text(
+                        "; CHIP: HK64S825\n"
+                        "ORG 0x0000\n"
+                        f"    {instruction}\n"
+                        "ORG 0x03FF\n"
+                        "TARGET:\n"
+                        "    NOP\n"
+                        "END\n",
+                        encoding="utf-8",
+                    )
+                else:
+                    source.write_text(
+                        "; CHIP: HK64S825\n"
+                        "ORG 0x0000\n"
+                        f"    {instruction}\n"
+                        "END\n",
+                        encoding="utf-8",
+                    )
+                input_path = case_dir / "input.json"
+                output_path = case_dir / "output.json"
+                artifact = case_dir / "firmware.hex"
+                self._write_json(
+                    input_path,
+                    {
+                        "schema_version": 1,
+                        "chip": "HK64S825",
+                        "source_path": str(source),
+                        "artifact_path": str(artifact),
+                    },
+                )
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(BUILTIN_COMPILER),
+                        "compiler",
+                        "run",
+                        "--input",
+                        str(input_path),
+                        "--output",
+                        str(output_path),
+                    ],
+                    cwd=SKILL_ROOT,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(0, result.returncode, result.stderr or output_path.read_text(encoding="utf-8"))
+                firmware = artifact.with_suffix(".bin").read_bytes()
+                actual = firmware[0] | (firmware[1] << 8)
+                self.assertEqual(expected, actual)
+
     def test_compile_failure_blocks_release_without_source_leakage(self) -> None:
         candidate = self.source_path.read_text(encoding="utf-8")
         self._write_json(self.config_path, self.config(failures={"compiler": "fail"}))
@@ -492,6 +642,45 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         payload = self.payload(result)
         self.assertEqual("INVALID_CONFIG", payload["code"])
         self.assertIn("placeholder", payload["message"])
+
+    def test_portable_skill_path_tokens_are_expanded_for_adapter_commands(self) -> None:
+        profile = self.profile()
+        profile["approved_tool_versions"] = {"compiler": ["builtin-hk64s825-assembler-1"]}
+        profile["static_check"] = {
+            "toolchain": "builtin_compiler",
+            "strict_warnings": True,
+        }
+        self._write_json(self.profile_path, profile)
+        self._write_json(
+            self.config_path,
+            {
+                "schema_version": 1,
+                "board_id": "HK64S825-SIM-BOARD",
+                "simulate": {},
+                "adapters": {
+                    "compiler": {
+                        "command": [
+                            "$PYTHON",
+                            "$SKILL_ROOT/scripts/builtin_compiler.py",
+                        ]
+                    },
+                },
+            },
+        )
+        self.source_path.write_text(
+            "; CHIP: HK64S825\n"
+            "; 目的：验证可移植路径占位符\n"
+            "ORG 0x0000\n"
+            "START:\n"
+            "    NOP\n"
+            "    CLRWDT\n"
+            "    JMP START\n"
+            "END\n",
+            encoding="utf-8",
+        )
+        doctor = self.run_cli("doctor", "--profile", str(self.profile_path), "--config", str(self.config_path))
+        self.assertEqual(0, doctor.returncode, doctor.stderr or doctor.stdout)
+        self.assertEqual("READY", self.payload(doctor)["code"])
 
     def test_compiler_adapter_wraps_asmc_cli_for_full_loop(self) -> None:
         profile = self.profile()

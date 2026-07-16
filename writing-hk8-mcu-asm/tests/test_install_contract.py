@@ -56,6 +56,7 @@ class InstallContractTests(unittest.TestCase):
         self.assertEqual(str(destination), payload["destination"])
         self.assertTrue((destination / "SKILL.md").is_file())
         self.assertTrue((destination / "scripts" / "hk8asm.py").is_file())
+        self.assertTrue((destination / "scripts" / "builtin_compiler.py").is_file())
         self.assertTrue((destination / "references").is_dir())
         self.assertTrue((destination / "references" / "spec" / "rules" / "asm-rules.json").is_file())
         self.assertTrue((destination / "references" / "spec" / "tools" / "asm_static_check.py").is_file())

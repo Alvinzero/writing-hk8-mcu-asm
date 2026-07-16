@@ -1,4 +1,4 @@
 interface:
   display_name: "HK64S825 ASM 闭环"
-  short_description: "生成 HK64S825 ASM，并强制经过静态检查和目标编译门禁"
-  default_prompt: "使用 $writing-hk8-mcu-asm 创建经过静态检查和编译通过的 HK64S825 ASM 任务。第一步请先询问并确认芯片型号。"
+  short_description: "生成 HK64S825 ASM，并通过内置编译模块完成静态检查和目标编译门禁"
+  default_prompt: "使用 $writing-hk8-mcu-asm 创建经过静态检查和内置编译器编译通过的 HK64S825 ASM 任务。第一步请先询问并确认芯片型号。"

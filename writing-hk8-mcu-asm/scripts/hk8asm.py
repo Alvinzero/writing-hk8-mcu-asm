@@ -23,6 +23,7 @@ ROLES = (*MANDATORY_ROLES, *OPTIONAL_HARDWARE_ROLES)
 RUN_SCHEMA_VERSION = 1
 MAX_FLASH_ATTEMPTS = 3
 PLACEHOLDER_MARKERS = ("REPLACE_WITH", "实际路径")
+SKILL_ROOT = Path(__file__).resolve().parents[1]
 
 
 class GateError(Exception):
@@ -50,7 +51,7 @@ def emit(payload: dict[str, Any]) -> None:
 
 def read_json(path: Path, code: str) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise GateError(code, f"Cannot read valid JSON from {path}: {exc}") from exc
     if not isinstance(payload, dict):
@@ -185,7 +186,7 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
     if static_config:
         toolchain = static_config.get("toolchain")
         require(
-            toolchain in {"company_ide", "python_source_module_cli", "simulator"},
+            toolchain in {"company_ide", "python_source_module_cli", "simulator", "builtin_compiler"},
             "INVALID_PROFILE",
             "static_check.toolchain is invalid",
         )
@@ -410,7 +411,15 @@ def invoke_adapter(
     stderr_path = work_dir / "logs" / f"{label}.stderr.txt"
     write_json(input_path, payload)
     output_path.unlink(missing_ok=True)
-    command = [*adapter["command"], role, operation, "--input", str(input_path), "--output", str(output_path)]
+    command = [
+        *expand_adapter_command(adapter["command"]),
+        role,
+        operation,
+        "--input",
+        str(input_path),
+        "--output",
+        str(output_path),
+    ]
     try:
         completed = subprocess.run(
             command,
@@ -442,6 +451,23 @@ def invoke_adapter(
             message = f"Adapter returned exit code {completed.returncode}"
         raise AdapterError(role, message)
     return result
+
+
+def expand_adapter_command(command: list[str]) -> list[str]:
+    expanded: list[str] = []
+    for token in command:
+        if token == "$PYTHON":
+            expanded.append(sys.executable)
+            continue
+        if token == "$SKILL_ROOT":
+            expanded.append(str(SKILL_ROOT))
+            continue
+        if token.startswith("$SKILL_ROOT/") or token.startswith("$SKILL_ROOT\\"):
+            suffix = token[len("$SKILL_ROOT") + 1 :]
+            expanded.append(str(SKILL_ROOT / Path(suffix)))
+            continue
+        expanded.append(token)
+    return expanded
 
 
 def check_version(role: str, result: dict[str, Any], profile: dict[str, Any]) -> None:
