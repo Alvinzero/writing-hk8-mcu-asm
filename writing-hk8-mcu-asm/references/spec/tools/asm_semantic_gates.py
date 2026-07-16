@@ -195,6 +195,62 @@ def collect_gpio_effects(file_model: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(effects, key=lambda effect: (effect["line"], effect["index"]))
 
 
+def collect_reachable_instruction_indices(file_model: dict[str, Any]) -> set[int]:
+    instructions = file_model.get("_instructions", [])
+    if not instructions:
+        return set()
+    labels = file_model.get("labels", {})
+    address_to_index: dict[int, int] = {}
+    for index, instruction in enumerate(instructions):
+        address_to_index.setdefault(instruction["address"], index)
+    entry_address = 0 if 0 in address_to_index else min(address_to_index)
+    entry_index = address_to_index[entry_address]
+
+    def sequential_index(index: int, distance: int = 1) -> int | None:
+        candidate = index + distance
+        if candidate >= len(instructions):
+            return None
+        address = instructions[index]["address"]
+        if any(
+            instructions[index + offset]["address"] != address + offset
+            for offset in range(1, distance + 1)
+        ):
+            return None
+        return candidate
+
+    def direct_target_index(instruction: dict[str, Any]) -> int | None:
+        args = split_args(instruction["args"])
+        if not args:
+            return None
+        label = labels.get(args[0].upper())
+        if label is None:
+            return None
+        return address_to_index.get(label["address"])
+
+    reachable: set[int] = set()
+    pending = [entry_index]
+    while pending:
+        index = pending.pop()
+        if index in reachable:
+            continue
+        reachable.add(index)
+        instruction = instructions[index]
+        op = instruction["op"]
+        successors: list[int | None]
+        if op in {"RET", "RETI"}:
+            successors = []
+        elif op == "JMP":
+            successors = [direct_target_index(instruction)]
+        elif op == "CALL":
+            successors = [direct_target_index(instruction), sequential_index(index)]
+        elif op in GPIO_CONTROL_BOUNDARY_OPS:
+            successors = [sequential_index(index), sequential_index(index, 2)]
+        else:
+            successors = [sequential_index(index)]
+        pending.extend(successor for successor in successors if successor is not None)
+    return reachable
+
+
 def audit_gpio_contract(
     file_model: dict[str, Any], request: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -216,6 +272,7 @@ def audit_gpio_contract(
 
     instructions = file_model.get("_instructions", [])
     effects = collect_gpio_effects(file_model)
+    reachable_indices = collect_reachable_instruction_indices(file_model)
     issues: list[dict[str, Any]] = []
     contracts: list[dict[str, Any]] = []
     owned_bits_by_port: dict[str, set[int]] = {}
@@ -236,7 +293,21 @@ def audit_gpio_contract(
                 )
             )
             continue
-        if pin.get("direction") != "output":
+        direction = pin.get("direction")
+        if direction not in {"input", "output"}:
+            issues.append(
+                make_issue(
+                    "HK-AI-003",
+                    "ERROR",
+                    "<request>",
+                    None,
+                    f"pins.{pin_name}.direction must be input or output",
+                    "A missing or invalid direction can bypass output-specific GPIO safety checks.",
+                    f"Set pins.{pin_name}.direction explicitly to input or output.",
+                )
+            )
+            continue
+        if direction == "input":
             continue
         port = pin.get("port")
         bits = pin.get("bits")
@@ -425,6 +496,24 @@ def audit_gpio_contract(
                 )
             if enable_effect is None:
                 state_errors.append(f"lacks first {enable_register} set")
+
+            unreachable_effects = [
+                (name, effect)
+                for name, effect in (
+                    (mode_register, mode_effect),
+                    (data_register, data_effect),
+                    (enable_register, enable_effect),
+                )
+                if effect is not None and effect["index"] not in reachable_indices
+            ]
+            if unreachable_effects:
+                unreachable_evidence = ", ".join(
+                    f"{name}@{effect['line']}"
+                    for name, effect in unreachable_effects
+                )
+                state_errors.append(
+                    f"unreachable GPIO effect(s) {unreachable_evidence} cannot prove initialization"
+                )
 
             control_boundaries: list[dict[str, Any]] = []
             if mode_effect is not None and enable_effect is not None:

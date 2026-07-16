@@ -404,6 +404,59 @@ raise SystemExit(payload["summary"]["exit_code"])
         self.assertEqual(0, result.returncode, result.stderr or result.stdout)
         self.assertEqual("RUN_CREATED", self.payload(result)["code"])
 
+    def test_new_run_accepts_structured_gpio_input_contract(self) -> None:
+        request = self.request()
+        request["pins"] = {
+            "button": {
+                "direction": "input",
+                "port": "PA",
+                "bits": [1],
+            }
+        }
+        self._write_json(self.request_path, request)
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "structured-input"),
+        )
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+        self.assertEqual("RUN_CREATED", self.payload(result)["code"])
+
+    def test_new_run_rejects_missing_or_invalid_structured_pin_direction(self) -> None:
+        for name, direction in (("missing", None), ("misspelled", "ouput")):
+            with self.subTest(name=name):
+                request = self.structured_gpio_request()
+                if direction is None:
+                    del request["pins"]["led_outputs"]["direction"]
+                else:
+                    request["pins"]["led_outputs"]["direction"] = direction
+                self._write_json(self.request_path, request)
+                result = self.run_cli(
+                    "new-run",
+                    "--profile",
+                    str(self.profile_path),
+                    "--config",
+                    str(self.config_path),
+                    "--request",
+                    str(self.request_path),
+                    "--source",
+                    str(self.source_path),
+                    "--run-dir",
+                    str(self.root / f"invalid-direction-{name}"),
+                )
+                self.assertNotEqual(0, result.returncode)
+                payload = self.payload(result)
+                self.assertEqual("INVALID_REQUEST", payload["code"])
+                self.assertIn("direction", payload["message"])
+
     def test_output_pin_contract_requires_drive_active_level_and_initial_state(self) -> None:
         for field in ("drive", "active_level", "initial_state"):
             with self.subTest(field=field):

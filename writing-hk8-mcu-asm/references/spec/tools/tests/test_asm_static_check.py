@@ -199,6 +199,23 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         findings = self.assert_ai_error(completed, payload)
         self.assertIn("pins.led_outputs.drive", findings[0]["evidence"])
 
+    def test_structured_pin_direction_must_be_explicit_and_valid(self):
+        for name, direction in (("missing", None), ("misspelled", "ouput")):
+            with self.subTest(name=name):
+                request = gpio_request()
+                if direction is None:
+                    del request["pins"]["led_outputs"]["direction"]
+                else:
+                    request["pins"]["led_outputs"]["direction"] = direction
+                completed, payload = self.run_checker(
+                    "ORG 0x0000\n  NOP\nEND\n",
+                    "--toolchain",
+                    "company_ide",
+                    request=request,
+                )
+                findings = self.assert_ai_error(completed, payload)
+                self.assertIn("pins.led_outputs.direction", findings[0]["evidence"])
+
     def test_string_and_non_output_pin_entries_remain_compatible(self):
         completed, payload = self.run_checker(
             "ORG 0x0000\n  NOP\nEND\n",
@@ -801,6 +818,85 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         )
         findings = self.assert_gpio_blocker(completed, payload)
         self.assertIn("control-flow boundary", findings[0]["evidence"])
+
+    def test_gpio_contract_rejects_complete_but_unreachable_init_routine(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "RESET:\n"
+            "  JMP MAIN\n"
+            "UNUSED_INIT:\n"
+            "  BCLR PA_POD,0\n"
+            "  BCLR PA_POD,3\n"
+            "  BCLR PA_POD,5\n"
+            "  BCLR PA_PIO,0\n"
+            "  BCLR PA_PIO,3\n"
+            "  BCLR PA_PIO,5\n"
+            "  BSET PA_POE,0\n"
+            "  BSET PA_POE,3\n"
+            "  BSET PA_POE,5\n"
+            "  RET\n"
+            "MAIN:\n"
+            "  NOP\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            request=gpio_request(),
+        )
+        findings = self.assert_gpio_blocker(completed, payload)
+        self.assertIn("unreachable GPIO effect", findings[0]["evidence"])
+
+    def test_gpio_contract_accepts_init_routine_reached_by_direct_call(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "START:\n"
+            "  CALL INIT_GPIO\n"
+            "MAIN:\n"
+            "  NOP\n"
+            "  JMP MAIN\n"
+            "INIT_GPIO:\n"
+            "  BCLR PA_POD,0\n"
+            "  BCLR PA_POD,3\n"
+            "  BCLR PA_POD,5\n"
+            "  BCLR PA_PIO,0\n"
+            "  BCLR PA_PIO,3\n"
+            "  BCLR PA_PIO,5\n"
+            "  BSET PA_POE,0\n"
+            "  BSET PA_POE,3\n"
+            "  BSET PA_POE,5\n"
+            "  RET\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            "--strict-warnings",
+            request=gpio_request(),
+        )
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertNotIn("HK-GPIO-002", self.rule_ids(payload))
+
+    def test_gpio_contract_does_not_fall_through_an_org_gap(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "START:\n"
+            "  NOP\n"
+            "ORG 0x0010\n"
+            "INIT_GPIO:\n"
+            "  BCLR PA_POD,0\n"
+            "  BCLR PA_POD,3\n"
+            "  BCLR PA_POD,5\n"
+            "  BCLR PA_PIO,0\n"
+            "  BCLR PA_PIO,3\n"
+            "  BCLR PA_PIO,5\n"
+            "  BSET PA_POE,0\n"
+            "  BSET PA_POE,3\n"
+            "  BSET PA_POE,5\n"
+            "  RET\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            request=gpio_request(),
+        )
+        findings = self.assert_gpio_blocker(completed, payload)
+        self.assertIn("unreachable GPIO effect", findings[0]["evidence"])
 
     def test_gpio_does_not_skip_unsafe_first_effect_for_a_later_safe_effect(self):
         completed, payload = self.run_checker(

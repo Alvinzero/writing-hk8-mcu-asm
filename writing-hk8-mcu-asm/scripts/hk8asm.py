@@ -481,8 +481,15 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
             "INVALID_REQUEST",
             "pin values must be non-empty strings or objects",
         )
-        if isinstance(value, dict) and value.get("direction") == "output":
-            validate_output_pin_contract(key, value)
+        if isinstance(value, dict):
+            direction = value.get("direction")
+            require(
+                direction in {"input", "output"},
+                "INVALID_REQUEST",
+                f"pins.{key}.direction must be input or output",
+            )
+            if direction == "output":
+                validate_output_pin_contract(key, value)
     peripherals = request.get("peripherals")
     require(isinstance(peripherals, list), "INVALID_REQUEST", "peripherals must be an array")
     require(not contains_unresolved(peripherals), "INVALID_REQUEST", "peripherals contain unresolved values")
