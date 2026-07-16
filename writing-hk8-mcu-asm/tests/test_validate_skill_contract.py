@@ -232,6 +232,18 @@ class ValidateSkillContractTests(unittest.TestCase):
         ):
             self.assertIn(phrase, skill_text)
 
+    def test_profile_not_ready_allows_uncompiled_draft_without_release_claims(self) -> None:
+        skill_text = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        for phrase in (
+            "PROFILE_NOT_READY 只阻止 release，不阻止未编译草案",
+            "用户已明确选择“先给草案”",
+            "未编译、未 release、不可烧录、不可量产",
+            "不得把草案称为正确 ASM、编译通过、已验证或 release",
+            "不得伪造 run ID、source hash、artifact hash 或 evidence hash",
+            "真实 profile/config 就绪后，必须重新执行 `doctor -> new-run -> close-loop -> release`",
+        ):
+            self.assertIn(phrase, skill_text)
+
 
 if __name__ == "__main__":
     unittest.main()
