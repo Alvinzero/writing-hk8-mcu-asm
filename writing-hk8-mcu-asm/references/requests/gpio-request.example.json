@@ -2,9 +2,22 @@
   "schema_version": 1,
   "chip": "HK64S825",
   "behavior": "Drive one confirmed GPIO as a measurable heartbeat output.",
-  "clock_hz": 8000000,
+  "clock": {
+    "osc_hz": 16000000,
+    "sck_ps": "reset"
+  },
   "pins": {
-    "heartbeat_output": "REPLACE_WITH_CONFIRMED_PIN"
+    "led_outputs": {
+      "port": "PA",
+      "bits": [
+        0
+      ],
+      "direction": "output",
+      "drive": "push_pull",
+      "active_level": "high",
+      "initial_state": "off",
+      "preserve_unowned_bits": true
+    }
   },
   "peripherals": [
     {
@@ -12,7 +25,14 @@
     }
   ],
   "timing": {
-    "period_us": 1000
+    "precision": "precise",
+    "delay_targets": [
+      {
+        "label": "DELAY_500MS",
+        "target_us": 500000,
+        "tolerance_percent": 1.0
+      }
+    ]
   },
   "memory_limits": {
     "rom_bytes": 2048,

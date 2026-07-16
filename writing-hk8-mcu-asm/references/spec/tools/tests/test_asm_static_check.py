@@ -13,7 +13,14 @@ CHECKER = TOOLS / "asm_static_check.py"
 
 
 class AsmStaticCheckCliTests(unittest.TestCase):
-    def run_checker(self, source: str, *args: str, map_text: str | None = None):
+    def run_checker(
+        self,
+        source: str,
+        *args: str,
+        map_text: str | None = None,
+        request: dict | None = None,
+        profile: dict | None = None,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             asm = root / "main.asm"
@@ -23,6 +30,14 @@ class AsmStaticCheckCliTests(unittest.TestCase):
                 map_path = root / "main.map"
                 map_path.write_text(map_text, encoding="utf-8", newline="\n")
                 command.extend(["--map", str(map_path)])
+            if request is not None:
+                request_path = root / "request.json"
+                request_path.write_text(json.dumps(request), encoding="utf-8")
+                command.extend(["--request", str(request_path)])
+            if profile is not None:
+                profile_path = root / "profile.json"
+                profile_path.write_text(json.dumps(profile), encoding="utf-8")
+                command.extend(["--profile", str(profile_path)])
             completed = subprocess.run(command, text=True, encoding="utf-8", capture_output=True)
             payload = json.loads(completed.stdout)
             return completed, payload
@@ -30,6 +45,52 @@ class AsmStaticCheckCliTests(unittest.TestCase):
     @staticmethod
     def rule_ids(payload: dict) -> set[str]:
         return {finding["rule_id"] for finding in payload["findings"]}
+
+    def test_reports_loaded_request_and_profile_context(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n  NOP\nEND\n",
+            "--toolchain",
+            "company_ide",
+            request={"chip": "HK64S825"},
+            profile={"chip": "HK64S825"},
+        )
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertEqual(
+            payload["contract_context"],
+            {
+                "request_loaded": True,
+                "profile_loaded": True,
+                "chip": "HK64S825",
+            },
+        )
+
+    def test_malformed_context_json_is_reported_as_an_error_finding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            asm = root / "main.asm"
+            request_path = root / "request.json"
+            asm.write_text("ORG 0x0000\n  NOP\nEND\n", encoding="utf-8", newline="\n")
+            request_path.write_text("{not-json", encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(CHECKER),
+                    str(asm),
+                    "--toolchain",
+                    "company_ide",
+                    "--request",
+                    str(request_path),
+                    "--json",
+                ],
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+            )
+            payload = json.loads(completed.stdout)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(payload["summary"]["errors"], 1)
+        self.assertIn("request cannot be read", payload["findings"][0]["evidence"])
 
     def test_python_cli_blocks_sources_containing_db(self):
         completed, payload = self.run_checker(

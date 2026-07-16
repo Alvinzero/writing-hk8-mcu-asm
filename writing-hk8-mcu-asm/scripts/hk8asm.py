@@ -116,6 +116,87 @@ def contains_unresolved(value: Any) -> bool:
     return False
 
 
+def validate_clock_contract(request: dict[str, Any]) -> None:
+    clock = request.get("clock")
+    legacy = request.get("clock_hz")
+    require(
+        clock is not None or legacy is not None,
+        "INVALID_REQUEST",
+        "clock or clock_hz is required",
+    )
+    if clock is None:
+        require(
+            isinstance(legacy, int) and not isinstance(legacy, bool) and legacy > 0,
+            "INVALID_REQUEST",
+            "clock_hz must be a positive OSC frequency",
+        )
+        return
+    require(isinstance(clock, dict), "INVALID_REQUEST", "clock must be an object")
+    osc_hz = clock.get("osc_hz")
+    require(
+        isinstance(osc_hz, int) and not isinstance(osc_hz, bool) and osc_hz > 0,
+        "INVALID_REQUEST",
+        "clock.osc_hz must be positive",
+    )
+    sck_ps = clock.get("sck_ps", "reset")
+    require(
+        sck_ps == "reset"
+        or (
+            isinstance(sck_ps, int)
+            and not isinstance(sck_ps, bool)
+            and 0 <= sck_ps <= 255
+        ),
+        "INVALID_REQUEST",
+        "clock.sck_ps must be reset or an 8-bit integer",
+    )
+
+
+def validate_output_pin_contract(name: str, pin: dict[str, Any]) -> None:
+    require(
+        pin.get("port") in {"PA", "PB"},
+        "INVALID_REQUEST",
+        f"pins.{name}.port must be PA or PB",
+    )
+    bits = pin.get("bits")
+    require(
+        isinstance(bits, list)
+        and bool(bits)
+        and all(
+            isinstance(bit, int)
+            and not isinstance(bit, bool)
+            and 0 <= bit <= 7
+            for bit in bits
+        ),
+        "INVALID_REQUEST",
+        f"pins.{name}.bits must contain bit numbers 0..7",
+    )
+    require(
+        len(set(bits)) == len(bits),
+        "INVALID_REQUEST",
+        f"pins.{name}.bits must be unique",
+    )
+    require(
+        pin.get("drive") in {"push_pull", "open_drain"},
+        "INVALID_REQUEST",
+        f"pins.{name}.drive is invalid",
+    )
+    require(
+        pin.get("active_level") in {"high", "low"},
+        "INVALID_REQUEST",
+        f"pins.{name}.active_level is invalid",
+    )
+    require(
+        pin.get("initial_state") in {"on", "off"},
+        "INVALID_REQUEST",
+        f"pins.{name}.initial_state is invalid",
+    )
+    require(
+        isinstance(pin.get("preserve_unowned_bits"), bool),
+        "INVALID_REQUEST",
+        f"pins.{name}.preserve_unowned_bits must be boolean",
+    )
+
+
 def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> None:
     require(profile.get("schema_version") == 1, "INVALID_PROFILE", "Unsupported profile schema")
     chip = profile.get("chip")
@@ -181,6 +262,68 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
         "INVALID_PROFILE",
         "spec_root must be a non-empty string when provided",
     )
+    clock_model = profile.get("clock_model")
+    if clock_model is not None:
+        require(
+            isinstance(clock_model, dict),
+            "INVALID_PROFILE",
+            "clock_model must be an object",
+        )
+        for key in ("sck_ps_register", "sck_ps_reset", "sckhl_bit", "divider_by_mode"):
+            require(
+                key in clock_model,
+                "INVALID_PROFILE",
+                f"clock_model.{key} is required",
+            )
+        require(
+            is_non_empty_string(clock_model.get("sck_ps_register")),
+            "INVALID_PROFILE",
+            "clock_model.sck_ps_register must be a non-empty string",
+        )
+        sck_ps_reset = clock_model.get("sck_ps_reset")
+        require(
+            isinstance(sck_ps_reset, int)
+            and not isinstance(sck_ps_reset, bool)
+            and 0 <= sck_ps_reset <= 255,
+            "INVALID_PROFILE",
+            "clock_model.sck_ps_reset must be an 8-bit integer",
+        )
+        sckhl_bit = clock_model.get("sckhl_bit")
+        require(
+            isinstance(sckhl_bit, int)
+            and not isinstance(sckhl_bit, bool)
+            and 0 <= sckhl_bit <= 7,
+            "INVALID_PROFILE",
+            "clock_model.sckhl_bit must be a bit number 0..7",
+        )
+        divider_by_mode = clock_model.get("divider_by_mode")
+        require(
+            isinstance(divider_by_mode, dict),
+            "INVALID_PROFILE",
+            "clock_model.divider_by_mode must be an object",
+        )
+        required_selectors = {str(selector) for selector in range(1, 16)}
+        for mode in ("high", "low"):
+            divider_map = divider_by_mode.get(mode)
+            require(
+                isinstance(divider_map, dict),
+                "INVALID_PROFILE",
+                f"clock_model.divider_by_mode.{mode} must be an object",
+            )
+            require(
+                required_selectors.issubset(divider_map),
+                "INVALID_PROFILE",
+                f"clock_model.divider_by_mode.{mode} must define selectors 1..15",
+            )
+            for selector in required_selectors:
+                divider = divider_map[selector]
+                require(
+                    isinstance(divider, (int, float))
+                    and not isinstance(divider, bool)
+                    and divider > 0,
+                    "INVALID_PROFILE",
+                    f"clock_model.divider_by_mode.{mode}.{selector} must be positive",
+                )
     static_config = profile.get("static_check", {})
     require(isinstance(static_config, dict), "INVALID_PROFILE", "static_check must be an object")
     if static_config:
@@ -311,12 +454,7 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
     require(request.get("chip") in supported, "INVALID_REQUEST", "Request chip is not supported")
     behavior = request.get("behavior")
     require(isinstance(behavior, str) and bool(behavior.strip()), "INVALID_REQUEST", "behavior is required")
-    clock = request.get("clock_hz")
-    require(
-        isinstance(clock, int) and not isinstance(clock, bool) and clock > 0,
-        "INVALID_REQUEST",
-        "clock_hz must be positive",
-    )
+    validate_clock_contract(request)
     pins = request.get("pins")
     require(isinstance(pins, dict), "INVALID_REQUEST", "pins must be an object")
     require(not contains_unresolved(pins), "INVALID_REQUEST", "pins contain unresolved values")
@@ -327,6 +465,8 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
             "INVALID_REQUEST",
             "pin values must be non-empty strings or objects",
         )
+        if isinstance(value, dict) and value.get("direction") == "output":
+            validate_output_pin_contract(key, value)
     peripherals = request.get("peripherals")
     require(isinstance(peripherals, list), "INVALID_REQUEST", "peripherals must be an array")
     require(not contains_unresolved(peripherals), "INVALID_REQUEST", "peripherals contain unresolved values")
@@ -343,7 +483,41 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
     require(not contains_unresolved(timing), "INVALID_REQUEST", "timing contains unresolved values")
     for key, value in timing.items():
         require(is_non_empty_string(key), "INVALID_REQUEST", "timing keys must be non-empty strings")
-        require(is_scalar(value), "INVALID_REQUEST", "timing values must be scalar")
+        if key != "delay_targets":
+            require(is_scalar(value), "INVALID_REQUEST", "timing values must be scalar")
+            continue
+        require(
+            isinstance(value, list),
+            "INVALID_REQUEST",
+            "timing.delay_targets must be an array",
+        )
+        for item in value:
+            require(
+                isinstance(item, dict),
+                "INVALID_REQUEST",
+                "Each timing.delay_targets item must be an object",
+            )
+            require(
+                is_non_empty_string(item.get("label")),
+                "INVALID_REQUEST",
+                "timing.delay_targets label is required",
+            )
+            target_us = item.get("target_us")
+            require(
+                isinstance(target_us, (int, float))
+                and not isinstance(target_us, bool)
+                and target_us > 0,
+                "INVALID_REQUEST",
+                "timing.delay_targets target_us must be positive",
+            )
+            tolerance_percent = item.get("tolerance_percent")
+            require(
+                isinstance(tolerance_percent, (int, float))
+                and not isinstance(tolerance_percent, bool)
+                and tolerance_percent > 0,
+                "INVALID_REQUEST",
+                "timing.delay_targets tolerance_percent must be positive",
+            )
     memory_limits = request.get("memory_limits")
     require(
         isinstance(memory_limits, dict),
@@ -565,7 +739,7 @@ def save_failure(run_dir: Path, run: dict[str, Any], stage: str, code: str, mess
     write_json(run_dir / "run.json", run)
 
 
-def static_check(source: Path, profile: dict[str, Any]) -> dict[str, Any]:
+def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     static_config = profile.get("static_check", {})
     spec_root_value = profile.get("spec_root")
     if static_config and spec_root_value:
@@ -578,6 +752,10 @@ def static_check(source: Path, profile: dict[str, Any]) -> dict[str, Any]:
             str(source),
             "--toolchain",
             static_config["toolchain"],
+            "--request",
+            str(run_dir / "request.json"),
+            "--profile",
+            str(run_dir / "profile.json"),
             "--json",
         ]
         for map_file in static_config.get("map_files", []):
@@ -697,7 +875,7 @@ def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
     write_json(run_dir / "run.json", run)
 
     try:
-        static_result = static_check(source, profile)
+        static_result = static_check(source, profile, run_dir)
         run_doctor(profile, config)
     except GateError as exc:
         save_failure(run_dir, run, "preflight", exc.code, exc.message)

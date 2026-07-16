@@ -54,6 +54,18 @@ WDT_OFF_RE = re.compile(r"(WDT|看门狗).{0,20}(OFF|DISABLE|DISABLED|关闭|禁
 WRITE_FIRST_OPERAND_OPS = {"MOV", "BSET", "BCLR", "BCPL"}
 
 
+def load_context_json(path: Path | None, label: str) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} cannot be read: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must contain a JSON object")
+    return value
+
+
 def parse_number(text: str) -> int | None:
     value = text.strip().replace("_", "")
     if value.startswith("#"):
@@ -763,6 +775,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="TABLE:SENDER",
         help="declare a table and its same-page sender; repeat for each pair",
     )
+    parser.add_argument("--request", type=Path, help="structured generation request JSON")
+    parser.add_argument("--profile", type=Path, help="structured chip profile JSON")
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     parser.add_argument("--strict-warnings", action="store_true", help="return exit code 1 when warnings exist")
     return parser
@@ -791,6 +805,28 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     files: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
+    request_context = None
+    profile_context = None
+    for path, label in ((args.request, "request"), (args.profile, "profile")):
+        try:
+            context = load_context_json(path, label)
+        except ValueError as exc:
+            findings.append(
+                make_finding(
+                    "HK-AI-003",
+                    "ERROR",
+                    path or f"<{label}>",
+                    None,
+                    str(exc),
+                    "The checker cannot bind source findings to the structured generation contract.",
+                    f"Provide a readable {label} JSON file whose root is an object.",
+                )
+            )
+            context = None
+        if label == "request":
+            request_context = context
+        else:
+            profile_context = context
     for path in args.asm:
         if not path.is_file():
             findings.append(
@@ -820,9 +856,19 @@ def main(argv: list[str] | None = None) -> int:
         exit_code = 1
     else:
         exit_code = 0
+    chip = None
+    for context in (profile_context, request_context):
+        if context is not None and isinstance(context.get("chip"), str):
+            chip = context["chip"]
+            break
     payload = {
         "schema_version": "1.0.0",
         "toolchain": args.toolchain,
+        "contract_context": {
+            "request_loaded": request_context is not None,
+            "profile_loaded": profile_context is not None,
+            "chip": chip,
+        },
         "inputs": [str(path.resolve()) for path in args.asm],
         "map_files": [str(path.resolve()) for path in args.maps],
         "files": files,

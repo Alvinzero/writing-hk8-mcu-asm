@@ -93,6 +93,34 @@ class ClosedLoopCliContractTests(unittest.TestCase):
             "allow_nonvolatile_changes": False,
         }
 
+    @classmethod
+    def structured_gpio_request(cls) -> dict:
+        request = cls.request()
+        request.pop("clock_hz")
+        request["clock"] = {"osc_hz": 16_000_000, "sck_ps": "reset"}
+        request["pins"] = {
+            "led_outputs": {
+                "port": "PA",
+                "bits": [0],
+                "direction": "output",
+                "drive": "push_pull",
+                "active_level": "high",
+                "initial_state": "off",
+                "preserve_unowned_bits": True,
+            }
+        }
+        request["timing"] = {
+            "precision": "precise",
+            "delay_targets": [
+                {
+                    "label": "DELAY_500MS",
+                    "target_us": 500_000,
+                    "tolerance_percent": 1.0,
+                }
+            ],
+        }
+        return request
+
     @staticmethod
     def config(*, failures: dict[str, str] | None = None) -> dict:
         command = [sys.executable, str(FAKE_ADAPTER)]
@@ -273,6 +301,48 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stderr or result.stdout)
         self.assertEqual("RUN_CREATED", self.payload(result)["code"])
+
+    def test_new_run_accepts_structured_gpio_output_contract(self) -> None:
+        self._write_json(self.request_path, self.structured_gpio_request())
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "structured-gpio"),
+        )
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+        self.assertEqual("RUN_CREATED", self.payload(result)["code"])
+
+    def test_output_pin_contract_requires_drive_active_level_and_initial_state(self) -> None:
+        for field in ("drive", "active_level", "initial_state"):
+            with self.subTest(field=field):
+                request = self.structured_gpio_request()
+                del request["pins"]["led_outputs"][field]
+                self._write_json(self.request_path, request)
+                result = self.run_cli(
+                    "new-run",
+                    "--profile",
+                    str(self.profile_path),
+                    "--config",
+                    str(self.config_path),
+                    "--request",
+                    str(self.request_path),
+                    "--source",
+                    str(self.source_path),
+                    "--run-dir",
+                    str(self.root / f"missing-{field}"),
+                )
+                self.assertNotEqual(0, result.returncode)
+                payload = self.payload(result)
+                self.assertEqual("INVALID_REQUEST", payload["code"])
+                self.assertIn(field, payload["message"])
 
     def test_new_run_rejects_unstructured_or_forbidden_inputs(self) -> None:
         cases = [
