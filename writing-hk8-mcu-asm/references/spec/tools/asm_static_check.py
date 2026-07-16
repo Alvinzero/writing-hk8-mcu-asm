@@ -17,6 +17,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
+try:
+    from .asm_semantic_gates import audit_unused_equ
+except ImportError:
+    from asm_semantic_gates import audit_unused_equ
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
@@ -44,6 +49,7 @@ MAP_SYMBOL_RE = re.compile(r"^\s*(\S+)\s+0x([0-9A-Fa-f]+)\s+", re.MULTILINE)
 NUMERIC_TARGET_RE = re.compile(r"^(?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|[0-9]+)\b", re.IGNORECASE)
 MIXED_HEX_RE = re.compile(r"\b0x[0-9A-Fa-f]+H\b", re.IGNORECASE)
 NUMBER_TOKEN_RE = re.compile(r"(?<![\w])(?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|[0-9]+)(?![\w])", re.IGNORECASE)
+SYMBOL_TOKEN_RE = re.compile(r"(?<![\w.$?])([A-Za-z_.$?][\w.$?]*)(?![\w.$?])")
 GPIO_CONFIG_REGISTER_RE = re.compile(r"\b(P[AB])_(PPU|PPD|POD|INS|IOS|PSL)\b", re.IGNORECASE)
 GPIO_COMPLEX_CONTEXT_RE = re.compile(
     r"(I2C|OLED|SSD1306|数码|七段|7SEG|BOARD[_ -]?PROFILE|板级|经验证)",
@@ -201,6 +207,8 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
     labels: dict[str, dict[str, Any]] = {}
     table_pairs: list[dict[str, str]] = []
     instructions: list[dict[str, Any]] = []
+    equ_symbols: dict[str, dict[str, Any]] = {}
+    symbol_references: Counter[str] = Counter()
     db_directives = 0
     db_source_bytes = 0
     sram_addresses: set[int] = set()
@@ -256,13 +264,25 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
         if not rest:
             continue
 
-        equ_match = re.match(r"^([A-Za-z_.$?][\w.$?]*)\s+EQU\b", rest, re.IGNORECASE)
+        equ_match = re.match(
+            r"^([A-Za-z_.$?][\w.$?]*)\s+EQU\b\s*(.*)$",
+            rest,
+            re.IGNORECASE,
+        )
         if equ_match:
+            name = equ_match.group(1)
+            equ_symbols[name.upper()] = {
+                "name": name,
+                "value": parse_number(equ_match.group(2)),
+                "line": line_number,
+                "uses": 0,
+            }
             continue
 
         parts = rest.split(None, 1)
         op = parts[0].upper()
         args = parts[1].strip() if len(parts) > 1 else ""
+        symbol_references.update(match.group(1).upper() for match in SYMBOL_TOKEN_RE.finditer(args))
 
         if op == "ORG":
             value = parse_number(args.split(",", 1)[0])
@@ -528,6 +548,9 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
                 )
             )
 
+    for name, symbol in equ_symbols.items():
+        symbol["uses"] = symbol_references[name]
+
     highest = max(occupied) if occupied else None
     span_words = highest + 1 if highest is not None and highest >= 0 else 0
     occupied_nonnegative = sum(1 for value in occupied if 0 <= value <= (highest if highest is not None else -1))
@@ -555,6 +578,7 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
         "labels": labels,
         "table_pair_declarations": table_pairs,
         "_instructions": instructions,
+        "_equ_symbols": equ_symbols,
         "layout": layout,
     }
     return result, findings
@@ -873,7 +897,9 @@ def main(argv: list[str] | None = None) -> int:
     table_pairs, pair_findings = audit_table_pairs(files, args.table_pair, [path.resolve() for path in args.maps])
     findings.extend(pair_findings)
     for file_result in files:
+        findings.extend(audit_unused_equ(file_result))
         file_result.pop("_instructions", None)
+        file_result.pop("_equ_symbols", None)
     severity_counts = Counter(item["severity"] for item in findings)
     if severity_counts["BLOCKER"] or severity_counts["ERROR"]:
         exit_code = 2

@@ -193,6 +193,27 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0)
         self.assertEqual(payload["files"][0]["sram_addresses"], ["0x80", "0xBF"])
 
+    def test_unused_business_equ_warns_and_strict_mode_fails(self):
+        source = "LED_MASK EQU 29H\nORG 0\nSTART:\n  MOV A,#29H\nEND\n"
+        completed, payload = self.run_checker(
+            source,
+            "--toolchain",
+            "builtin_compiler",
+            "--strict-warnings",
+        )
+        self.assertEqual(completed.returncode, 1, payload["findings"])
+        self.assertIn("HK-SYN-013", self.rule_ids(payload))
+
+    def test_referenced_business_equ_passes(self):
+        source = "LED_MASK EQU 29H\nORG 0\nSTART:\n  MOV A,#LED_MASK\nEND\n"
+        completed, payload = self.run_checker(
+            source,
+            "--toolchain",
+            "builtin_compiler",
+            "--strict-warnings",
+        )
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+
     def test_tabh_requires_a_reload_after_tabl(self):
         completed, payload = self.run_checker(
             "; TABLE_PAIR: TABLE0,SEND0\n"
