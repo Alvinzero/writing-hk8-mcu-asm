@@ -18,9 +18,19 @@ from pathlib import Path
 from typing import Any, Iterable
 
 try:
-    from .asm_semantic_gates import audit_gpio_contract, audit_unused_equ
+    from .asm_semantic_gates import (
+        audit_counter_loops,
+        audit_gpio_contract,
+        audit_unused_equ,
+        load_instruction_effects,
+    )
 except ImportError:
-    from asm_semantic_gates import audit_gpio_contract, audit_unused_equ
+    from asm_semantic_gates import (
+        audit_counter_loops,
+        audit_gpio_contract,
+        audit_unused_equ,
+        load_instruction_effects,
+    )
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -830,6 +840,24 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     files: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
+    spec_root = Path(__file__).resolve().parent.parent
+    instruction_reference = spec_root / "rules" / "instruction-reference.json"
+    try:
+        instruction_effects = load_instruction_effects(instruction_reference)
+    except ValueError as exc:
+        findings.append(
+            make_finding(
+                "HK-AI-003",
+                "ERROR",
+                instruction_reference,
+                None,
+                str(exc),
+                "The checker cannot audit instruction write-back or skip semantics without "
+                "the packaged instruction reference.",
+                "Restore a valid packaged rules/instruction-reference.json and rerun the checker.",
+            )
+        )
+        instruction_effects = None
     request_context = None
     profile_context = None
     for path, label in ((args.request, "request"), (args.profile, "profile")):
@@ -898,6 +926,8 @@ def main(argv: list[str] | None = None) -> int:
     table_pairs, pair_findings = audit_table_pairs(files, args.table_pair, [path.resolve() for path in args.maps])
     findings.extend(pair_findings)
     for file_result in files:
+        if instruction_effects is not None:
+            findings.extend(audit_counter_loops(file_result, instruction_effects))
         if request_context is not None:
             findings.extend(audit_gpio_contract(file_result, request_context))
         findings.extend(audit_unused_equ(file_result))

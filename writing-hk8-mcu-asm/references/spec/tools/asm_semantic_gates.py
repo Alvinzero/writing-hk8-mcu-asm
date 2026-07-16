@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 
@@ -76,6 +78,112 @@ def make_issue(
 
 def split_args(args: str) -> list[str]:
     return [part.strip() for part in args.split(",")]
+
+
+def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"instruction reference cannot be read: {exc}") from exc
+
+    try:
+        variants = document["variants"]
+        if not isinstance(variants, list):
+            raise TypeError("variants must be a list")
+        effects: dict[str, dict[str, Any]] = {}
+        for variant in variants:
+            mnemonic = variant["mnemonic"].upper()
+            notes = (variant.get("raw_notes") or "").strip()
+            effects[mnemonic] = {
+                "writes": (
+                    "R"
+                    if notes.startswith("R ←")
+                    else "A"
+                    if notes.startswith("A ←")
+                    else None
+                ),
+                "skip": "THEN SKIP" in notes.upper(),
+                "cycles": variant["cycles"],
+                "notes": notes,
+                "semantic_status": variant["semantic_status"],
+                "delivery_policy": variant["delivery_policy"],
+            }
+    except (AttributeError, KeyError, TypeError) as exc:
+        raise ValueError(f"instruction reference has invalid structure: {exc}") from exc
+    return effects
+
+
+def audit_counter_loops(
+    file_model: dict[str, Any], effects: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    instructions = file_model.get("_instructions", [])
+    labels = file_model.get("labels", {})
+    address_to_index: dict[int, int] = {}
+    for index, instruction in enumerate(instructions):
+        address_to_index.setdefault(instruction["address"], index)
+
+    issues: list[dict[str, Any]] = []
+    for index, instruction in enumerate(instructions[:-1]):
+        effect = effects.get(instruction["op"])
+        if effect is None or effect.get("skip") is not True:
+            continue
+        jump = instructions[index + 1]
+        if jump["op"] != "JMP":
+            continue
+        jump_args = split_args(jump["args"])
+        if not jump_args or not jump_args[0]:
+            continue
+        target = jump_args[0].upper()
+        label = labels.get(target)
+        if label is None:
+            continue
+        label_address = label.get("address")
+        instruction_address = instruction.get("address")
+        if (
+            not isinstance(label_address, int)
+            or not isinstance(instruction_address, int)
+            or label_address > instruction_address
+        ):
+            continue
+        loop_start = address_to_index.get(label_address)
+        if loop_start is None or effect.get("writes") != "A":
+            continue
+
+        op = instruction["op"]
+        operand_args = split_args(instruction["args"])
+        operand = operand_args[0] if operand_args and operand_args[0] else "<operand>"
+        issues.append(
+            make_issue(
+                "HK-SYN-012",
+                "BLOCKER",
+                file_model["path"],
+                instruction["line"],
+                f"{op} writes A instead of operand {operand}; following JMP {target} "
+                f"is a backward/same target ({label_address:#06x} <= "
+                f"{instruction_address:#06x})",
+                "The loop-carried counter is not written back, so the loop may never progress "
+                "to its exit path.",
+                f"Replace {op} with {op}R for operand write-back and recalculate loop timing.",
+            )
+        )
+
+        loop_slice = instructions[loop_start : index + 2]
+        if any(candidate["op"] == "CLRWDT" for candidate in loop_slice):
+            issues.append(
+                make_issue(
+                    "HK-WDT-002",
+                    "BLOCKER",
+                    file_model["path"],
+                    instruction["line"],
+                    f"loop {label['name']} through JMP {target} contains CLRWDT, but "
+                    f"{op} writes A and counter operand {operand} is not written back",
+                    "The watchdog is continuously cleared while a non-progressing loop can "
+                    "run forever.",
+                    f"Replace {op} with {op}R, recalculate timing, and prove the loop reaches "
+                    "its exit after a finite number of iterations.",
+                )
+            )
+    return issues
 
 
 def resolve_byte(token: str, equ_symbols: dict[str, dict[str, Any]]) -> int | None:

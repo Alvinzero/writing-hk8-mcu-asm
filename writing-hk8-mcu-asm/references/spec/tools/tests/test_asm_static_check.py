@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -174,6 +175,51 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 2)
         self.assertEqual(payload["summary"]["errors"], 1)
         self.assertIn("request cannot be read", payload["findings"][0]["evidence"])
+
+    def test_instruction_reference_failure_is_reported_without_a_traceback(self):
+        for reference_text in (None, "{not-json"):
+            with self.subTest(reference_text=reference_text):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    copied_tools = root / "spec" / "tools"
+                    copied_tools.mkdir(parents=True)
+                    copied_checker = copied_tools / CHECKER.name
+                    shutil.copy2(CHECKER, copied_checker)
+                    shutil.copy2(TOOLS / "asm_semantic_gates.py", copied_tools)
+                    if reference_text is not None:
+                        rules = root / "spec" / "rules"
+                        rules.mkdir()
+                        (rules / "instruction-reference.json").write_text(
+                            reference_text,
+                            encoding="utf-8",
+                        )
+                    asm = root / "main.asm"
+                    asm.write_text("ORG 0x0000\n  NOP\nEND\n", encoding="utf-8")
+                    completed = subprocess.run(
+                        [
+                            sys.executable,
+                            str(copied_checker),
+                            str(asm),
+                            "--toolchain",
+                            "company_ide",
+                            "--json",
+                        ],
+                        text=True,
+                        encoding="utf-8",
+                        capture_output=True,
+                    )
+
+                self.assertEqual(completed.returncode, 2)
+                self.assertNotIn("Traceback", completed.stderr)
+                payload = json.loads(completed.stdout)
+                reference_findings = [
+                    finding
+                    for finding in payload["findings"]
+                    if finding["rule_id"] == "HK-AI-003"
+                ]
+                self.assertEqual(len(reference_findings), 1)
+                self.assertEqual(reference_findings[0]["severity"], "ERROR")
+                self.assertIn("instruction reference", reference_findings[0]["evidence"])
 
     def test_request_pins_must_be_an_object_when_present(self):
         request = gpio_request()
@@ -418,6 +464,80 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 2)
         self.assertIn("HK-WDT-001", self.rule_ids(payload))
+
+    def test_decsz_backward_counter_loop_is_blocked_and_clrwdt_masking_is_reported(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "LOOP:\n"
+            "  CLRWDT\n"
+            "  DECSZ 80H\n"
+            "  JMP LOOP\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        findings = {
+            finding["rule_id"]: finding
+            for finding in payload["findings"]
+            if finding["rule_id"] in {"HK-SYN-012", "HK-WDT-002"}
+        }
+        self.assertEqual(set(findings), {"HK-SYN-012", "HK-WDT-002"})
+        self.assertEqual(findings["HK-SYN-012"]["severity"], "BLOCKER")
+        self.assertIn("DECSZ", findings["HK-SYN-012"]["evidence"])
+        self.assertIn("writes A", findings["HK-SYN-012"]["evidence"])
+        self.assertIn("backward", findings["HK-SYN-012"]["evidence"])
+        self.assertIn("DECSZR", findings["HK-SYN-012"]["required_fix"])
+        self.assertEqual(findings["HK-WDT-002"]["severity"], "BLOCKER")
+        self.assertIn("CLRWDT", findings["HK-WDT-002"]["evidence"])
+        self.assertIn("not written back", findings["HK-WDT-002"]["evidence"])
+
+    def test_incsz_backward_counter_loop_is_blocked_without_delay_wdt_findings(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "LOOP:\n"
+            "  INCSZ 80H\n"
+            "  JMP LOOP\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        rule_ids = self.rule_ids(payload)
+        self.assertIn("HK-SYN-012", rule_ids)
+        self.assertNotIn("HK-WDT-001", rule_ids)
+        self.assertNotIn("HK-WDT-002", rule_ids)
+
+    def test_decszr_backward_counter_loop_has_no_constructive_finding(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "LOOP:\n"
+            "  CLRWDT\n"
+            "  DECSZR 80H\n"
+            "  JMP LOOP\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertEqual(payload["findings"], [])
+
+    def test_incszr_backward_counter_loop_has_no_constructive_finding(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "LOOP:\n"
+            "  INCSZR 80H\n"
+            "  JMP LOOP\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertEqual(payload["findings"], [])
 
     def test_simple_led_bulk_gpio_initialization_warns_under_strict_warnings(self):
         completed, payload = self.run_checker(
