@@ -155,17 +155,20 @@ def first_operand(args: str) -> str:
 
 def occupy_words(
     occupied: dict[int, dict[str, Any]],
+    ambiguous_addresses: set[int],
     start: int,
     words: int,
     path: Path,
     line: int,
     kind: str,
     findings: list[dict[str, Any]],
+    instruction_index: int | None = None,
 ) -> None:
     for offset in range(words):
         address = start + offset
         previous = occupied.get(address)
         if previous is not None:
+            ambiguous_addresses.add(address)
             findings.append(
                 make_finding(
                     "HK-LAYOUT-004",
@@ -178,7 +181,11 @@ def occupy_words(
                 )
             )
         else:
-            occupied[address] = {"line": line, "kind": kind}
+            occupied[address] = {
+                "line": line,
+                "kind": kind,
+                "instruction_index": instruction_index,
+            }
         if not PROGRAM_MIN <= address <= PROGRAM_MAX:
             findings.append(
                 make_finding(
@@ -214,6 +221,7 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
     lines = text.splitlines()
     address = 0
     occupied: dict[int, dict[str, Any]] = {}
+    ambiguous_word_addresses: set[int] = set()
     labels: dict[str, dict[str, Any]] = {}
     table_pairs: list[dict[str, str]] = []
     instructions: list[dict[str, Any]] = []
@@ -359,7 +367,16 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
                         )
                     )
             word_count = math.ceil(len(tokens) / 2)
-            occupy_words(occupied, address, word_count, path, line_number, "DB", findings)
+            occupy_words(
+                occupied,
+                ambiguous_word_addresses,
+                address,
+                word_count,
+                path,
+                line_number,
+                "DB",
+                findings,
+            )
             address += word_count
             continue
 
@@ -379,12 +396,30 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
                             "Use an explicit word literal in range 0x0000..0xFFFF.",
                         )
                     )
-            occupy_words(occupied, address, len(tokens), path, line_number, "DW", findings)
+            occupy_words(
+                occupied,
+                ambiguous_word_addresses,
+                address,
+                len(tokens),
+                path,
+                line_number,
+                "DW",
+                findings,
+            )
             address += len(tokens)
             continue
 
         if re.fullmatch(r"(?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H)", op, re.IGNORECASE):
-            occupy_words(occupied, address, 1, path, line_number, "raw-word", findings)
+            occupy_words(
+                occupied,
+                ambiguous_word_addresses,
+                address,
+                1,
+                path,
+                line_number,
+                "raw-word",
+                findings,
+            )
             address += 1
             continue
 
@@ -459,7 +494,17 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
                 )
             )
 
-        occupy_words(occupied, address, 1, path, line_number, op, findings)
+        occupy_words(
+            occupied,
+            ambiguous_word_addresses,
+            address,
+            1,
+            path,
+            line_number,
+            op,
+            findings,
+            instruction_index=len(instructions) - 1,
+        )
         address += 1
 
     has_clrwdt = any(instruction["op"] == "CLRWDT" for instruction in instructions)
@@ -590,6 +635,8 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
         "table_pair_declarations": table_pairs,
         "_instructions": instructions,
         "_equ_symbols": equ_symbols,
+        "_word_owners": occupied,
+        "_ambiguous_word_addresses": ambiguous_word_addresses,
         "layout": layout,
     }
     return result, findings
@@ -933,6 +980,8 @@ def main(argv: list[str] | None = None) -> int:
         findings.extend(audit_unused_equ(file_result))
         file_result.pop("_instructions", None)
         file_result.pop("_equ_symbols", None)
+        file_result.pop("_word_owners", None)
+        file_result.pop("_ambiguous_word_addresses", None)
     severity_counts = Counter(item["severity"] for item in findings)
     if severity_counts["BLOCKER"] or severity_counts["ERROR"]:
         exit_code = 2

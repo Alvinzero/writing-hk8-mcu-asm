@@ -58,6 +58,10 @@ ACCUMULATOR_ONLY_COUNTER_OPS = {"DECSZ", "INCSZ"}
 NONLINEAR_CONTROL_OPS = {"JMP", "CALL", "RET", "RETI"}
 PROGRAM_MIN = 0x0000
 PROGRAM_MAX = 0x03FF
+ALLOWED_COUNTER_SEMANTIC_STATUSES = {
+    "compiler_probe_only",
+    "hardware_verified_in_project",
+}
 REQUIRED_COUNTER_EFFECTS = {
     "DECSZ": "A",
     "INCSZ": "A",
@@ -108,6 +112,20 @@ def collect_unique_address_indices(
     return address_to_index
 
 
+def instruction_uniquely_owns_word(
+    file_model: dict[str, Any], address: int, instruction_index: int
+) -> bool:
+    ambiguous_addresses = file_model.get("_ambiguous_word_addresses", set())
+    if address in ambiguous_addresses:
+        return False
+    owners = file_model.get("_word_owners", {})
+    owner = owners.get(address) if isinstance(owners, dict) else None
+    return (
+        isinstance(owner, dict)
+        and owner.get("instruction_index") == instruction_index
+    )
+
+
 def resolve_direct_target_address(
     file_model: dict[str, Any], instruction: dict[str, Any]
 ) -> int | None:
@@ -128,6 +146,56 @@ def resolve_direct_target_address(
     ):
         return None
     return address
+
+
+def direct_callee_clears_wdt(
+    file_model: dict[str, Any],
+    call_instruction: dict[str, Any],
+    instructions: list[dict[str, Any]],
+    address_to_index: dict[int, int],
+    effects: dict[str, dict[str, Any]],
+    reachable_indices: set[int],
+    caller_indices: set[int],
+) -> bool:
+    target_address = resolve_direct_target_address(file_model, call_instruction)
+    if target_address is None:
+        return False
+    callee_index = address_to_index.get(target_address)
+    if (
+        callee_index is None
+        or callee_index in caller_indices
+        or callee_index not in reachable_indices
+    ):
+        return False
+
+    saw_clrwdt = False
+    current_index = callee_index
+    current_address = target_address
+    while current_index < len(instructions):
+        instruction = instructions[current_index]
+        if (
+            current_index in caller_indices
+            or instruction.get("address") != current_address
+            or address_to_index.get(current_address) != current_index
+            or not instruction_uniquely_owns_word(
+                file_model, current_address, current_index
+            )
+            or current_index not in reachable_indices
+        ):
+            return False
+        op = instruction["op"]
+        if op == "RET":
+            return not instruction["args"].strip() and saw_clrwdt
+        if (
+            op in NONLINEAR_CONTROL_OPS
+            or effects.get(op, {}).get("skip") is True
+        ):
+            return False
+        if op == "CLRWDT":
+            saw_clrwdt = True
+        current_index += 1
+        current_address += 1
+    return False
 
 
 def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
@@ -161,7 +229,15 @@ def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
                 "semantic_status": variant["semantic_status"],
                 "delivery_policy": variant["delivery_policy"],
             }
-            effects[mnemonic] = effect
+            previous_effect = effects.get(mnemonic)
+            if (
+                previous_effect is not None
+                and previous_effect["skip"] != effect["skip"]
+            ):
+                raise ValueError(
+                    f"instruction reference {mnemonic} has conflicting skip semantics"
+                )
+            effects.setdefault(mnemonic, effect)
             if mnemonic in required_variants:
                 required_variants[mnemonic].append(effect)
     except (AttributeError, KeyError, TypeError) as exc:
@@ -189,12 +265,11 @@ def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
         semantic_status = effect["semantic_status"]
         if (
             not isinstance(semantic_status, str)
-            or not semantic_status.strip()
-            or semantic_status.strip().lower() in {"open", "restricted"}
+            or semantic_status not in ALLOWED_COUNTER_SEMANTIC_STATUSES
         ):
             raise ValueError(
-                f"instruction reference {mnemonic} semantic_status must be non-empty and "
-                f"not open/restricted; got {semantic_status!r}"
+                f"instruction reference {mnemonic} semantic_status must be one of "
+                f"{sorted(ALLOWED_COUNTER_SEMANTIC_STATUSES)!r}; got {semantic_status!r}"
             )
     return effects
 
@@ -226,6 +301,12 @@ def audit_counter_loops(
             or jump_address != instruction_address + 1
             or address_to_index.get(instruction_address) != index
             or address_to_index.get(jump_address) != index + 1
+            or not instruction_uniquely_owns_word(
+                file_model, instruction_address, index
+            )
+            or not instruction_uniquely_owns_word(
+                file_model, jump_address, index + 1
+            )
         ):
             continue
         jump_args = split_args(jump["args"])
@@ -263,28 +344,53 @@ def audit_counter_loops(
         slice_is_contiguous = all(
             candidate.get("address") == target_address + offset
             and address_to_index.get(target_address + offset) == loop_start + offset
+            and instruction_uniquely_owns_word(
+                file_model, target_address + offset, loop_start + offset
+            )
             for offset, candidate in enumerate(loop_slice)
         )
         required_reachable = {loop_start, index, index + 1}
-        prefix_has_control_boundary = any(
-            candidate["op"] in NONLINEAR_CONTROL_OPS
-            or effects.get(candidate["op"], {}).get("skip") is True
-            for candidate in loop_slice[:-2]
-        )
         if (
             not slice_is_contiguous
             or not required_reachable.issubset(reachable_indices)
-            or prefix_has_control_boundary
         ):
             continue
-        if any(candidate["op"] == "CLRWDT" for candidate in loop_slice):
+        caller_indices = set(range(loop_start, index + 2))
+        prefix_is_proven = True
+        wdt_clear_is_proven = False
+        for candidate in loop_slice[:-2]:
+            if candidate["op"] == "CLRWDT":
+                wdt_clear_is_proven = True
+                continue
+            if candidate["op"] == "CALL":
+                if not direct_callee_clears_wdt(
+                    file_model,
+                    candidate,
+                    instructions,
+                    address_to_index,
+                    effects,
+                    reachable_indices,
+                    caller_indices,
+                ):
+                    prefix_is_proven = False
+                    break
+                wdt_clear_is_proven = True
+                continue
+            if (
+                candidate["op"] in NONLINEAR_CONTROL_OPS
+                or effects.get(candidate["op"], {}).get("skip") is True
+            ):
+                prefix_is_proven = False
+                break
+        if prefix_is_proven and wdt_clear_is_proven:
             issues.append(
                 make_issue(
                     "HK-WDT-002",
                     "BLOCKER",
                     file_model["path"],
                     instruction["line"],
-                    f"loop ending at JMP {target} contains CLRWDT, but "
+                    f"loop ending at JMP {target} executes CLRWDT inline or through a "
+                    f"proven direct callee, but "
                     f"{op} writes A and counter operand {operand} is not written back",
                     "The watchdog is continuously cleared while a non-progressing loop can "
                     "run forever.",

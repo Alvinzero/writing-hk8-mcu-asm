@@ -236,6 +236,41 @@ class AsmStaticCheckCliTests(unittest.TestCase):
                 "delivery_policy",
             )
         )
+        for semantic_status in (
+            "open_hardware_semantics",
+            "restricted_pending_hardware_confirmation",
+        ):
+            status_document = dict(reference_document)
+            status_document["variants"] = [
+                {**variant, "semantic_status": semantic_status}
+                if variant["mnemonic"].upper() == "DECSZ"
+                else variant
+                for variant in reference_document["variants"]
+            ]
+            reference_cases.append(
+                (
+                    f"status_{semantic_status}",
+                    json.dumps(status_document, ensure_ascii=False),
+                    "semantic_status",
+                )
+            )
+        sz_variant = next(
+            variant
+            for variant in reference_document["variants"]
+            if variant["mnemonic"].upper() == "SZ"
+        )
+        conflicting_skip_document = dict(reference_document)
+        conflicting_skip_document["variants"] = [
+            *reference_document["variants"],
+            {**sz_variant, "raw_notes": "A ← R"},
+        ]
+        reference_cases.append(
+            (
+                "conflicting_SZ_skip",
+                json.dumps(conflicting_skip_document, ensure_ascii=False),
+                "SZ",
+            )
+        )
 
         for case_name, reference_text, expected_evidence in reference_cases:
             with self.subTest(case_name=case_name):
@@ -628,6 +663,34 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertNotIn("HK-SYN-012", self.rule_ids(payload))
         self.assertNotIn("HK-WDT-002", self.rule_ids(payload))
 
+    def test_data_word_overlapping_jump_does_not_feed_semantic_audit(self):
+        data_words = {
+            "db": "  DB 00H,00H\n",
+            "dw": "  DW 0000H\n",
+            "raw_word": "  0000H\n",
+        }
+        for case_name, data_word in data_words.items():
+            with self.subTest(case_name=case_name):
+                completed, payload = self.run_checker(
+                    "ORG 0x0000\n"
+                    "LOOP:\n"
+                    "  CLRWDT\n"
+                    "  DECSZ 80H\n"
+                    f"{data_word}"
+                    "ORG 0x0002\n"
+                    "  JMP LOOP\n"
+                    "END\n",
+                    "--toolchain",
+                    "company_ide",
+                )
+
+                self.assertEqual(completed.returncode, 2)
+                self.assertIn("HK-LAYOUT-004", self.rule_ids(payload))
+                self.assertNotIn("HK-SYN-012", self.rule_ids(payload))
+                self.assertNotIn("HK-WDT-002", self.rule_ids(payload))
+                self.assertNotIn("_word_owners", payload["files"][0])
+                self.assertNotIn("_ambiguous_word_addresses", payload["files"][0])
+
     def test_equ_counter_loop_target_is_resolved(self):
         for op in ("DECSZ", "INCSZ"):
             with self.subTest(op=op):
@@ -655,6 +718,46 @@ class AsmStaticCheckCliTests(unittest.TestCase):
             "CHECK:\n"
             "  DECSZ 80H\n"
             "  JMP LOOP\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("HK-SYN-012", self.rule_ids(payload))
+        self.assertNotIn("HK-WDT-002", self.rule_ids(payload))
+
+    def test_direct_clrwdt_callee_masks_a_non_progressing_counter_loop(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "LOOP:\n"
+            "  CALL KICK\n"
+            "  DECSZ 80H\n"
+            "  JMP LOOP\n"
+            "KICK:\n"
+            "  CLRWDT\n"
+            "  RET\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("HK-SYN-012", self.rule_ids(payload))
+        self.assertIn("HK-WDT-002", self.rule_ids(payload))
+
+    def test_unreachable_clrwdt_in_complex_callee_does_not_support_wdt_finding(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "LOOP:\n"
+            "  CALL KICK\n"
+            "  DECSZ 80H\n"
+            "  JMP LOOP\n"
+            "KICK:\n"
+            "  JMP RETURN_FROM_KICK\n"
+            "  CLRWDT\n"
+            "RETURN_FROM_KICK:\n"
+            "  RET\n"
             "END\n",
             "--toolchain",
             "company_ide",
