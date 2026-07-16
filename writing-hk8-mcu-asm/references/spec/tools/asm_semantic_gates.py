@@ -1524,7 +1524,7 @@ def _classify_sck_ps_reference(
 
 def _clock_control_flow_dominators(
     file_model: dict[str, Any],
-) -> tuple[set[int], dict[int, set[int]]]:
+) -> tuple[set[int], dict[int, set[int]], dict[int, set[int]]]:
     instructions = file_model.get("_instructions", [])
     address_to_index = {
         address: index
@@ -1609,6 +1609,9 @@ def _clock_control_flow_dominators(
     for index, next_indices in successors.items():
         for successor in next_indices:
             predecessors[successor].add(index)
+    real_predecessors = {
+        index: set(incoming) for index, incoming in predecessors.items()
+    }
     for index in virtual_entries:
         predecessors[index].add(virtual_root)
 
@@ -1627,7 +1630,7 @@ def _clock_control_flow_dominators(
             if updated != dominators[index]:
                 dominators[index] = updated
                 changed = True
-    return true_reachable, dominators
+    return true_reachable, dominators, real_predecessors
 
 
 def _source_sck_ps_value(
@@ -1704,11 +1707,17 @@ def _source_sck_ps_value(
         raise ValueError(
             "SCK_PS store and every audited delay entry must be in one source file"
         )
-    true_reachable, dominators = _clock_control_flow_dominators(file_model)
+    true_reachable, dominators, predecessors = _clock_control_flow_dominators(
+        file_model
+    )
     if store_index not in true_reachable:
         raise ValueError("SCK_PS store is not reachable from address 0")
     if load_index not in dominators.get(store_index, set()):
         raise ValueError("MOV A,#K does not dominate the SCK_PS store")
+    if predecessors.get(store_index) != {load_index}:
+        raise ValueError(
+            "SCK_PS store has a control-flow predecessor other than MOV A,#K"
+        )
     for _, entry_index, label in delay_entries:
         if store_index not in dominators.get(entry_index, set()):
             raise ValueError(

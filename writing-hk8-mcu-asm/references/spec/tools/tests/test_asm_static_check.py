@@ -1713,6 +1713,51 @@ class AsmStaticCheckCliTests(unittest.TestCase):
             payload["semantic_audits"]["timing"][0]["status"], "unproven"
         )
 
+    def test_sck_store_cannot_have_back_edge_bypassing_immediate_load(self):
+        source = (
+            "ORG 0\n"
+            "  MOV A,#2\n"
+            "  MOV 80H,A\n"
+            "  MOV A,#31H\n"
+            "STORE:\n"
+            "  MOV SCK_PS,A\n"
+            "  MOV A,#32H\n"
+            "  CLRWDT\n"
+            "  DECSZR 80H\n"
+            "  JMP STORE\n"
+            "  CALL DELAY_500MS\n"
+            "HANG:\n"
+            "  JMP HANG\n"
+            "DELAY_500MS:\n"
+            "  CLRWDT\n"
+            "  RET\n"
+            "END\n"
+        )
+        completed, payload = self.run_checker(
+            source,
+            "--toolchain",
+            "company_ide",
+            request=timing_request(target_us=1, tolerance_percent=1_000),
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(
+            len(
+                [
+                    finding
+                    for finding in payload["findings"]
+                    if finding["rule_id"] == "HK-CLOCK-001"
+                ]
+            ),
+            1,
+            payload["findings"],
+        )
+        audit = payload["semantic_audits"]["timing"][0]
+        self.assertEqual(audit["status"], "unproven")
+        self.assertIsNone(audit["sck_ps"])
+        self.assertIsNone(audit["sck_hz"])
+
     def test_cross_file_path_cannot_bypass_sck_control_flow_proof(self):
         main = (
             "ORG 0\n"
