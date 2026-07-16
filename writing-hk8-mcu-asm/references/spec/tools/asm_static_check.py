@@ -580,7 +580,7 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
                 first_db_line,
                 f"source contains {db_directives} DB directive(s) but toolchain is python_source_module_cli",
                 "This CLI can report success while omitting DB words from BIN/HEX/MAP.",
-                "Build DB sources with the verified company IDE and audit MAP/BIN/HEX, or fix and re-qualify the CLI first.",
+                "Use builtin_compiler for DB compile release. Use company IDE only when explicitly requested for cross-validation or formal artifacts; otherwise fix and re-qualify the retired CLI.",
             )
         )
 

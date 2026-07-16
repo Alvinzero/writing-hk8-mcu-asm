@@ -1,15 +1,15 @@
 # 工具使用说明
 
-本目录提供规范包自检、ASM 静态审查和分析快照重建工具。所有工具只证明其声明的静态或编译性质，不替代公司 IDE 工件审计、受控烧录和实板 E1 验收。
+本目录提供规范包自检、ASM 静态审查和分析快照重建工具。普通 ASM 由 Skill 内置编译器完成编译 release；company IDE 工件审计、受控烧录和实板 E1 验收只在用户明确要求相应后续阶段时执行。
 
 ## 1. 规范包自检
 
 ```powershell
-python tools/validate_spec.py D:/spec
-python tools/validate_spec.py D:/spec --json
+python tools/validate_spec.py <spec-root>
+python tools/validate_spec.py <spec-root> --json
 ```
 
-检查范围包括：必需文件、UTF-8、JSON/Schema、70 条规则、65 个指令探针、65 条 instruction metadata、407 行/96 个 register metadata、INC/metadata OPEN、Markdown 相对链接、模板源码哈希，以及模板静态检查的正反例。
+检查范围包括：必需文件、UTF-8、JSON/Schema、78 条规则、65 个指令探针、65 条 instruction metadata、407 行/96 个 register metadata、INC/metadata OPEN、Markdown 相对链接、模板源码哈希，以及模板静态检查的正反例。
 
 退出码：
 
@@ -52,11 +52,11 @@ SEND_TABLE0        0x0090    144
 
 ```powershell
 python tools/build_analysis_snapshot.py `
-  --repo D:/hk64s8x-cli `
-  --compiler-root D:/path/to/HK_ASM_Compiler `
-  --instruction-metadata D:/path/to/instruction_set.json `
-  --register-metadata D:/path/to/register_set.json `
-  --spec-root D:/spec `
+  --repo <authorized-toolchain-repo> `
+  --compiler-root <authorized-compiler-root> `
+  --instruction-metadata <instruction-metadata.json> `
+  --register-metadata <register-metadata.json> `
+  --spec-root <spec-root> `
   --generated-at 2026-07-10T15:00:00+08:00
 ```
 

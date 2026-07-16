@@ -19,11 +19,16 @@
 - [ ] 无未经批准的 `RET A,#K`、`CPL/CPLR`、`IDLE/STOP`。
 - [ ] SRAM allocation 和 clobbers 与实际地址一致。
 - [ ] ORG/ranges 无重叠、越界和无说明的大空洞。
+- [ ] 所有业务 `EQU` 都被真实引用；没有定义后又散落同值魔数。
+- [ ] GPIO 输出 drive 与 PinContract 一致，按 `POD -> 安全 PIO -> POE` 初始化。
+- [ ] `DECSZ/INCSZ` 未被当作写回 R 的持久计数器；循环回边均有状态进展。
+- [ ] 长循环的 `CLRWDT` 间隔受控，且没有用喂狗掩盖死循环。
 
 ## C. DB/TABLE 门禁
 
 - [ ] 已扫描 source/include 是否含 `DB`。
-- [ ] 含 DB 时 target toolchain 为 `company_ide`。
+- [ ] 含 DB 时不得使用 `python_source_module_cli`；默认 `builtin_compiler` 支持 DB，可完成编译 release。
+- [ ] company IDE 仅在用户明确要求交叉验证或公司正式工件时使用，不阻断默认 release。
 - [ ] 每条 DB 为显式偶数字节。
 - [ ] DB 是消费者原始顺序，无 nibble/word swap 补偿。
 - [ ] 每个 table 有 table/sender pair。
@@ -39,6 +44,7 @@
 - [ ] build path 唯一、可追溯，避免跨工程残留。
 - [ ] compiler/IDE/source module version 已记录。
 - [ ] clock/OPTION profile 与 source 假设一致。
+- [ ] 精确时序已记录 OSC、SCK_PS、派生 SCK、cycles、目标值和误差。
 
 ## E. 构建预期
 

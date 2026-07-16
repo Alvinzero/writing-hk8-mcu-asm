@@ -3,13 +3,13 @@
 > 版本：1.1.0
 > 基线日期：2026-07-10
 > 已实证芯片/板级基线：HK64S825 及本项目所用 OLED、四位数码管开发板
-> 来源项目：`D:\hk64s8x-cli`
+> 来源项目：公司授权的 HK64S825 工具链与验证资料；安装副本不依赖原始绝对路径
 
 本目录不是“语法摘抄”，而是从 53 组 ASM/MAP/BIN/HEX、34 个工程文件、公司编译器源码、自动编译探针和实板结论中提炼出的**可执行约束包**。它同时面向人工开发、代码评审、CI 静态检查和其他 AI 智能体二次开发。
 
 ## 一眼先看四条 BLOCKER
 
-1. **当前 Python 源码模块 CLI 不生成 `DB` 机器码。** 含 `DB` 的源码即使返回 `0 error(s)`，其 BIN 也不能作为烧录件。见 `HK-TOOLCHAIN-DB-001`。
+1. **已退休的 `python_source_module_cli` 不生成 `DB` 机器码。** 含 `DB` 时禁止使用该 CLI；默认 `builtin_compiler` 支持 `DB` 并可完成编译 release。见 `HK-TOOLCHAIN-DB-001`。
 2. **OLED/字库表按原始字节写 `DB B0,B1`，运行时 `TABL` 后 `TABH`。** 不得按 HxD/BIN 的物理排列做 nibble swap 补偿。
 3. **`TABL/TABH` 与目标表 word 必须位于同一 256-word 页。** 大表按页拆块，每块旁边放自己的发送函数。
 4. **ORG、标签、MAP、PC、JMP、CALL 都是 word 地址。** HK64S825 当前程序空间为 `0x0000..0x03FF`，即 1024 words / 2048 bytes。
@@ -28,17 +28,17 @@
 
 ### 给 AI 智能体
 
-最小上下文集合：
+最小可检索资源集合如下。按 mnemonic、SFR、rule ID 和当前功能章节定向查询，不要把大型 JSON 整份载入上下文：
 
 - [AGENTS.md](AGENTS.md)
 - [rules/asm-rules.json](rules/asm-rules.json)
 - [rules/instruction-reference.json](rules/instruction-reference.json)
-- [rules/register-reference.json](rules/register-reference.json)
+- [rules/register-reference.json](rules/register-reference.json)（约 892 KB，只按 SFR 查询）
 - [rules/register-alias-policy.json](rules/register-alias-policy.json)
 - [09-AI智能体生成与审查协议.md](09-AI智能体生成与审查协议.md)
 - 目标硬件的 `board_profile`、原理图或已确认接线
 
-AI 必须输出使用过的规则 ID、未确认输入、SRAM 分配、程序布局、目标工具链和验收步骤；不能只返回一段 ASM。
+AI 必须输出使用过的规则 ID、未确认输入、SRAM 分配、程序布局和目标工具链；验收步骤只在当前任务明确涉及对应阶段时输出。不能只返回一段 ASM。
 
 ### 给 CI / 自动审查
 
@@ -53,7 +53,7 @@ AI 必须输出使用过的规则 ID、未确认输入、SRAM 分配、程序布
 | 路径 | 用途 |
 |---|---|
 | `00..10-*.md` | 人类可读的规范、专题和证据说明 |
-| `rules/asm-rules.json` | 70 条机器可读规则；AI/CI 的主入口 |
+| `rules/asm-rules.json` | 78 条机器可读规则；AI/CI 的主入口 |
 | `rules/asm-rules.schema.json` | 规则集 JSON Schema |
 | `rules/instruction-metadata.json` | 2026-07 公司 instruction metadata 原始结构化快照 |
 | `rules/instruction-reference.json` | 65 个指令变体的修正版参考与逐变体编译探针 |
@@ -71,14 +71,14 @@ AI 必须输出使用过的规则 ID、未确认输入、SRAM 分配、程序布
 
 ## 工具链能力矩阵
 
-| 能力 | company_ide | python_source_module_cli | simulator | hardware |
-|---|---:|---:|---:|---:|
-| 普通指令编译 | 是 | 是，65/65 代表探针通过 | 执行子集 | 最终语义 |
-| `DB` 生成 | **是，E2** | **否，BLOCKER** | 依赖 ROM 输入 | 最终读取语义 |
-| `TABL/TABH` 页 0 | 可构建 | 指令可构建 | 可模拟 | 已验证 |
-| `TABL/TABH` 跨页 | 可构建 | 指令可构建 | **模型错误：固定页 0** | 已验证“同页函数”方案 |
-| BIN | 每 word 小端，DB 有特殊物理编码 | 每 word 小端，DB 缺失 | 不适用 | 烧录/回读 |
-| 交付依据 | 真实产物 | 无 DB 项目的辅助工具 | 只作低等级辅助证据 | 冲突时最高优先级 |
+| 能力 | builtin_compiler | company_ide | python_source_module_cli | simulator | hardware |
+|---|---:|---:|---:|---:|---:|
+| 普通指令编译 | **默认 release** | 可选交叉验证 | 退休路径 | 执行子集 | 最终语义 |
+| `DB` 生成 | **支持** | 是，E2 正式工件 | **否，BLOCKER** | 依赖 ROM 输入 | 最终读取语义 |
+| `TABL/TABH` 页 0 | 可构建 | 可构建 | 指令可构建 | 可模拟 | 已验证 |
+| `TABL/TABH` 跨页 | 可构建并审计 MAP | 可构建 | 指令可构建 | **模型错误：固定页 0** | 已验证“同页函数”方案 |
+| BIN | 每 word 小端并支持 DB | 每 word 小端，DB 有特殊物理编码 | 每 word 小端，DB 缺失 | 不适用 | 烧录/回读 |
+| 交付依据 | 普通编译 release | 用户明确要求的正式工件 | 不可用于含 DB 项目 | 只作低等级辅助证据 | 可选 E1 阶段 |
 
 ## 数据基线摘要
 

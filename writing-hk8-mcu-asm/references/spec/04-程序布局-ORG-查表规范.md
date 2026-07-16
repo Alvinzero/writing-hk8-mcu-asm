@@ -38,7 +38,7 @@ MAP word 0x03FF -> BIN byte offsets 0x07FE..0x07FF
 | `DB B0,B1` | 1 |
 | `DB` 的 N 个字节 | `ceil(N/2)`；本规范要求 N 显式为偶数 |
 
-当前 Python 源码模块的实际缺陷是：普通指令才使 address 增加，`DB` 既不正确推进地址也不写机器码。因此含 `DB` 时不能用该模块的 BIN 做布局或烧录依据。
+已退休的 `python_source_module_cli` 实际缺陷是：普通指令才使 address 增加，`DB` 既不正确推进地址也不写机器码。因此含 `DB` 时不能用该 CLI 的 BIN 做布局或烧录依据。Skill 内置 `builtin_compiler` 不使用这条缺陷路径，支持 `DB` 并可完成编译 release。
 
 ## 3. ORG 的工程约束
 
@@ -155,7 +155,7 @@ CALL CONSUME_BYTE
 
 历史 `hello_db_tabl_tabh_hxd_probe.asm` 属于被排除的补偿假设，不得作为模板。
 
-## 9. Python CLI 的 DB BLOCKER
+## 9. 已退休 Python CLI 的 DB BLOCKER
 
 公司源码 `assembler.py` 当前行为和项目探针共同证明：
 
@@ -171,7 +171,7 @@ source contains DB + target_toolchain=python_source_module_cli
 => BLOCKER HK-TOOLCHAIN-DB-001
 ```
 
-即使 CLI 返回 `0 error(s)`，也不得进入 flash candidate。含 DB 的交付件必须由已证明支持 DB 的 company IDE 构建，并审计 MAP/BIN/HEX。
+即使该 CLI 返回 `0 error(s)`，也不得进入 `buildable` 或 `released`。这一阻断只适用于 `python_source_module_cli`：默认改用支持 `DB` 的 `builtin_compiler`，可完成编译 release 并审计 MAP/BIN/HEX。`company_ide` 仅在用户明确要求交叉验证或公司正式工件时使用，不是普通编译 release 的前置条件。
 
 ## 10. TABL/TABH 的 256-word page 约束
 
@@ -265,7 +265,7 @@ TABLE2:SEND_TABLE2
 
 ```powershell
 python tools/asm_static_check.py main.asm `
-  --toolchain company_ide `
+  --toolchain builtin_compiler `
   --map build/main.map `
   --table-pair TABLE0:SEND_TABLE0 `
   --table-pair TABLE1:SEND_TABLE1
@@ -328,7 +328,7 @@ self.rom[addr]
 - [ ] occupied range 不越过 `0x03FF`。
 - [ ] 无重叠、无 jump truncation warning。
 - [ ] 报告 highest word、image bytes 和 hole words。
-- [ ] 含 DB 时使用 company IDE，不使用 Python CLI 工件。
+- [ ] 含 DB 时不得使用 `python_source_module_cli`；默认 `builtin_compiler` 可完成编译 release。
 - [ ] DB 为原始消费者顺序，每条偶数字节。
 - [ ] 每次 `TABH` 前重新装载 A/index。
 - [ ] 每个 table/sender pair 在 MAP 中同一 256-word page。

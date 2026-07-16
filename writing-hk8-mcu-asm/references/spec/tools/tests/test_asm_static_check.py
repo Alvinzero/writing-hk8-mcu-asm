@@ -643,6 +643,10 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 2)
         self.assertIn("HK-TOOLCHAIN-DB-001", self.rule_ids(payload))
         self.assertEqual(payload["summary"]["blockers"], 1)
+        finding = next(item for item in payload["findings"] if item["rule_id"] == "HK-TOOLCHAIN-DB-001")
+        self.assertIn("builtin_compiler", finding["required_fix"])
+        self.assertIn("explicitly requested", finding["required_fix"])
+        self.assertNotIn("Build DB sources with the verified company IDE", finding["required_fix"])
 
     def test_reports_each_forbidden_source_form(self):
         completed, payload = self.run_checker(

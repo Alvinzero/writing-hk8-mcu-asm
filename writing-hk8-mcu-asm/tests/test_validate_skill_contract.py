@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -10,15 +11,20 @@ from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = SKILL_ROOT / "scripts" / "validate_skill.py"
+SPEC_ROOT = SKILL_ROOT / "references" / "spec"
 
 
 class ValidateSkillContractTests(unittest.TestCase):
     def run_validator(self, *args: str) -> subprocess.CompletedProcess[str]:
         self.assertTrue(VALIDATOR.exists(), f"validator missing: {VALIDATOR}")
+        env = dict(os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"
         return subprocess.run(
             [sys.executable, str(VALIDATOR), *args],
             cwd=SKILL_ROOT,
             text=True,
+            encoding="utf-8",
+            env=env,
             capture_output=True,
             check=False,
         )
@@ -32,6 +38,9 @@ class ValidateSkillContractTests(unittest.TestCase):
 
     def skill_text(self) -> str:
         return (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+    def spec_text(self, relative_path: str) -> str:
+        return (SPEC_ROOT / relative_path).read_text(encoding="utf-8")
 
     def test_current_skill_structure_is_valid(self) -> None:
         result = self.run_validator(str(SKILL_ROOT))
@@ -73,12 +82,33 @@ class ValidateSkillContractTests(unittest.TestCase):
             for retired_name in retired_names:
                 self.assertNotIn(retired_name, text)
 
+    def test_validator_json_remains_utf8_under_windows_locale(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "SKILL.md").write_text(
+                "---\nname: bad-skill\n---\n# Bad\n", encoding="utf-8"
+            )
+            result = self.run_validator(str(root))
+            payload = self.payload(result)
+            self.assertEqual("SKILL_INVALID", payload["code"])
+            self.assertTrue(
+                any("用于" in finding for finding in payload["findings"]), payload
+            )
+
+    def test_public_documentation_has_no_retired_local_windows_paths(self) -> None:
+        paths = (SKILL_ROOT / "SKILL.md", *SPEC_ROOT.rglob("*.md"))
+        for path in paths:
+            with self.subTest(path=path):
+                text = path.read_text(encoding="utf-8")
+                for stale in ("D:/spec", "D:\\spec", "D:/path", "D:\\path", "D:/hk64s8x"):
+                    self.assertNotIn(stale, text)
+
     def test_default_compile_path_is_builtin_and_portable(self) -> None:
         skill_text = self.skill_text()
         for phrase in (
             "默认使用 Skill 内置 HK64S825 编译模块",
             "`scripts/builtin_compiler.py`",
-            "`builtin-hk64s825-assembler-1`",
+            "`builtin-hk64s825-assembler-2`",
             "`$PYTHON`",
             "`$SKILL_ROOT`",
             "不需要用户提供本机 IDE、外部 ASMC 或 HK_ASM_Compiler 路径",
@@ -94,6 +124,17 @@ class ValidateSkillContractTests(unittest.TestCase):
             "REPLACE_WITH",
         ):
             self.assertNotIn(stale, skill_text)
+
+    def test_default_profile_and_config_use_canonical_non_example_paths(self) -> None:
+        skill_text = self.skill_text()
+        profile = SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.json"
+        config = SKILL_ROOT / "references" / "configs" / "builtin-config.json"
+        self.assertTrue(profile.is_file(), profile)
+        self.assertTrue(config.is_file(), config)
+        self.assertIn("references/profiles/HK64S825.profile.json", skill_text)
+        self.assertIn("references/configs/builtin-config.json", skill_text)
+        self.assertNotIn("profile.example.json", skill_text)
+        self.assertNotIn("local-adapter.example.json", skill_text)
 
     def test_external_asmc_adapter_is_optional_only(self) -> None:
         skill_text = self.skill_text()
@@ -132,11 +173,236 @@ class ValidateSkillContractTests(unittest.TestCase):
             "禁止复制 templates、example 或 sample ASM 作为候选源码",
             "必须根据当前需求、规则、寄存器和时序重新撰写候选 ASM",
             "简单 LED/GPIO 不得套用端口全量初始化模板",
-            "默认只写当前功能必需的 `PIO` 和 `POE`",
-            "不得为了显得完整而批量清写 `PPU/PPD/POD/INS/IOS`",
+            "最小初始化是最少但足以建立确定电气状态的操作",
+            "推挽输出必须显式清除目标 `POD` 位",
+            "开漏输出必须显式置位目标 `POD` 位",
+            "先预装安全 `PIO`，最后开启 `POE`",
+            "不得把 `DECSZ` 当作写回计数寄存器的倒计数指令",
+            "精确延时必须从 OSC、SCK_PS 和实际 SCK 推导",
+            "未使用的业务 `EQU` 必须删除或真正引用",
+            "不得批量清写无关 `PPU/PPD/INS/IOS/PSL`",
             "`CLRWDT` 要放在忙等循环内部",
         ):
             self.assertIn(phrase, skill_text)
+        self.assertNotIn("默认只写当前功能必需的 `PIO` 和 `POE`", skill_text)
+
+    def test_simple_tasks_use_targeted_reference_lookup_without_extra_artifacts(self) -> None:
+        skill_text = self.skill_text()
+        for phrase in (
+            "不得把大型规则 JSON 整份载入上下文",
+            "只检索候选源码实际使用的 mnemonic、SFR、rule ID 和当前功能章节",
+            "简单任务不创建设计文档、计划文档、probe 工程或额外说明文件",
+            "一次完成需求解析、候选生成、静态检查、编译和 release",
+        ):
+            self.assertIn(phrase, skill_text)
+
+    def test_forward_evaluations_cover_semantic_gpio_loop_clock_and_equ_rules(self) -> None:
+        evals = json.loads((SKILL_ROOT / "evals" / "evals.json").read_text(encoding="utf-8"))
+        cases = {case["id"]: case for case in evals["cases"]}
+        expected_by_case = {
+            "push-pull-explicit-pod": ("PA_POD", "安全 PA_PIO", "PA_POE", "保留"),
+            "persistent-counter-writeback": ("DECSZR", "DECSZ", "写回", "退出"),
+            "derive-sck-from-osc-and-divider": ("16 MHz", "SCK_PS=34H", "2 MHz", "cycles"),
+            "remove-unused-business-equ": ("EQU", "真实引用", "删除", "魔数"),
+            "avoid-unrelated-port-initialization": ("PA2", "POD", "PIO", "POE", "不破坏"),
+            "compile-release-without-hardware": (
+                "内置编译器",
+                "release",
+                "烧录",
+                "不把它们作为交付前置条件",
+            ),
+        }
+        for case_id, expected_phrases in expected_by_case.items():
+            with self.subTest(case_id=case_id):
+                self.assertIn(case_id, cases)
+                behavior = "\n".join(cases[case_id]["expected_behavior"])
+                for phrase in expected_phrases:
+                    self.assertIn(phrase, behavior)
+                self.assertNotIn("先完成烧录、回读和功能验证", behavior)
+
+    def test_baseline_records_supplied_led_failure_without_becoming_a_template(self) -> None:
+        baseline = json.loads(
+            (SKILL_ROOT / "evals" / "baseline.json").read_text(encoding="utf-8")
+        )
+        cases = {case["id"]: case for case in baseline["cases"]}
+        case = cases["supplied-led-semantic-failures"]
+        self.assertTrue(case["failure_observed"])
+        self.assertIn("PA_POD", case["failure_reason"])
+        self.assertIn("DECSZ", case["failure_reason"])
+        self.assertIn("SCK_PS", case["failure_reason"])
+        self.assertNotIn("source", case)
+
+    def test_reference_workflow_keeps_builtin_compile_release_self_contained(self) -> None:
+        paths = (
+            SKILL_ROOT / "references" / "spec" / "07-构建-烧录-验收规范.md",
+            SKILL_ROOT / "references" / "spec" / "09-AI智能体生成与审查协议.md",
+            SKILL_ROOT / "references" / "spec" / "AGENTS.md",
+            SKILL_ROOT / "references" / "spec" / "checklists" / "pre-generation.md",
+        )
+        text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+        for phrase in (
+            "默认使用 Skill 内置编译器",
+            "编译 release 不要求烧录、回读或实板验收",
+            "PinContract 只在任务使用 GPIO 时要求",
+            "ClockContract 只在任务依赖时序时要求",
+        ):
+            self.assertIn(phrase, text)
+        for stale in ("D:/hk64s8x-cli", "D:\\hk64s8x-cli", "先完成烧录、回读和功能验证"):
+            self.assertNotIn(stale, text)
+
+    def test_db_workflow_blocks_only_the_retired_python_cli(self) -> None:
+        document_paths = (
+            "04-程序布局-ORG-查表规范.md",
+            "07-构建-烧录-验收规范.md",
+            "09-AI智能体生成与审查协议.md",
+            "checklists/pre-generation.md",
+            "checklists/pre-build.md",
+        )
+        for relative_path in document_paths:
+            with self.subTest(relative_path=relative_path):
+                text = self.spec_text(relative_path)
+                self.assertIn("`python_source_module_cli`", text)
+                self.assertIn("`builtin_compiler`", text)
+                self.assertIn("可完成编译 release", text)
+                for stale in (
+                    "若会使用 `DB`，toolchain 为 `company_ide`",
+                    "含 DB 时 target toolchain 为 `company_ide`",
+                    "DB 项目使用 company IDE",
+                    "含 DB 时使用 company IDE",
+                    "含 DB 的交付件必须由已证明支持 DB 的 company IDE 构建",
+                ):
+                    self.assertNotIn(stale, text)
+
+        for relative_path in document_paths[:3]:
+            with self.subTest(company_ide_is_optional_in=relative_path):
+                text = self.spec_text(relative_path)
+                self.assertIn("用户明确要求", text)
+                self.assertTrue("company IDE" in text or "`company_ide`" in text, text)
+
+        for relative_path in document_paths[3:]:
+            with self.subTest(company_ide_is_optional_in=relative_path):
+                text = self.spec_text(relative_path)
+                self.assertIn("company IDE", text)
+                self.assertIn("用户明确要求", text)
+
+        rules = json.loads(
+            (SPEC_ROOT / "rules" / "asm-rules.json").read_text(encoding="utf-8")
+        )
+        rule = next(item for item in rules["rules"] if item["rule_id"] == "HK-TOOLCHAIN-DB-001")
+        self.assertEqual(["python_source_module_cli"], rule["toolchain_applicability"])
+        self.assertIn("builtin_compiler", rule["requirement"])
+
+    def test_seven_segment_initialization_sets_drive_then_safe_latch_then_output_enable(self) -> None:
+        text = self.spec_text("06-数码管动态扫描规范.md")
+        initialization = text.split("## 2. 初始化", 1)[1].split("## 3.", 1)[0]
+        for port in ("PA", "PB"):
+            with self.subTest(port=port):
+                pod = initialization.index(f"{port}_POD")
+                pio = initialization.index(f"{port}_PIO")
+                poe = initialization.index(f"{port}_POE")
+                self.assertLess(pod, pio)
+                self.assertLess(pio, poe)
+        self.assertIn("目标 `POD` -> 安全 `PIO` -> 最后开启 `POE`", initialization)
+        self.assertIn("保留非本任务位", initialization)
+
+    def test_oled_and_seven_segment_compile_release_checklists_keep_hardware_optional(self) -> None:
+        documents = (
+            ("05-GPIO-I2C-OLED驱动规范.md", "## 15. 交付清单"),
+            ("06-数码管动态扫描规范.md", "## 13. 交付清单"),
+        )
+        for relative_path, delivery_heading in documents:
+            with self.subTest(relative_path=relative_path):
+                delivery = self.spec_text(relative_path).split(delivery_heading, 1)[1]
+                optional_heading = "### 后续硬件验收（仅用户明确要求时）"
+                self.assertIn(optional_heading, delivery)
+                compile_release, optional_hardware = delivery.split(
+                    optional_heading, 1
+                )
+                self.assertIn("### 普通编译 release（必需）", compile_release)
+                for hardware_term in ("逻辑分析仪", "示波器", "烧录", "实板"):
+                    self.assertNotIn(hardware_term, compile_release)
+                self.assertIn("烧录", optional_hardware)
+                self.assertIn("实板", optional_hardware)
+                self.assertIn("镜像 hash 与 release 证据一致", optional_hardware)
+                self.assertTrue(
+                    "逻辑分析仪" in optional_hardware or "示波器" in optional_hardware,
+                    optional_hardware,
+                )
+
+    def test_fast_path_uses_targeted_queries_instead_of_loading_large_rule_files(self) -> None:
+        document_paths = (
+            "AGENTS.md",
+            "09-AI智能体生成与审查协议.md",
+            "checklists/pre-generation.md",
+        )
+        for relative_path in document_paths:
+            with self.subTest(relative_path=relative_path):
+                text = self.spec_text(relative_path)
+                self.assertIn("mnemonic、SFR、rule ID 和当前功能章节", text)
+                self.assertIn("不得整份加载约 892 KB 的 `register-reference.json`", text)
+                self.assertNotIn("读取 `asm-rules.json` 全部", text)
+
+    def test_representative_gpio_eval_cannot_satisfy_other_semantic_cases(self) -> None:
+        evals = json.loads((SKILL_ROOT / "evals" / "evals.json").read_text(encoding="utf-8"))
+        cases = {case["id"]: case for case in evals["cases"]}
+        push_pull = "\n".join(cases["push-pull-explicit-pod"]["expected_behavior"])
+        for unrelated in ("DECSZR", "SCK_PS=34H", "EQU"):
+            self.assertNotIn(unrelated, push_pull)
+
+    def test_release_state_is_distinct_from_optional_hardware_states(self) -> None:
+        build_spec = self.spec_text("07-构建-烧录-验收规范.md")
+        agent_spec = self.spec_text("09-AI智能体生成与审查协议.md")
+        for relative_path, text in (
+            ("07-构建-烧录-验收规范.md", build_spec),
+            ("09-AI智能体生成与审查协议.md", agent_spec),
+        ):
+            with self.subTest(relative_path=relative_path):
+                self.assertIn("`released`", text)
+                self.assertIn("用户明确要求", text)
+                self.assertIn("hardware_verified", text)
+        self.assertIn("buildable -> released", build_spec)
+        self.assertIn('"status": "draft|buildable|released|flash_candidate|hardware_verified"', agent_spec)
+        coding_spec = self.spec_text("01-HK64S825-ASM编码规范.md")
+        self.assertNotIn("hardware acceptance required", coding_spec)
+
+    def test_spec_surfaces_report_78_machine_rules(self) -> None:
+        document_paths = (
+            "README.md",
+            "09-AI智能体生成与审查协议.md",
+            "tools/README.md",
+        )
+        for relative_path in document_paths:
+            with self.subTest(relative_path=relative_path):
+                text = self.spec_text(relative_path)
+                self.assertIn("78 条", text)
+                self.assertNotIn("70 条", text)
+        evidence_index = self.spec_text("10-证据索引与待确认事项.md")
+        self.assertIn("| 规则数 | 78 |", evidence_index)
+        self.assertNotIn("| 规则数 | 70 |", evidence_index)
+
+    def test_all_spec_docs_avoid_retired_db_toolchain_requirements(self) -> None:
+        stale_phrases = (
+            "DB 项目使用 company IDE",
+            "含 DB 时使用 company IDE",
+            "有 DB 时公司 IDE 构建",
+            "含 DB 时 target toolchain 为 `company_ide`",
+            "若会使用 `DB`，toolchain 为 `company_ide`",
+        )
+        for path in SPEC_ROOT.rglob("*.md"):
+            with self.subTest(path=path):
+                text = path.read_text(encoding="utf-8")
+                for stale in stale_phrases:
+                    self.assertNotIn(stale, text)
+
+    def test_bundled_gpio_request_is_ready_for_compile_only_default(self) -> None:
+        request = json.loads(
+            (SKILL_ROOT / "references" / "requests" / "gpio-request.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual({"id": "HK64S825-DEFAULT"}, request["board"])
+        self.assertEqual([], request["acceptance"])
+        self.assertNotIn("REPLACE_WITH", json.dumps(request, ensure_ascii=False))
 
     def test_release_gate_and_final_output_rules(self) -> None:
         skill_text = self.skill_text()

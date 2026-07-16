@@ -4,16 +4,18 @@
 
 ## 1. 启动协议
 
-开始工作前必须读取：
+开始工作前必须读取 `AGENTS.md` 的相关段落，并挂载以下可检索资源：
 
 1. `rules/asm-rules.json`
 2. `rules/instruction-reference.json`
 3. `rules/register-reference.json`
 4. `rules/register-alias-policy.json`
 5. 与任务相关的专题文档和 checklist
-6. 用户提供的芯片型号、板级接线、供电、时钟、外设地址/极性、目标工具链
+6. 用户已确认的芯片型号和当前功能中无法从资料库解析的必要缺口
 
-若缺少任何会影响硬件安全或行为的参数，不得猜测。把它列入 `unresolved_inputs`；如果会影响烧录结果，停止在“可审查草案”，不得宣称可烧录。
+不得整份加载约 892 KB 的 `register-reference.json`，也不得把上述大型 JSON 整包注入上下文。只按 mnemonic、SFR、rule ID 和当前功能章节进行结构化检索；静态检查器负责执行全部适用门禁。
+
+资料库已知参数不得重复追问。PinContract 只在任务使用 GPIO 时要求；ClockContract 只在任务依赖时序时要求。缺口以 A/B/C/D 选项询问；会影响当前源码、电气安全或编译正确性时列入 `unresolved_inputs`，否则留作可选硬件阶段的 `open_items`。
 
 ## 2. 证据裁决
 
@@ -30,7 +32,7 @@
 
 ## 3. 绝对禁止
 
-- 禁止用当前 `python_source_module_cli` 构建含 `DB` 的可烧录工件。
+- 禁止用已退休的 `python_source_module_cli` 构建含 `DB` 的工件；`builtin_compiler` 支持 `DB` 并可完成编译 release。
 - 禁止对 OLED/字库 `DB` 做 nibble swap、word swap 或依据 BIN 的补偿。
 - 禁止让一个跨页通用 `TABL/TABH` 函数读取多个 256-word 页。
 - 禁止 `JMP/CALL` 直接使用数字字面量；使用标签或 `EQU` 符号。
@@ -38,10 +40,16 @@
 - 禁止把 `PA_PU/PB_OE` 等 Python 模块内部名写进公司 IDE 交付源码；使用 `REG825.INC` 的 `PA_PPU/PB_POE` 等正式名。
 - 禁止自行把 metadata 的 `LVD1/LVD2/LVD3` 当作 company IDE 正式符号；`LVD/LVD1` 冲突和 `LVD2/LVD3` 缺失仍为 OPEN。
 - 禁止把 SFR 二次 `EQU` 成业务别名来规避解析问题。
+- 禁止定义未使用的业务 `EQU`，或定义后继续使用同值魔数形成两个来源。
 - 禁止重用同一 SRAM 地址同时保存长期状态和 scratch。
+- 禁止把 `DECSZ/INCSZ` 当作写回 R 的持久计数指令；写回目标必须来自指令表。
+- 禁止省略输出 pin 的 `POD` drive 配置，或批量初始化与任务无关的端口属性。
+- 禁止把 OSC 频率直接当作实际 SCK 计算精确延时。
 - 禁止把 `RET A,#K`、`CPL/CPLR` 用于正式关键逻辑，除非有新 E1 证据并升级规则。
 - 禁止仅以“编译成功”“MTP verify 成功”或“模拟器通过”宣称功能完成。
 - 禁止直接复制 `probe/check/sanity` 文件作为正式模板。
+- 禁止复制 templates/example/sample ASM 作为候选源码；必须根据规则新写。
+- 禁止扫盘、遍历本机目录或猜测 IDE/CLI 路径；默认使用 Skill 内置编译器。
 - 禁止静默修改文件名含 `verified` 的基线或大块 DB 数据。
 
 ## 4. 固定语义
@@ -82,19 +90,25 @@
 - 正式文件头必须有 SRAM allocation table 和每个子程序的 clobbers。
 - 位字段语义查 `register-reference.json`；交付源码名称查 `REG825.INC`，两者冲突时停止并上报。
 
+### 4.4 GPIO、循环与时钟
+
+- 推挽输出清目标 `POD`，开漏输出置目标 `POD`；随后预装安全 `PIO`，最后打开 `POE`。
+- `DECSZ/INCSZ` 写 A；`DECSZR/INCSZR` 写回 R。循环必须证明状态进展，`CLRWDT` 不得掩盖死循环。
+- 精确延时从 OSC、SCK_PS、实际 SCK 和指令 cycles 推导。默认 `SCK_PS=34H` 时，16 MHz OSC 对应 2 MHz SCK。
+
 ## 5. 生成工作流
 
 1. 输出 `resolved_inputs` 和 `unresolved_inputs`。
-2. 选择目标工具链；若含 `DB`，目标构建器必须是 `company_ide`。
-3. 列出适用规则 ID，至少包含所有 BLOCKER。
+2. 默认选择 `builtin_compiler`；只有用户明确要求公司 ASMC 交叉验证时使用外部 adapter，不得在本机搜索工具。若目标能力无法覆盖当前语法，失败关闭并报告。
+3. 按 rule ID/scope/tags 结构化查询并列出当前任务适用的 active BLOCKER/ERROR；不得整包加载规则 JSON。
 4. 先设计：向量、连续代码、ORG 段、DB 块、同页 sender、SRAM 分区。
-5. 生成最小非对称 probe；验证后再扩展完整功能。
+5. 根据规则新写候选源码；禁止把示例或 probe 改名后复用。
 6. 运行静态检查：
 
-       python tools/asm_static_check.py main.asm --toolchain company_ide
+       python scripts/hk8asm.py close-loop --run-dir .hk8asm/run-id
 
-7. 构建后检查 0 warning、MAP、BIN size/hash、DB marker、表/函数同页。
-8. 烧录后按硬件 checklist 验收。
+7. 静态检查和内置目标编译 0 warning 后执行 release，并保存源码/产物/evidence hash。
+8. 编译 release 不要求烧录、回读或实板验收；只有用户明确要求时才继续硬件 checklist。
 
 ## 6. 修改工作流
 
@@ -109,7 +123,7 @@
 
 AI 最终输出至少包含：
 
-    status: draft | buildable | flash_candidate | hardware_verified
+    status: draft | released | hardware_verified
     target_chip:
     board_profile:
     target_toolchain:
@@ -127,11 +141,10 @@ AI 最终输出至少包含：
 状态含义：
 
 - `draft`：仍有阻断输入。
-- `buildable`：静态/编译通过，但未完成工件审计。
-- `flash_candidate`：工件审计通过，可以在受控环境烧录。
+- `released`：静态检查、批准编译器和 hash 门禁通过，允许交付 ASM；不代表实板通过。
 - `hardware_verified`：完成规定实板验收并保存证据。
 
-不得从 `buildable` 直接跳到 `hardware_verified`。
+不得把 `released` 直接描述为 `hardware_verified`。
 
 ## 8. 专项规则
 

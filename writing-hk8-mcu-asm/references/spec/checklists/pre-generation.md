@@ -5,7 +5,8 @@
 ## A. 任务与证据
 
 - [ ] 任务 ID、功能目标、成功标准已写明。
-- [ ] 已读取 `AGENTS.md` 和 `rules/*.json`。
+- [ ] 已读取 `AGENTS.md` 相关段落，并只按 mnemonic、SFR、rule ID 和当前功能章节结构化检索 `rules/*.json`。
+- [ ] 不得整份加载约 892 KB 的 `register-reference.json`，未把大型规则 JSON 整包注入上下文。
 - [ ] 已列出全部适用 BLOCKER/ERROR rule IDs。
 - [ ] 已区分 E1/E2/E3/E4、注释和推断。
 - [ ] 已识别 source 文件角色：verified / production / probe / generated asset。
@@ -13,20 +14,22 @@
 
 ## B. 芯片与工具链
 
-- [ ] chip family/model/revision 已确认。
+- [ ] 第一条回复已确认芯片型号为 `HK64S825`。
 - [ ] program capacity、SRAM range、vector 地址已确认。
-- [ ] target toolchain 已显式选择。
-- [ ] 若会使用 `DB`，toolchain 为 `company_ide`。
-- [ ] compiler/IDE/version 与规范基线一致；否则已安排重跑探针。
-- [ ] OPTION/clock/WDT/LVR 配置已确认或列为阻断输入。
+- [ ] 默认使用 Skill 内置编译器；只有用户明确要求时才选外部 ASMC。
+- [ ] 含 DB 时不得使用 `python_source_module_cli`；默认 `builtin_compiler` 支持 DB，可完成编译 release。
+- [ ] company IDE 仅在用户明确要求交叉验证或公司正式工件时使用，不阻断默认 release。
+- [ ] 未扫盘、遍历本机目录或猜测 IDE/CLI 路径。
+- [ ] ClockContract 只在任务依赖时序、WDT 或低功耗时要求；所需字段已由 profile 解析或列为缺口。
 
-## C. Board profile
+## C. 条件式 PinContract
 
-- [ ] board/revision/serial or fixture 已确认。
-- [ ] supply voltage、level compatibility、上电顺序已确认。
-- [ ] 每个使用 pin 的 port/bit、方向、上下拉、开漏、默认态、有效电平已确认。
+- [ ] PinContract 只在任务使用 GPIO 时要求。
+- [ ] 已优先采用资料库中的当前板级 pin、极性和外设规则，没有重复询问。
+- [ ] 每个输出 pin 的 port/bit、方向、drive、默认态、有效电平已解析。
 - [ ] port 共享和 ownership 已定义。
-- [ ] 不会用整寄存器写破坏其他模块 pin。
+- [ ] 推挽清目标 `POD`、开漏置目标 `POD`，安全 `PIO` 先于 `POE`。
+- [ ] 不会用整寄存器写破坏其他模块 pin，也没有批量初始化无关属性。
 
 ## D. 外设参数
 
@@ -53,13 +56,12 @@
 - [ ] 最大嵌套 CALL/ISR 影响已评审。
 - [ ] DB 原始资产、格式、byte count/hash 和转换参数已定义。
 
-## F. 最小 probe 与验收
+## F. 编译 release 与可选后续阶段
 
-- [ ] 已设计一个非对称最小 probe。
 - [ ] 已定义静态检查和 compiler 命令。
 - [ ] 已定义 MAP/BIN/HEX 审计项。
-- [ ] 已定义烧录前安全检查。
-- [ ] 已定义实板 expected/actual 和测量证据。
+- [ ] 编译 release 不要求烧录、回读或实板验收。
+- [ ] 只有用户明确要求硬件阶段时，才收集板卡、供电、烧录器和测量条件。
 - [ ] 未确认项已进入 `unresolved_inputs`，没有静默猜测。
 
 ## 签核

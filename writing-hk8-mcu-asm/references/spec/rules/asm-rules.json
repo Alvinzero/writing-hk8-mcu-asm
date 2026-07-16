@@ -1127,17 +1127,17 @@
     },
     {
       "rule_id": "HK-TOOLCHAIN-DB-001",
-      "title": "Python 源码模块 CLI 禁止构建含 DB 的交付件",
+      "title": "已退休 Python 源码模块 CLI 禁止构建含 DB 的交付件",
       "normative_level": "MUST",
       "severity": "BLOCKER",
       "status": "active",
       "scope": [
         "toolchain"
       ],
-      "requirement": "只要源码含 DB，当前 python_source_module_cli 的成功返回、BIN/HEX/MAP 都不得作为可烧录验收件；必须改用已验证能生成 DB 的公司 IDE 或修复并回归 CLI。",
+      "requirement": "源码含 DB 时仅禁止使用已退休的 python_source_module_cli；内置 builtin_compiler 支持 DB，可完成编译 release。company_ide 仅在用户明确要求交叉验证或公司正式工件时使用。",
       "rationale": "assembler.py 两遍扫描均不为 DB 分配/生成机器码。",
-      "bad_example": "含 DB 项目 CLI 返回 0 error(s) 后直接烧录。",
-      "good_example": "静态发现 DB 即把 CLI 构建标记 unsupported，并要求 company_ide artifact。",
+      "bad_example": "含 DB 项目使用 python_source_module_cli 返回 0 error(s) 后直接 release。",
+      "good_example": "静态发现 DB 与 python_source_module_cli 组合即标记 unsupported，并改用 builtin_compiler 完成编译 release。",
       "verification": [
         "扫描 DB",
         "检查构建器标识",
