@@ -204,6 +204,17 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1, payload["findings"])
         self.assertIn("HK-SYN-013", self.rule_ids(payload))
 
+    def test_include_operand_does_not_count_as_business_equ_use(self):
+        source = 'LED_MASK EQU 29H\nINCLUDE "LED_MASK"\nORG 0\nSTART:\n  NOP\nEND\n'
+        completed, payload = self.run_checker(
+            source,
+            "--toolchain",
+            "builtin_compiler",
+            "--strict-warnings",
+        )
+        self.assertEqual(completed.returncode, 1, payload["findings"])
+        self.assertIn("HK-SYN-013", self.rule_ids(payload))
+
     def test_referenced_business_equ_passes(self):
         source = "LED_MASK EQU 29H\nORG 0\nSTART:\n  MOV A,#LED_MASK\nEND\n"
         completed, payload = self.run_checker(

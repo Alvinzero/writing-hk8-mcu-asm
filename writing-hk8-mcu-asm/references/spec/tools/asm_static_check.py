@@ -282,6 +282,10 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
         parts = rest.split(None, 1)
         op = parts[0].upper()
         args = parts[1].strip() if len(parts) > 1 else ""
+
+        if op in NO_WORD_DIRECTIVES:
+            continue
+
         symbol_references.update(match.group(1).upper() for match in SYMBOL_TOKEN_RE.finditer(args))
 
         if op == "ORG":
@@ -312,9 +316,6 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
                             "Correct ORG to an in-range word address and re-audit the complete image.",
                         )
                     )
-            continue
-
-        if op in NO_WORD_DIRECTIVES:
             continue
 
         if op == "DB":
