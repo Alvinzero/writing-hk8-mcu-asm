@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -74,6 +75,22 @@ MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 PLACEHOLDER_RE = re.compile(r"\b(?:TODO|TBD)\b", re.IGNORECASE)
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 CHECKER_RULE_RE = re.compile(r'make_finding\(\s*["\'](HK-[A-Z0-9-]+)["\']')
+AUTOMATED_RULE_TESTS = {
+    "HK-WDT-001": "test_delay_loop_without_clrwdt_is_blocked",
+    "HK-GPIO-INIT-001": (
+        "test_simple_led_bulk_gpio_initialization_warns_under_strict_warnings"
+    ),
+    "HK-GPIO-002": "test_problem_led_source_is_rejected_by_semantic_gates",
+    "HK-SYN-012": (
+        "test_decsz_backward_counter_loop_is_blocked_and_clrwdt_masking_is_reported"
+    ),
+    "HK-SYN-013": "test_unused_business_equ_warns_and_strict_mode_fails",
+    "HK-CLOCK-001": "test_reset_0x34_derives_2mhz_from_16mhz_osc",
+    "HK-TIME-001": "test_original_three_level_counts_are_about_4_seconds_at_2mhz",
+    "HK-WDT-002": (
+        "test_decsz_backward_counter_loop_is_blocked_and_clrwdt_masking_is_reported"
+    ),
+}
 
 
 def add_finding(
@@ -339,6 +356,55 @@ def check_checker_rule_ids(
             root / "tools",
             f"unregistered finding ID: {rule_id}",
         )
+
+
+def check_automated_rule_tests(
+    root: Path,
+    rules: list[dict[str, Any]],
+    schema: dict[str, Any],
+    checks: dict[str, Any],
+    findings: list[dict[str, Any]],
+) -> None:
+    registered = set(collect_valid_rule_ids(rules, schema))
+    test_methods: set[str] = set()
+    test_paths = sorted((root / "tools" / "tests").glob("*.py"))
+    for path in test_paths:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        except (OSError, UnicodeError, SyntaxError) as exc:
+            add_finding(
+                findings,
+                "checker-rule-test",
+                path,
+                f"cannot inspect automated test definitions: {exc}",
+            )
+            continue
+        test_methods.update(
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("test_")
+        )
+
+    checks["automated_rule_tests"] = dict(AUTOMATED_RULE_TESTS)
+    checks["automated_rule_test_files"] = [
+        str(path.relative_to(root)).replace("\\", "/") for path in test_paths
+    ]
+    for rule_id, test_name in AUTOMATED_RULE_TESTS.items():
+        if rule_id not in registered:
+            add_finding(
+                findings,
+                "checker-rule-test",
+                root / "rules" / "asm-rules.json",
+                f"automated checker rule is not registered: {rule_id}",
+            )
+        if test_name not in test_methods:
+            add_finding(
+                findings,
+                "checker-rule-test",
+                root / "tools" / "tests",
+                f"{rule_id} requires exact test method def {test_name}(",
+            )
 
 
 def check_instruction_reference(
@@ -706,6 +772,13 @@ def validate(root: Path) -> dict[str, Any]:
         rules_schema = loaded.get((root / "rules" / "asm-rules.schema.json").resolve())
         rules = rules_document.get("rules", []) if isinstance(rules_document, dict) else []
         check_checker_rule_ids(
+            root,
+            rules if isinstance(rules, list) else [],
+            rules_schema if isinstance(rules_schema, dict) else {},
+            checks,
+            findings,
+        )
+        check_automated_rule_tests(
             root,
             rules if isinstance(rules, list) else [],
             rules_schema if isinstance(rules_schema, dict) else {},

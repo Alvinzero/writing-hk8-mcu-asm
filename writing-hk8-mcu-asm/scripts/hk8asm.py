@@ -807,12 +807,71 @@ def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[s
         warnings = summary.get("warnings", 0)
         if completed.returncode != 0 or blockers or errors or (strict_warnings and warnings):
             raise GateError("STATIC_CHECK_FAILED", "Spec static checker failed", details=result)
-        return {
+        static_result = {
             "status": "pass",
             "checker": "asm_static_check.py",
             "toolchain": static_config["toolchain"],
             "summary": summary,
         }
+        checker_audits = result.get("semantic_audits")
+        if (
+            isinstance(checker_audits, dict)
+            and isinstance(checker_audits.get("timing"), list)
+            and isinstance(result.get("contract_context"), dict)
+            and isinstance(result.get("files"), list)
+        ):
+            request = read_json(run_dir / "request.json", "STATIC_CHECK_FAILED")
+            pins = request.get("pins")
+            has_structured_output_contract = isinstance(pins, dict) and any(
+                isinstance(pin, dict) and pin.get("direction") == "output"
+                for pin in pins.values()
+            )
+            checker_findings = result.get("findings", [])
+            if not isinstance(checker_findings, list):
+                checker_findings = []
+            gpio_rule_ids = {"HK-GPIO-002", "HK-GPIO-INIT-001"}
+            loop_rule_ids = {"HK-SYN-012", "HK-WDT-001", "HK-WDT-002"}
+            gpio_findings = [
+                finding
+                for finding in checker_findings
+                if isinstance(finding, dict) and finding.get("rule_id") in gpio_rule_ids
+            ]
+            loop_findings = [
+                finding
+                for finding in checker_findings
+                if isinstance(finding, dict) and finding.get("rule_id") in loop_rule_ids
+            ]
+
+            def audit_status(findings: list[dict[str, Any]], default: str) -> str:
+                severities = {finding.get("severity") for finding in findings}
+                if severities & {"BLOCKER", "ERROR"}:
+                    return "fail"
+                if "WARNING" in severities:
+                    return "warning"
+                return "info" if findings else default
+
+            static_result["semantic_audits"] = {
+                "gpio_contract": {
+                    "status": audit_status(
+                        gpio_findings,
+                        "pass" if has_structured_output_contract else "not_applicable",
+                    ),
+                    "structured_output_contract": has_structured_output_contract,
+                    "rule_ids": ["HK-GPIO-002", "HK-GPIO-INIT-001"],
+                    "finding_rule_ids": sorted(
+                        {finding["rule_id"] for finding in gpio_findings}
+                    ),
+                },
+                "loop_semantics": {
+                    "status": audit_status(loop_findings, "pass"),
+                    "rule_ids": ["HK-SYN-012", "HK-WDT-001", "HK-WDT-002"],
+                    "finding_rule_ids": sorted(
+                        {finding["rule_id"] for finding in loop_findings}
+                    ),
+                },
+                "timing": checker_audits["timing"],
+            }
+        return static_result
 
     try:
         text = source.read_text(encoding="utf-8")

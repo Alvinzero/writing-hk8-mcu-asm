@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import shutil
@@ -17,6 +18,133 @@ from references.spec.tools import asm_static_check
 TOOLS = Path(__file__).resolve().parents[1]
 CHECKER = TOOLS / "asm_static_check.py"
 PROFILE_EXAMPLE = TOOLS.parent.parent / "profiles" / "HK64S825.profile.example.json"
+
+
+PROBLEM_LED_SOURCE = """; CHIP: HK64S825
+; 功能：PA0、PA3、PA5 同步闪烁，高电平点亮
+; 时钟：16 MHz
+; 延时：亮约 500 ms，灭约 500 ms
+; WDT：状态未知，忙等内持续执行 CLRWDT
+; 工具链：builtin-hk64s825-assembler-1
+; 板级连接：PA0、PA3、PA5 为推挽输出，LED 高电平有效
+; 端口策略：仅读改写 PA_PIO 与 PA_POE，保留 PA 口其他位
+; SRAM 分配：80H=内层计数，81H=中层计数，82H=外层计数
+; 子程序 DELAY_500MS：无输入，无输出，破坏 A、80H、81H、82H 和标志位
+
+LED_MASK        EQU 29H
+LED_KEEP_MASK   EQU D6H
+DELAY_INNER     EQU 0FAH
+DELAY_MIDDLE    EQU 0FAH
+DELAY_OUTER     EQU 20H
+
+ORG 000H
+RESET:
+    JMP INIT
+
+INIT:
+    MOV A,PA_PIO
+    AND A,#D6H
+    MOV PA_PIO,A
+
+    MOV A,PA_POE
+    OR A,#29H
+    MOV PA_POE,A
+
+MAIN_LOOP:
+    MOV A,PA_PIO
+    OR A,#29H
+    MOV PA_PIO,A
+    CALL DELAY_500MS
+
+    MOV A,PA_PIO
+    AND A,#D6H
+    MOV PA_PIO,A
+    CALL DELAY_500MS
+    JMP MAIN_LOOP
+
+DELAY_500MS:
+    MOV A,#20H
+    MOV 82H,A
+DELAY_OUTER_LOOP:
+    MOV A,#0FAH
+    MOV 81H,A
+DELAY_MIDDLE_LOOP:
+    MOV A,#0FAH
+    MOV 80H,A
+DELAY_INNER_LOOP:
+    CLRWDT
+    DECSZ 80H
+    JMP DELAY_INNER_LOOP
+    DECSZ 81H
+    JMP DELAY_MIDDLE_LOOP
+    DECSZ 82H
+    JMP DELAY_OUTER_LOOP
+    RET
+
+END""".replace("\n", "\r\n")
+
+
+COMPLIANT_LED_SOURCE = """; CHIP: HK64S825
+; 功能：PA0、PA3、PA5 同步闪烁，高电平点亮
+; 时钟：16 MHz，复位 SCK_PS=34H，系统时钟为 2 MHz
+; 延时：按 2 MHz 精确审计，亮约 500 ms，灭约 500 ms
+; WDT：状态未知，忙等内持续执行 CLRWDT
+; 端口策略：仅以读改写清除目标 PA_POD/PA_PIO 位，再开启目标 PA_POE 位
+; SRAM 分配：80H=内层计数，81H=中层计数，82H=外层计数
+
+ORG 000H
+RESET:
+    JMP INIT
+
+INIT:
+    ; 只清 PA0、PA3、PA5 的开漏选择位，配置为推挽并保留其他位
+    MOV A,PA_POD
+    AND A,#D6H
+    MOV PA_POD,A
+
+    ; 在开启输出前写入安全低电平，LED 初始熄灭
+    MOV A,PA_PIO
+    AND A,#D6H
+    MOV PA_PIO,A
+
+    ; 只开启 PA0、PA3、PA5 输出，保留 PA 口其他位
+    MOV A,PA_POE
+    OR A,#29H
+    MOV PA_POE,A
+
+MAIN_LOOP:
+    MOV A,PA_PIO
+    OR A,#29H
+    MOV PA_PIO,A
+    CALL DELAY_500MS
+
+    MOV A,PA_PIO
+    AND A,#D6H
+    MOV PA_PIO,A
+    CALL DELAY_500MS
+    JMP MAIN_LOOP
+
+DELAY_500MS:
+    MOV A,#04H
+    MOV 82H,A
+DELAY_OUTER_LOOP:
+    MOV A,#0FAH
+    MOV 81H,A
+DELAY_MIDDLE_LOOP:
+    MOV A,#0FAH
+    MOV 80H,A
+DELAY_INNER_LOOP:
+    CLRWDT
+    DECSZR 80H
+    JMP DELAY_INNER_LOOP
+    DECSZR 81H
+    JMP DELAY_MIDDLE_LOOP
+    DECSZR 82H
+    JMP DELAY_OUTER_LOOP
+    RET
+
+END
+"""
 
 
 def gpio_request(*, drive: str = "push_pull", active_level: str = "high") -> dict:
@@ -536,6 +664,51 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 1, payload["findings"])
         self.assertIn("HK-SYN-013", self.rule_ids(payload))
+
+    def test_problem_led_source_is_rejected_by_semantic_gates(self):
+        self.assertEqual(
+            hashlib.sha256(PROBLEM_LED_SOURCE.encode("utf-8")).hexdigest(),
+            "0144cd6f746bbbf393de4e79bc74b46194f5e7685db744ad6f4e81a832697409",
+        )
+        request = gpio_request()
+        request["timing"] = timing_request()["timing"]
+        completed, payload = self.run_checker(
+            PROBLEM_LED_SOURCE,
+            "--toolchain",
+            "builtin_compiler",
+            "--strict-warnings",
+            request=request,
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 2, payload["findings"])
+        self.assertTrue(
+            {"HK-GPIO-002", "HK-SYN-012", "HK-SYN-013", "HK-WDT-002"}
+            <= self.rule_ids(payload),
+            payload["findings"],
+        )
+
+    def test_compliant_led_source_passes_semantic_gates_and_timing_audit(self):
+        request = gpio_request()
+        request["timing"] = timing_request()["timing"]
+        completed, payload = self.run_checker(
+            COMPLIANT_LED_SOURCE,
+            "--toolchain",
+            "builtin_compiler",
+            "--strict-warnings",
+            request=request,
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertEqual(payload["findings"], [])
+        self.assertEqual(len(payload["semantic_audits"]["timing"]), 1)
+        audit = payload["semantic_audits"]["timing"][0]
+        self.assertEqual(audit["status"], "pass")
+        self.assertEqual(audit["actual_us"], 502_010.5)
+        self.assertEqual(audit["error_percent"], 0.4021)
+        for register in ("PA_PPU", "PA_PPD", "PA_INS", "PA_IOS"):
+            self.assertNotIn(register, COMPLIANT_LED_SOURCE)
 
     def test_include_operand_does_not_count_as_business_equ_use(self):
         source = 'LED_MASK EQU 29H\nINCLUDE "LED_MASK"\nORG 0\nSTART:\n  NOP\nEND\n'

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import subprocess
@@ -7,6 +8,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from references.spec.tools.tests.test_asm_static_check import (
+    COMPLIANT_LED_SOURCE,
+    PROBLEM_LED_SOURCE,
+)
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
@@ -120,6 +126,17 @@ class ClosedLoopCliContractTests(unittest.TestCase):
                 }
             ],
         }
+        return request
+
+    @classmethod
+    def led_regression_request(cls) -> dict:
+        request = cls.structured_gpio_request()
+        request["behavior"] = "PA0、PA3、PA5 同步闪烁，高电平点亮"
+        request["pins"]["led_outputs"]["bits"] = [0, 3, 5]
+        request["peripherals"] = [{"name": "gpio"}]
+        request["memory_limits"] = {"rom_bytes": 2048, "ram_bytes": 128}
+        request["board"] = {"id": "HK64S825-DEFAULT"}
+        request["acceptance"] = []
         return request
 
     @staticmethod
@@ -257,6 +274,27 @@ raise SystemExit(payload["summary"]["exit_code"])
             str(self.profile_path),
             "--config",
             str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+        self.assertEqual("RUN_CREATED", self.payload(result)["code"])
+        return run_dir
+
+    def new_bundled_run(self, source: str, name: str) -> Path:
+        self._write_json(self.request_path, self.led_regression_request())
+        self.source_path.write_text(source, encoding="utf-8", newline="")
+        run_dir = self.root / name
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(EXAMPLE_PROFILE),
+            "--config",
+            str(EXAMPLE_CONFIG),
             "--request",
             str(self.request_path),
             "--source",
@@ -618,6 +656,73 @@ raise SystemExit(payload["summary"]["exit_code"])
         loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
         self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
         self.assertEqual("COMPILE_PASSED", self.payload(loop)["code"])
+        evidence = json.loads((run_dir / "evidence.json").read_text(encoding="utf-8"))
+        self.assertNotIn("semantic_audits", evidence["gates"]["static"])
+
+    def test_non_strict_gpio_warning_is_not_reported_as_semantic_pass(self) -> None:
+        profile = json.loads(EXAMPLE_PROFILE.read_text(encoding="utf-8-sig"))
+        profile["spec_root"] = str(SKILL_ROOT / "references" / "spec")
+        profile["static_check"]["strict_warnings"] = False
+        self._write_json(self.profile_path, profile)
+        request = self.structured_gpio_request()
+        request["timing"] = {"precision": "approximate"}
+        request["board"] = {"id": "HK64S825-DEFAULT"}
+        request["memory_limits"] = {"rom_bytes": 2048, "ram_bytes": 128}
+        self._write_json(self.request_path, request)
+        self.source_path.write_text(
+            "; CHIP: HK64S825\n"
+            "; 功能：PA0 LED 输出，保留非目标位\n"
+            "ORG 000H\n"
+            "START:\n"
+            "    MOV A,PA_PPU\n"
+            "    AND A,#0FEH\n"
+            "    MOV PA_PPU,A\n"
+            "    MOV A,PA_PPD\n"
+            "    AND A,#0FEH\n"
+            "    MOV PA_PPD,A\n"
+            "    MOV A,PA_INS\n"
+            "    AND A,#0FEH\n"
+            "    MOV PA_INS,A\n"
+            "    MOV A,PA_IOS\n"
+            "    AND A,#0FEH\n"
+            "    MOV PA_IOS,A\n"
+            "    MOV A,PA_POD\n"
+            "    AND A,#0FEH\n"
+            "    MOV PA_POD,A\n"
+            "    MOV A,PA_PIO\n"
+            "    AND A,#0FEH\n"
+            "    MOV PA_PIO,A\n"
+            "    MOV A,PA_POE\n"
+            "    OR A,#01H\n"
+            "    MOV PA_POE,A\n"
+            "MAIN_LOOP:\n"
+            "    CLRWDT\n"
+            "    JMP MAIN_LOOP\n"
+            "END\n",
+            encoding="utf-8",
+        )
+        run_dir = self.root / "non-strict-gpio-warning"
+        new_run = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(EXAMPLE_CONFIG),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+        self.assertEqual(0, new_run.returncode, new_run.stderr or new_run.stdout)
+
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        evidence = json.loads((run_dir / "evidence.json").read_text(encoding="utf-8"))
+        audit = evidence["gates"]["static"]["semantic_audits"]["gpio_contract"]
+        self.assertEqual("warning", audit["status"])
+        self.assertEqual(["HK-GPIO-INIT-001"], audit["finding_rule_ids"])
 
     def test_full_loop_releases_source_and_evidence(self) -> None:
         run_dir = self.new_run()
@@ -717,6 +822,90 @@ raise SystemExit(payload["summary"]["exit_code"])
         self.assertTrue((run_dir / "build" / "firmware.map").is_file())
         evidence = json.loads((run_dir / "evidence.json").read_text(encoding="utf-8"))
         self.assertEqual("hk64s825-builtin-assembler", evidence["gates"]["compile"]["toolchain"])
+        self.assertEqual(
+            "not_applicable",
+            evidence["gates"]["static"]["semantic_audits"]["gpio_contract"]["status"],
+        )
+
+    def test_problem_led_source_static_failure_blocks_compile_and_release(self) -> None:
+        candidate = PROBLEM_LED_SOURCE
+        run_dir = self.new_bundled_run(candidate, "problem-led")
+
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertNotEqual(0, loop.returncode)
+        loop_payload = self.payload(loop)
+        self.assertEqual("STATIC_CHECK_FAILED", loop_payload["code"])
+        finding_rule_ids = {
+            finding["rule_id"] for finding in loop_payload["details"]["findings"]
+        }
+        self.assertTrue(
+            {"HK-GPIO-002", "HK-SYN-012", "HK-SYN-013", "HK-WDT-002"}
+            <= finding_rule_ids
+        )
+        self.assertFalse((run_dir / "build").exists())
+        self.assertFalse((run_dir / "build" / "firmware.hex").exists())
+        self.assertNotIn(candidate, loop.stdout)
+        for source_line in ("LED_MASK        EQU 29H", "DELAY_INNER_LOOP:"):
+            self.assertNotIn(source_line, loop.stdout)
+
+        evidence_text = (run_dir / "evidence.json").read_text(encoding="utf-8")
+        self.assertNotIn(candidate, evidence_text)
+        for source_line in ("LED_MASK        EQU 29H", "DELAY_INNER_LOOP:"):
+            self.assertNotIn(source_line, evidence_text)
+        failure_evidence = json.loads(evidence_text)
+        self.assertEqual("STATIC_CHECK_FAILED", failure_evidence["failure"]["code"])
+
+        output = self.root / "problem-led-released.asm"
+        release = self.run_cli(
+            "release", "--run-dir", str(run_dir), "--output", str(output)
+        )
+        self.assertNotEqual(0, release.returncode)
+        self.assertEqual("RELEASE_BLOCKED", self.payload(release)["code"])
+        self.assertFalse(output.exists())
+        self.assertNotIn(candidate, release.stdout)
+        for source_line in ("LED_MASK        EQU 29H", "DELAY_INNER_LOOP:"):
+            self.assertNotIn(source_line, release.stdout)
+
+    def test_compliant_led_source_compiles_releases_and_hash_binds_semantic_audits(self) -> None:
+        doctor = self.run_cli(
+            "doctor", "--profile", str(EXAMPLE_PROFILE), "--config", str(EXAMPLE_CONFIG)
+        )
+        self.assertEqual(0, doctor.returncode, doctor.stderr or doctor.stdout)
+        self.assertEqual("READY", self.payload(doctor)["code"])
+
+        run_dir = self.new_bundled_run(COMPLIANT_LED_SOURCE, "compliant-led")
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        self.assertEqual("COMPILE_PASSED", self.payload(loop)["code"])
+
+        evidence = json.loads((run_dir / "evidence.json").read_text(encoding="utf-8"))
+        audits = evidence["gates"]["static"]["semantic_audits"]
+        self.assertEqual(
+            set(audits), {"gpio_contract", "loop_semantics", "timing"}
+        )
+        self.assertEqual(audits["gpio_contract"]["status"], "pass")
+        self.assertIn("HK-GPIO-002", audits["gpio_contract"]["rule_ids"])
+        self.assertIn("HK-GPIO-INIT-001", audits["gpio_contract"]["rule_ids"])
+        self.assertEqual(audits["loop_semantics"]["status"], "pass")
+        self.assertEqual(
+            set(audits["loop_semantics"]["rule_ids"]),
+            {"HK-SYN-012", "HK-WDT-001", "HK-WDT-002"},
+        )
+        self.assertEqual(len(audits["timing"]), 1)
+        self.assertEqual(audits["timing"][0]["status"], "pass")
+        self.assertEqual(audits["timing"][0]["actual_us"], 502_010.5)
+        self.assertEqual(audits["timing"][0]["error_percent"], 0.4021)
+
+        output = self.root / "compliant-led-released.asm"
+        release = self.run_cli(
+            "release", "--run-dir", str(run_dir), "--output", str(output)
+        )
+        self.assertEqual(0, release.returncode, release.stderr or release.stdout)
+        receipt = self.payload(release)
+        self.assertEqual("RELEASED", receipt["code"])
+        expected_hash = hashlib.sha256(self.source_path.read_bytes()).hexdigest()
+        self.assertEqual(receipt["source_sha256"], expected_hash)
+        self.assertEqual(hashlib.sha256(output.read_bytes()).hexdigest(), expected_hash)
 
     def test_builtin_compiler_matches_all_instruction_probe_words(self) -> None:
         reference = json.loads(INSTRUCTION_REFERENCE.read_text(encoding="utf-8-sig"))

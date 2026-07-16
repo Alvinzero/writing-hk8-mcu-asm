@@ -48,6 +48,58 @@ class ValidateSpecCliTests(unittest.TestCase):
         self.assertTrue(payload["checks"]["instruction_metadata_exact_snapshot"])
         self.assertTrue(payload["checks"]["register_metadata_exact_snapshot"])
 
+    def test_automated_checker_rules_are_bound_to_exact_test_methods(self):
+        completed, payload = self.run_validator(SPEC)
+        self.assertEqual(completed.returncode, 0, payload)
+        self.assertEqual(
+            payload["checks"]["automated_rule_tests"],
+            {
+                "HK-WDT-001": "test_delay_loop_without_clrwdt_is_blocked",
+                "HK-GPIO-INIT-001": (
+                    "test_simple_led_bulk_gpio_initialization_warns_under_strict_warnings"
+                ),
+                "HK-GPIO-002": "test_problem_led_source_is_rejected_by_semantic_gates",
+                "HK-SYN-012": (
+                    "test_decsz_backward_counter_loop_is_blocked_and_clrwdt_masking_is_reported"
+                ),
+                "HK-SYN-013": "test_unused_business_equ_warns_and_strict_mode_fails",
+                "HK-CLOCK-001": "test_reset_0x34_derives_2mhz_from_16mhz_osc",
+                "HK-TIME-001": (
+                    "test_original_three_level_counts_are_about_4_seconds_at_2mhz"
+                ),
+                "HK-WDT-002": (
+                    "test_decsz_backward_counter_loop_is_blocked_and_clrwdt_masking_is_reported"
+                ),
+            },
+        )
+
+    def test_missing_automated_rule_test_method_fails_without_comment_spoofing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            copied = self.copy_spec(Path(tmp))
+            tests = copied / "tools" / "tests" / "test_asm_static_check.py"
+            source = tests.read_text(encoding="utf-8")
+            signature = "    def test_delay_loop_without_clrwdt_is_blocked(self):"
+            self.assertIn(signature, source)
+            tests.write_text(
+                source.replace(
+                    signature,
+                    "    def disabled_delay_loop_without_clrwdt_is_blocked(self):",
+                    1,
+                )
+                + "\n# def test_delay_loop_without_clrwdt_is_blocked(self):\n",
+                encoding="utf-8",
+            )
+            completed = self.run_validator_process(copied)
+
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
+        payload = json.loads(completed.stdout)
+        findings = [
+            item for item in payload["findings"] if item["code"] == "checker-rule-test"
+        ]
+        self.assertTrue(findings, payload["findings"])
+        self.assertIn("test_delay_loop_without_clrwdt_is_blocked", findings[0]["message"])
+
     def test_fallback_rejects_invalid_toolchain_applicability(self):
         invalid_values = {
             "unknown": ["bogus_compiler"],
