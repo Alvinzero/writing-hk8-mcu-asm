@@ -177,8 +177,37 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertIn("request cannot be read", payload["findings"][0]["evidence"])
 
     def test_instruction_reference_failure_is_reported_without_a_traceback(self):
-        for reference_text in (None, "{not-json"):
-            with self.subTest(reference_text=reference_text):
+        reference_document = json.loads(
+            (TOOLS.parent / "rules" / "instruction-reference.json").read_text(
+                encoding="utf-8-sig"
+            )
+        )
+        reference_cases = [
+            ("missing_file", None, "instruction reference"),
+            ("invalid_json", "{not-json", "instruction reference"),
+        ]
+        empty_document = dict(reference_document)
+        empty_document["variants"] = []
+        reference_cases.append(
+            ("empty_variants", json.dumps(empty_document, ensure_ascii=False), "DECSZ")
+        )
+        for mnemonic in ("DECSZ", "INCSZ", "DECSZR", "INCSZR"):
+            missing_document = dict(reference_document)
+            missing_document["variants"] = [
+                variant
+                for variant in reference_document["variants"]
+                if variant["mnemonic"].upper() != mnemonic
+            ]
+            reference_cases.append(
+                (
+                    f"missing_{mnemonic}",
+                    json.dumps(missing_document, ensure_ascii=False),
+                    mnemonic,
+                )
+            )
+
+        for case_name, reference_text, expected_evidence in reference_cases:
+            with self.subTest(case_name=case_name):
                 with tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     copied_tools = root / "spec" / "tools"
@@ -219,7 +248,7 @@ class AsmStaticCheckCliTests(unittest.TestCase):
                 ]
                 self.assertEqual(len(reference_findings), 1)
                 self.assertEqual(reference_findings[0]["severity"], "ERROR")
-                self.assertIn("instruction reference", reference_findings[0]["evidence"])
+                self.assertIn(expected_evidence, reference_findings[0]["evidence"])
 
     def test_request_pins_must_be_an_object_when_present(self):
         request = gpio_request()
@@ -509,6 +538,23 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertIn("HK-SYN-012", rule_ids)
         self.assertNotIn("HK-WDT-001", rule_ids)
         self.assertNotIn("HK-WDT-002", rule_ids)
+
+    def test_decr_sz_backward_counter_loop_is_not_an_accumulator_only_counter(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "LOOP:\n"
+            "  CLRWDT\n"
+            "  DECR 80H\n"
+            "  SZ 80H\n"
+            "  JMP LOOP\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertNotIn("HK-SYN-012", self.rule_ids(payload))
+        self.assertNotIn("HK-WDT-002", self.rule_ids(payload))
 
     def test_decszr_backward_counter_loop_has_no_constructive_finding(self):
         completed, payload = self.run_checker(

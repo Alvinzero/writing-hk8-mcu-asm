@@ -54,6 +54,13 @@ GPIO_CONTROL_BOUNDARY_OPS = {
     "SZ",
     "SZR",
 }
+ACCUMULATOR_ONLY_COUNTER_OPS = {"DECSZ", "INCSZ"}
+REQUIRED_COUNTER_EFFECTS = {
+    "DECSZ": "A",
+    "INCSZ": "A",
+    "DECSZR": "R",
+    "INCSZR": "R",
+}
 
 
 def make_issue(
@@ -110,6 +117,20 @@ def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
             }
     except (AttributeError, KeyError, TypeError) as exc:
         raise ValueError(f"instruction reference has invalid structure: {exc}") from exc
+
+    missing = sorted(set(REQUIRED_COUNTER_EFFECTS) - set(effects))
+    if missing:
+        raise ValueError(
+            "instruction reference is missing required mnemonic(s): " + ", ".join(missing)
+        )
+    for mnemonic, expected_writes in REQUIRED_COUNTER_EFFECTS.items():
+        effect = effects[mnemonic]
+        if effect["skip"] is not True or effect["writes"] != expected_writes:
+            raise ValueError(
+                f"instruction reference {mnemonic} must have skip=True and "
+                f"writes={expected_writes}; got skip={effect['skip']!r}, "
+                f"writes={effect['writes']!r}"
+            )
     return effects
 
 
@@ -124,6 +145,8 @@ def audit_counter_loops(
 
     issues: list[dict[str, Any]] = []
     for index, instruction in enumerate(instructions[:-1]):
+        if instruction["op"] not in ACCUMULATOR_ONLY_COUNTER_OPS:
+            continue
         effect = effects.get(instruction["op"])
         if effect is None or effect.get("skip") is not True:
             continue
