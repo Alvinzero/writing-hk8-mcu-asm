@@ -33,13 +33,26 @@ class ValidateSpecCliTests(unittest.TestCase):
         completed, payload = self.run_validator(SPEC)
         self.assertEqual(completed.returncode, 0, payload)
         self.assertEqual(payload["summary"]["errors"], 0)
-        self.assertEqual(payload["checks"]["rule_count"], 70)
+        self.assertEqual(payload["checks"]["rule_count"], 78)
         self.assertEqual(payload["checks"]["instruction_variant_count"], 65)
         self.assertEqual(payload["checks"]["instruction_metadata_count"], 65)
         self.assertEqual(payload["checks"]["register_reference_count"], 96)
         self.assertEqual(payload["checks"]["register_sheet_row_count"], 407)
         self.assertTrue(payload["checks"]["instruction_metadata_exact_snapshot"])
         self.assertTrue(payload["checks"]["register_metadata_exact_snapshot"])
+
+    def test_checker_cannot_emit_unregistered_rule_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            copied = self.copy_spec(Path(tmp))
+            checker = copied / "tools" / "asm_static_check.py"
+            checker.write_text(
+                checker.read_text(encoding="utf-8")
+                + '\n# make_finding("HK-UNREGISTERED-999", "ERROR", "x", 1, "e", "r", "f")\n',
+                encoding="utf-8",
+            )
+            completed, payload = self.run_validator(copied)
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("checker-rule-id", {item["code"] for item in payload["findings"]})
 
     def test_missing_required_file_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -59,6 +72,23 @@ class ValidateSpecCliTests(unittest.TestCase):
             completed, payload = self.run_validator(copied)
         self.assertEqual(completed.returncode, 2)
         self.assertIn("duplicate-rule-id", {item["code"] for item in payload["findings"]})
+
+    def test_missing_rule_id_reports_schema_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            copied = self.copy_spec(Path(tmp))
+            path = copied / "rules" / "asm-rules.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["rules"][0].pop("rule_id")
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(VALIDATOR), str(copied), "--json"],
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+            )
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertIn("rule-schema", {item["code"] for item in payload["findings"]})
 
     def test_broken_relative_markdown_link_fails(self):
         with tempfile.TemporaryDirectory() as tmp:

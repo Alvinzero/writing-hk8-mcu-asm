@@ -197,6 +197,7 @@
             "enum": [
               "company_ide",
               "python_source_module_cli",
+              "builtin_compiler",
               "simulator",
               "hardware"
             ]

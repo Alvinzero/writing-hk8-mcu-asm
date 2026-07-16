@@ -73,6 +73,7 @@ TEXT_SUFFIXES = {".md", ".json", ".csv", ".py", ".asm", ".example"}
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 PLACEHOLDER_RE = re.compile(r"\b(?:TODO|TBD)\b", re.IGNORECASE)
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+CHECKER_RULE_RE = re.compile(r'make_finding\(\s*["\'](HK-[A-Z0-9-]+)["\']')
 
 
 def add_finding(
@@ -237,8 +238,8 @@ def check_rules(
 
     rules = document.get("rules", [])
     checks["rule_count"] = len(rules) if isinstance(rules, list) else 0
-    if checks["rule_count"] != 70:
-        add_finding(findings, "rule-count", rules_path, f"expected 70 rules, found {checks['rule_count']}")
+    if checks["rule_count"] != 78:
+        add_finding(findings, "rule-count", rules_path, f"expected 78 rules, found {checks['rule_count']}")
     ids = [rule.get("rule_id") for rule in rules if isinstance(rule, dict)]
     duplicate_ids = sorted(
         value for value, count in Counter(ids).items() if value is not None and count > 1
@@ -251,6 +252,34 @@ def check_rules(
     )
     if not db_rule or db_rule.get("severity") != "BLOCKER":
         add_finding(findings, "missing-db-blocker", rules_path, "HK-TOOLCHAIN-DB-001 must be BLOCKER")
+
+
+def check_checker_rule_ids(
+    root: Path,
+    rules: list[dict[str, Any]],
+    checks: dict[str, Any],
+    findings: list[dict[str, Any]],
+) -> None:
+    registered = {
+        item["rule_id"]
+        for item in rules
+        if isinstance(item, dict) and isinstance(item.get("rule_id"), str)
+    }
+    emitted: set[str] = set()
+    for relative in ("tools/asm_static_check.py", "tools/asm_semantic_gates.py"):
+        path = root / relative
+        if path.is_file():
+            emitted.update(CHECKER_RULE_RE.findall(path.read_text(encoding="utf-8")))
+    unknown = sorted(emitted - registered)
+    checks["checker_rule_ids"] = sorted(emitted)
+    checks["checker_unknown_rule_ids"] = unknown
+    for rule_id in unknown:
+        add_finding(
+            findings,
+            "checker-rule-id",
+            root / "tools",
+            f"unregistered finding ID: {rule_id}",
+        )
 
 
 def check_instruction_reference(
@@ -614,6 +643,14 @@ def validate(root: Path) -> dict[str, Any]:
         checks["utf8_text_files"] = check_utf8(root, findings)
         checks["json_files"], loaded = check_all_json(root, findings)
         check_rules(root, loaded, findings, checks)
+        rules_document = loaded.get((root / "rules" / "asm-rules.json").resolve())
+        rules = rules_document.get("rules", []) if isinstance(rules_document, dict) else []
+        check_checker_rule_ids(
+            root,
+            rules if isinstance(rules, list) else [],
+            checks,
+            findings,
+        )
         check_instruction_reference(root, loaded, findings, checks)
         check_metadata_references(root, loaded, findings, checks)
         checks["relative_markdown_links_checked"] = check_markdown_links(root, findings)

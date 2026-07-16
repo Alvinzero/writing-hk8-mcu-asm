@@ -20,6 +20,7 @@
   "toolchain_ids": {
     "company_ide": "公司 HK_ASM_Compiler IDE 真实构建路径",
     "python_source_module_cli": "asmc_compile.py 直接调用 Python assembler 模块",
+    "builtin_compiler": "Skill 内置 HK64S825 assembler 编译模块",
     "simulator": "公司 Python simulator",
     "hardware": "真实 HK64S825 开发板"
   },
@@ -2439,6 +2440,294 @@
       "tags": [
         "ai",
         "debug"
+      ]
+    },
+    {
+      "rule_id": "HK-WDT-001",
+      "title": "延时循环必须处理看门狗",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "generation",
+        "static_check"
+      ],
+      "requirement": "WDT 未明确关闭时，DELAY/WAIT 忙等必须在循环内部按有界间隔执行 CLRWDT；若 WDT 已关闭，文件头必须给出配置依据。",
+      "rationale": "WDT 开启时，未在忙等内部按时喂狗会使延时尚未结束便触发复位。",
+      "bad_example": "延时函数没有 CLRWDT 且只写“WDT 未知”。",
+      "good_example": "在最内层忙等中 CLRWDT，或声明经批准的 WDT-off 配置。",
+      "verification": [
+        "asm_static_check.py",
+        "automated regression test"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "tools/tests/test_asm_static_check.py",
+          "note": "自动负例与正例"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "builtin_compiler"
+      ],
+      "tags": [
+        "ai",
+        "static-check"
+      ]
+    },
+    {
+      "rule_id": "HK-GPIO-INIT-001",
+      "title": "简单 GPIO 禁止全量初始化惯性",
+      "normative_level": "MUST",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "generation",
+        "static_check"
+      ],
+      "requirement": "简单 LED/GPIO 只能配置 PinContract 需要的寄存器，不得无依据遍历 PPU/PPD/POD/INS/IOS/PSL。",
+      "rationale": "无依据批量初始化会改变共享端口和未纳入当前任务的电气配置。",
+      "bad_example": "为单个 LED 批量清写六类端口配置寄存器。",
+      "good_example": "只配置目标 POD/PIO/POE 及契约明确要求的附加模式。",
+      "verification": [
+        "asm_static_check.py",
+        "automated regression test"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "tools/tests/test_asm_static_check.py",
+          "note": "自动负例与正例"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "builtin_compiler"
+      ],
+      "tags": [
+        "ai",
+        "static-check"
+      ]
+    },
+    {
+      "rule_id": "HK-GPIO-002",
+      "title": "输出 pin 必须显式建立电气模式",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "generation",
+        "static_check"
+      ],
+      "requirement": "每个输出 pin 必须按 PinContract 显式设置 POD，预装安全 PIO，并最后开启 POE；共享端口必须保留非本任务位。",
+      "rationale": "缺少电气模式或错误的使能顺序可能造成开漏、毛刺或破坏共享端口状态。",
+      "bad_example": "声明推挽输出但完全不写 POD，或先开 POE 后写 PIO。",
+      "good_example": "清目标 POD 位，预装 off 电平，再置目标 POE 位。",
+      "verification": [
+        "asm_static_check.py",
+        "automated regression test"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "tools/tests/test_asm_static_check.py",
+          "note": "自动负例与正例"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "builtin_compiler"
+      ],
+      "tags": [
+        "ai",
+        "static-check"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-012",
+      "title": "循环状态必须写回正确目标",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "generation",
+        "static_check"
+      ],
+      "requirement": "用作 loop-carried 状态的指令结果必须写回该状态；不得把只写 A 的 DECSZ/INCSZ 当作 SRAM 原位计数器。",
+      "rationale": "循环计数状态未写回时不会进展，可能形成无法退出的忙等。",
+      "bad_example": "`DECSZ 80H` 后向后跳转并期待 80H 自减。",
+      "good_example": "使用 `DECSZR 80H` 并重新核算周期。",
+      "verification": [
+        "asm_static_check.py",
+        "automated regression test"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "tools/tests/test_asm_static_check.py",
+          "note": "自动负例与正例"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "builtin_compiler"
+      ],
+      "tags": [
+        "ai",
+        "static-check"
+      ]
+    },
+    {
+      "rule_id": "HK-SYN-013",
+      "title": "业务 EQU 必须成为单一来源",
+      "normative_level": "MUST",
+      "severity": "WARNING",
+      "status": "active",
+      "scope": [
+        "generation",
+        "static_check"
+      ],
+      "requirement": "业务掩码、计数、尺寸或枚举 EQU 定义后必须被代码引用，否则删除。",
+      "rationale": "未使用的业务常量会与实际字面量分叉，使审查者无法确定真实配置来源。",
+      "bad_example": "定义 `LED_MASK EQU 29H`，代码继续使用 `#29H`。",
+      "good_example": "代码引用 `#LED_MASK`，或删除多余定义。",
+      "verification": [
+        "asm_static_check.py",
+        "automated regression test"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "tools/tests/test_asm_static_check.py",
+          "note": "自动负例与正例"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "builtin_compiler"
+      ],
+      "tags": [
+        "ai",
+        "static-check"
+      ]
+    },
+    {
+      "rule_id": "HK-CLOCK-001",
+      "title": "精确时序必须区分 OSC 与 SCK",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "generation",
+        "static_check"
+      ],
+      "requirement": "精确时序必须记录实际 OSC、SCK_PS 和派生 SCK；单独声明 16 MHz 不得作为指令时钟。",
+      "rationale": "指令周期由派生 SCK 决定，忽略 SCK_PS 会按错误倍数计算延时。",
+      "bad_example": "按 16 MHz 直接计算循环，忽略 SCK_PS=34H。",
+      "good_example": "从 16 MHz OSC 和 /8 分频得到 2 MHz SCK。",
+      "verification": [
+        "asm_static_check.py",
+        "automated regression test"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "tools/tests/test_asm_static_check.py",
+          "note": "自动负例与正例"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "builtin_compiler"
+      ],
+      "tags": [
+        "ai",
+        "static-check"
+      ]
+    },
+    {
+      "rule_id": "HK-TIME-001",
+      "title": "延时周期必须满足目标容差",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "generation",
+        "static_check"
+      ],
+      "requirement": "精确延时的静态 cycle audit 必须落入 TimingContract 的 target_us 与 tolerance_percent。",
+      "rationale": "只有将审计周期与目标及容差比较，才能证明延时满足业务时序契约。",
+      "bad_example": "目标 500 ms，审计结果 4.016 s。",
+      "good_example": "审计结果 502 ms 且容差为 1%。",
+      "verification": [
+        "asm_static_check.py",
+        "automated regression test"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "tools/tests/test_asm_static_check.py",
+          "note": "自动负例与正例"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "builtin_compiler"
+      ],
+      "tags": [
+        "ai",
+        "static-check"
+      ]
+    },
+    {
+      "rule_id": "HK-WDT-002",
+      "title": "喂狗不得掩盖死循环",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "generation",
+        "static_check"
+      ],
+      "requirement": "含 CLRWDT 的延时循环仍必须证明 loop-carried 状态会更新并能到达退出路径。",
+      "rationale": "持续喂狗会让不进展的循环永久运行，掩盖本应暴露的控制流错误。",
+      "bad_example": "DECSZ 不写回计数器，但循环每次都 CLRWDT。",
+      "good_example": "使用写回计数器并证明有限次迭代后退出。",
+      "verification": [
+        "asm_static_check.py",
+        "automated regression test"
+      ],
+      "evidence": [
+        {
+          "level": "E4",
+          "source": "tools/tests/test_asm_static_check.py",
+          "note": "自动负例与正例"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "python_source_module_cli",
+        "builtin_compiler"
+      ],
+      "tags": [
+        "ai",
+        "static-check"
       ]
     }
   ]
