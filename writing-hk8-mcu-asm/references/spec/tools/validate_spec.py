@@ -141,6 +141,22 @@ def check_all_json(
     return len(paths), loaded
 
 
+def collect_valid_rule_ids(rules: Any, schema: dict[str, Any]) -> list[str]:
+    rule_id_schema = (
+        schema.get("$defs", {}).get("rule", {}).get("properties", {}).get("rule_id", {})
+    )
+    pattern = rule_id_schema.get("pattern")
+    if not isinstance(rules, list):
+        return []
+    return [
+        value
+        for rule in rules
+        if isinstance(rule, dict)
+        and isinstance((value := rule.get("rule_id")), str)
+        and (not isinstance(pattern, str) or re.fullmatch(pattern, value) is not None)
+    ]
+
+
 def fallback_rule_schema_check(
     document: dict[str, Any],
     schema: dict[str, Any],
@@ -184,6 +200,19 @@ def fallback_rule_schema_check(
             add_finding(findings, "rule-schema", path, f"{where} missing fields: {sorted(missing)}")
         if extras:
             add_finding(findings, "rule-schema", path, f"{where} unexpected fields: {sorted(extras)}")
+        if "rule_id" in rule:
+            rule_id = rule["rule_id"]
+            rule_id_schema = rule_properties.get("rule_id", {})
+            pattern = rule_id_schema.get("pattern")
+            if not isinstance(rule_id, str):
+                add_finding(findings, "rule-schema", path, f"{where}.rule_id must be a string")
+            elif isinstance(pattern, str) and re.fullmatch(pattern, rule_id) is None:
+                add_finding(
+                    findings,
+                    "rule-schema",
+                    path,
+                    f"{where}.rule_id does not match schema pattern",
+                )
         for field in ("normative_level", "severity", "status", "confidence"):
             allowed = rule_properties.get(field, {}).get("enum", [])
             if allowed and rule.get(field) not in allowed:
@@ -191,6 +220,35 @@ def fallback_rule_schema_check(
         for field in ("scope", "verification", "evidence", "toolchain_applicability", "tags"):
             if field in rule and not isinstance(rule[field], list):
                 add_finding(findings, "rule-schema", path, f"{where}.{field} must be an array")
+        toolchain_schema = rule_properties.get("toolchain_applicability", {})
+        toolchains = rule.get("toolchain_applicability")
+        if isinstance(toolchains, list):
+            minimum = toolchain_schema.get("minItems", 0)
+            if isinstance(minimum, int) and len(toolchains) < minimum:
+                add_finding(
+                    findings,
+                    "rule-schema",
+                    path,
+                    f"{where}.toolchain_applicability must contain at least {minimum} item(s)",
+                )
+            if toolchain_schema.get("uniqueItems") and any(
+                item in toolchains[:index] for index, item in enumerate(toolchains)
+            ):
+                add_finding(
+                    findings,
+                    "rule-schema",
+                    path,
+                    f"{where}.toolchain_applicability must contain unique items",
+                )
+            allowed_toolchains = toolchain_schema.get("items", {}).get("enum", [])
+            for item in toolchains:
+                if allowed_toolchains and item not in allowed_toolchains:
+                    add_finding(
+                        findings,
+                        "rule-schema",
+                        path,
+                        f"{where}.toolchain_applicability has invalid value: {item!r}",
+                    )
         evidence = rule.get("evidence", [])
         if isinstance(evidence, list):
             if not evidence:
@@ -240,9 +298,9 @@ def check_rules(
     checks["rule_count"] = len(rules) if isinstance(rules, list) else 0
     if checks["rule_count"] != 78:
         add_finding(findings, "rule-count", rules_path, f"expected 78 rules, found {checks['rule_count']}")
-    ids = [rule.get("rule_id") for rule in rules if isinstance(rule, dict)]
+    ids = collect_valid_rule_ids(rules, schema)
     duplicate_ids = sorted(
-        value for value, count in Counter(ids).items() if value is not None and count > 1
+        value for value, count in Counter(ids).items() if count > 1
     )
     if duplicate_ids:
         add_finding(findings, "duplicate-rule-id", rules_path, f"duplicate rule IDs: {duplicate_ids}")
@@ -257,19 +315,20 @@ def check_rules(
 def check_checker_rule_ids(
     root: Path,
     rules: list[dict[str, Any]],
+    schema: dict[str, Any],
     checks: dict[str, Any],
     findings: list[dict[str, Any]],
 ) -> None:
-    registered = {
-        item["rule_id"]
-        for item in rules
-        if isinstance(item, dict) and isinstance(item.get("rule_id"), str)
-    }
+    registered = set(collect_valid_rule_ids(rules, schema))
     emitted: set[str] = set()
     for relative in ("tools/asm_static_check.py", "tools/asm_semantic_gates.py"):
         path = root / relative
         if path.is_file():
-            emitted.update(CHECKER_RULE_RE.findall(path.read_text(encoding="utf-8")))
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
+            emitted.update(CHECKER_RULE_RE.findall(text))
     unknown = sorted(emitted - registered)
     checks["checker_rule_ids"] = sorted(emitted)
     checks["checker_unknown_rule_ids"] = unknown
@@ -644,10 +703,12 @@ def validate(root: Path) -> dict[str, Any]:
         checks["json_files"], loaded = check_all_json(root, findings)
         check_rules(root, loaded, findings, checks)
         rules_document = loaded.get((root / "rules" / "asm-rules.json").resolve())
+        rules_schema = loaded.get((root / "rules" / "asm-rules.schema.json").resolve())
         rules = rules_document.get("rules", []) if isinstance(rules_document, dict) else []
         check_checker_rule_ids(
             root,
             rules if isinstance(rules, list) else [],
+            rules_schema if isinstance(rules_schema, dict) else {},
             checks,
             findings,
         )

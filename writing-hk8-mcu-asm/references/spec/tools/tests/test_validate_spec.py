@@ -14,13 +14,20 @@ VALIDATOR = SPEC / "tools" / "validate_spec.py"
 
 
 class ValidateSpecCliTests(unittest.TestCase):
-    def run_validator(self, root: Path):
-        completed = subprocess.run(
-            [sys.executable, str(VALIDATOR), str(root), "--json"],
+    def run_validator_process(self, root: Path, *, force_fallback: bool = False):
+        command = [sys.executable]
+        if force_fallback:
+            command.append("-S")
+        command.extend([str(VALIDATOR), str(root), "--json"])
+        return subprocess.run(
+            command,
             text=True,
             encoding="utf-8",
             capture_output=True,
         )
+
+    def run_validator(self, root: Path):
+        completed = self.run_validator_process(root)
         payload = json.loads(completed.stdout)
         return completed, payload
 
@@ -41,6 +48,32 @@ class ValidateSpecCliTests(unittest.TestCase):
         self.assertTrue(payload["checks"]["instruction_metadata_exact_snapshot"])
         self.assertTrue(payload["checks"]["register_metadata_exact_snapshot"])
 
+    def test_fallback_rejects_invalid_toolchain_applicability(self):
+        invalid_values = {
+            "unknown": ["bogus_compiler"],
+            "empty": [],
+            "duplicate": ["company_ide", "company_ide"],
+            "non-string": [42],
+        }
+        for name, invalid_value in invalid_values.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                copied = self.copy_spec(Path(tmp))
+                path = copied / "rules" / "asm-rules.json"
+                data = json.loads(path.read_text(encoding="utf-8"))
+                data["rules"][0]["toolchain_applicability"] = invalid_value
+                path.write_text(
+                    json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                completed = self.run_validator_process(copied, force_fallback=True)
+                self.assertEqual(completed.returncode, 2, completed.stderr)
+                payload = json.loads(completed.stdout)
+                self.assertEqual(payload["checks"]["rule_schema_engine"], "fallback")
+                self.assertIn(
+                    "rule-schema",
+                    {item["code"] for item in payload["findings"]},
+                )
+
     def test_checker_cannot_emit_unregistered_rule_id(self):
         with tempfile.TemporaryDirectory() as tmp:
             copied = self.copy_spec(Path(tmp))
@@ -53,6 +86,16 @@ class ValidateSpecCliTests(unittest.TestCase):
             completed, payload = self.run_validator(copied)
         self.assertEqual(completed.returncode, 2)
         self.assertIn("checker-rule-id", {item["code"] for item in payload["findings"]})
+
+    def test_checker_invalid_utf8_preserves_structured_findings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            copied = self.copy_spec(Path(tmp))
+            checker = copied / "tools" / "asm_static_check.py"
+            checker.write_bytes(checker.read_bytes() + b"\xff")
+            completed = self.run_validator_process(copied)
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertIn("invalid-utf8", {item["code"] for item in payload["findings"]})
 
     def test_missing_required_file_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -80,15 +123,35 @@ class ValidateSpecCliTests(unittest.TestCase):
             data = json.loads(path.read_text(encoding="utf-8"))
             data["rules"][0].pop("rule_id")
             path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            completed = subprocess.run(
-                [sys.executable, str(VALIDATOR), str(copied), "--json"],
-                text=True,
-                encoding="utf-8",
-                capture_output=True,
-            )
+            completed = self.run_validator_process(copied)
         self.assertEqual(completed.returncode, 2, completed.stderr)
         payload = json.loads(completed.stdout)
         self.assertIn("rule-schema", {item["code"] for item in payload["findings"]})
+
+    def test_fallback_rejects_invalid_rule_ids_without_crashing(self):
+        invalid_values = {
+            "integer": 123,
+            "array": [{"nested": "id"}],
+            "invalid-pattern": "not-a-rule-id",
+        }
+        for name, invalid_value in invalid_values.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                copied = self.copy_spec(Path(tmp))
+                path = copied / "rules" / "asm-rules.json"
+                data = json.loads(path.read_text(encoding="utf-8"))
+                data["rules"][0]["rule_id"] = invalid_value
+                path.write_text(
+                    json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                completed = self.run_validator_process(copied, force_fallback=True)
+                self.assertEqual(completed.returncode, 2, completed.stderr)
+                payload = json.loads(completed.stdout)
+                self.assertEqual(payload["checks"]["rule_schema_engine"], "fallback")
+                self.assertIn(
+                    "rule-schema",
+                    {item["code"] for item in payload["findings"]},
+                )
 
     def test_broken_relative_markdown_link_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
