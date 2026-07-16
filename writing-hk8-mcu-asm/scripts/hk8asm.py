@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -96,7 +97,19 @@ def is_non_empty_string(value: Any) -> bool:
 
 
 def is_scalar(value: Any) -> bool:
-    return isinstance(value, (str, int, float)) and not isinstance(value, bool)
+    return isinstance(value, str) or is_finite_number(value)
+
+
+def is_finite_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and (not isinstance(value, float) or math.isfinite(value))
+    )
+
+
+def is_finite_positive_number(value: Any) -> bool:
+    return is_finite_number(value) and value > 0
 
 
 def contains_placeholder(value: str) -> bool:
@@ -303,6 +316,11 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
             "clock_model.divider_by_mode must be an object",
         )
         required_selectors = {str(selector) for selector in range(1, 16)}
+        require(
+            set(divider_by_mode) == {"high", "low"},
+            "INVALID_PROFILE",
+            "clock_model.divider_by_mode must contain exactly high and low",
+        )
         for mode in ("high", "low"):
             divider_map = divider_by_mode.get(mode)
             require(
@@ -311,16 +329,14 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
                 f"clock_model.divider_by_mode.{mode} must be an object",
             )
             require(
-                required_selectors.issubset(divider_map),
+                set(divider_map) == required_selectors,
                 "INVALID_PROFILE",
-                f"clock_model.divider_by_mode.{mode} must define selectors 1..15",
+                f"clock_model.divider_by_mode.{mode} must contain exactly selectors 1..15",
             )
             for selector in required_selectors:
                 divider = divider_map[selector]
                 require(
-                    isinstance(divider, (int, float))
-                    and not isinstance(divider, bool)
-                    and divider > 0,
+                    is_finite_positive_number(divider),
                     "INVALID_PROFILE",
                     f"clock_model.divider_by_mode.{mode}.{selector} must be positive",
                 )
@@ -504,17 +520,13 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
             )
             target_us = item.get("target_us")
             require(
-                isinstance(target_us, (int, float))
-                and not isinstance(target_us, bool)
-                and target_us > 0,
+                is_finite_positive_number(target_us),
                 "INVALID_REQUEST",
                 "timing.delay_targets target_us must be positive",
             )
             tolerance_percent = item.get("tolerance_percent")
             require(
-                isinstance(tolerance_percent, (int, float))
-                and not isinstance(tolerance_percent, bool)
-                and tolerance_percent > 0,
+                is_finite_positive_number(tolerance_percent),
                 "INVALID_REQUEST",
                 "timing.delay_targets tolerance_percent must be positive",
             )

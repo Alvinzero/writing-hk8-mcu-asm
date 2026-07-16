@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 import tempfile
@@ -122,6 +123,11 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         return request
 
     @staticmethod
+    def clock_model() -> dict:
+        profile = json.loads(EXAMPLE_PROFILE.read_text(encoding="utf-8-sig"))
+        return profile["clock_model"]
+
+    @staticmethod
     def config(*, failures: dict[str, str] | None = None) -> dict:
         command = [sys.executable, str(FAKE_ADAPTER)]
         return {
@@ -180,6 +186,51 @@ class ClosedLoopCliContractTests(unittest.TestCase):
             "--tool-version",
             tool_version,
         ]
+
+    def context_checker_spec_root(self) -> Path:
+        spec_root = self.root / "context-checker-spec"
+        checker = spec_root / "tools" / "asm_static_check.py"
+        checker.parent.mkdir(parents=True)
+        checker.write_text(
+            """#!/usr/bin/env python3
+import argparse
+import json
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("asm", type=Path)
+parser.add_argument("--toolchain", required=True)
+parser.add_argument("--request", required=True, type=Path)
+parser.add_argument("--profile", required=True, type=Path)
+parser.add_argument("--json", action="store_true")
+args = parser.parse_args()
+
+errors = []
+try:
+    request = json.loads(args.request.read_text(encoding="utf-8-sig"))
+    profile = json.loads(args.profile.read_text(encoding="utf-8-sig"))
+except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    errors.append(str(exc))
+else:
+    if request.get("chip") != "HK64S825" or profile.get("chip") != "HK64S825":
+        errors.append("snapshot chip mismatch")
+
+payload = {
+    "findings": [{"error": error} for error in errors],
+    "summary": {
+        "blockers": 0,
+        "errors": len(errors),
+        "warnings": 0,
+        "info": 0,
+        "exit_code": 2 if errors else 0,
+    },
+}
+print(json.dumps(payload))
+raise SystemExit(payload["summary"]["exit_code"])
+""",
+            encoding="utf-8",
+        )
+        return spec_root
 
     def run_cli(self, *args: str) -> subprocess.CompletedProcess[str]:
         self.assertTrue(CLI.exists(), f"production CLI missing: {CLI}")
@@ -244,6 +295,39 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         )
         self.assertNotEqual(0, result.returncode)
         self.assertEqual("INVALID_PROFILE", self.payload(result)["code"])
+
+    def test_profile_rejects_non_finite_clock_divider(self) -> None:
+        profile = self.profile()
+        profile["clock_model"] = self.clock_model()
+        profile["clock_model"]["divider_by_mode"]["high"]["1"] = math.inf
+        self._write_json(self.profile_path, profile)
+        result = self.run_cli(
+            "doctor", "--profile", str(self.profile_path), "--config", str(self.config_path)
+        )
+        self.assertNotEqual(0, result.returncode)
+        payload = self.payload(result)
+        self.assertEqual("INVALID_PROFILE", payload["code"])
+        self.assertIn("divider_by_mode", payload["message"])
+
+    def test_profile_clock_model_rejects_extra_modes_and_selectors(self) -> None:
+        for name in ("extra-mode", "extra-selector"):
+            with self.subTest(name=name):
+                profile = self.profile()
+                profile["clock_model"] = self.clock_model()
+                if name == "extra-mode":
+                    profile["clock_model"]["divider_by_mode"]["turbo"] = {}
+                else:
+                    profile["clock_model"]["divider_by_mode"]["high"]["16"] = 1
+                self._write_json(self.profile_path, profile)
+                result = self.run_cli(
+                    "doctor",
+                    "--profile",
+                    str(self.profile_path),
+                    "--config",
+                    str(self.config_path),
+                )
+                self.assertNotEqual(0, result.returncode)
+                self.assertEqual("INVALID_PROFILE", self.payload(result)["code"])
 
     def test_new_run_validates_and_snapshots_inputs(self) -> None:
         run_dir = self.new_run()
@@ -344,6 +428,58 @@ class ClosedLoopCliContractTests(unittest.TestCase):
                 self.assertEqual("INVALID_REQUEST", payload["code"])
                 self.assertIn(field, payload["message"])
 
+    def test_new_run_rejects_non_finite_legacy_timing_numbers(self) -> None:
+        for name, value in (
+            ("nan", math.nan),
+            ("negative-infinity", -math.inf),
+            ("infinity", math.inf),
+        ):
+            with self.subTest(name=name):
+                request = self.request()
+                request["timing"]["period_us"] = value
+                self._write_json(self.request_path, request)
+                result = self.run_cli(
+                    "new-run",
+                    "--profile",
+                    str(self.profile_path),
+                    "--config",
+                    str(self.config_path),
+                    "--request",
+                    str(self.request_path),
+                    "--source",
+                    str(self.source_path),
+                    "--run-dir",
+                    str(self.root / f"non-finite-{name}"),
+                )
+                self.assertNotEqual(0, result.returncode)
+                payload = self.payload(result)
+                self.assertEqual("INVALID_REQUEST", payload["code"])
+                self.assertIn("timing", payload["message"])
+
+    def test_new_run_rejects_non_finite_structured_timing_targets(self) -> None:
+        for field in ("target_us", "tolerance_percent"):
+            with self.subTest(field=field):
+                request = self.structured_gpio_request()
+                request["timing"]["delay_targets"][0][field] = math.inf
+                self._write_json(self.request_path, request)
+                result = self.run_cli(
+                    "new-run",
+                    "--profile",
+                    str(self.profile_path),
+                    "--config",
+                    str(self.config_path),
+                    "--request",
+                    str(self.request_path),
+                    "--source",
+                    str(self.source_path),
+                    "--run-dir",
+                    str(self.root / f"non-finite-{field}"),
+                )
+                self.assertNotEqual(0, result.returncode)
+                payload = self.payload(result)
+                self.assertEqual("INVALID_REQUEST", payload["code"])
+                self.assertIn(field, payload["message"])
+
     def test_new_run_rejects_unstructured_or_forbidden_inputs(self) -> None:
         cases = [
             ("bad-peripheral", {"peripherals": [123]}),
@@ -415,6 +551,20 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         payload = self.payload(loop)
         self.assertEqual("STATIC_CHECK_FAILED", payload["code"])
         self.assertIn("HK-TOOLCHAIN-DB-001", json.dumps(payload.get("details", {})))
+
+    def test_close_loop_passes_request_and_profile_snapshots_to_static_checker(self) -> None:
+        profile = self.profile()
+        profile["spec_root"] = str(self.context_checker_spec_root())
+        profile["static_check"] = {
+            "toolchain": "company_ide",
+            "strict_warnings": False,
+        }
+        self._write_json(self.profile_path, profile)
+
+        run_dir = self.new_run("context-plumbing")
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        self.assertEqual("COMPILE_PASSED", self.payload(loop)["code"])
 
     def test_full_loop_releases_source_and_evidence(self) -> None:
         run_dir = self.new_run()

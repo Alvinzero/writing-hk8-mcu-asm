@@ -827,6 +827,31 @@ def main(argv: list[str] | None = None) -> int:
             request_context = context
         else:
             profile_context = context
+    if request_context is not None and profile_context is not None:
+        request_chip = request_context.get("chip")
+        profile_chip = profile_context.get("chip")
+        aliases = profile_context.get("aliases", [])
+        supported_aliases = (
+            {alias for alias in aliases if isinstance(alias, str)}
+            if isinstance(aliases, list)
+            else set()
+        )
+        supported_chips = set(supported_aliases)
+        if isinstance(profile_chip, str):
+            supported_chips.add(profile_chip)
+        if not isinstance(request_chip, str) or request_chip not in supported_chips:
+            findings.append(
+                make_finding(
+                    "HK-AI-003",
+                    "ERROR",
+                    args.request or "<request>",
+                    None,
+                    f"request chip {request_chip!r} does not match profile chip {profile_chip!r} "
+                    f"or aliases {sorted(supported_aliases)!r}",
+                    "The checker could apply chip-specific rules to a request for a different target.",
+                    "Use a request chip that matches the profile chip or one of its declared aliases.",
+                )
+            )
     for path in args.asm:
         if not path.is_file():
             findings.append(

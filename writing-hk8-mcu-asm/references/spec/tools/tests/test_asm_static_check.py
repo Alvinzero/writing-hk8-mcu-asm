@@ -64,6 +64,45 @@ class AsmStaticCheckCliTests(unittest.TestCase):
             },
         )
 
+    def test_request_chip_may_match_a_profile_alias(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n  NOP\nEND\n",
+            "--toolchain",
+            "company_ide",
+            request={"chip": "HK825"},
+            profile={"chip": "HK64S825", "aliases": ["HK825"]},
+        )
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertEqual(
+            payload["contract_context"],
+            {
+                "request_loaded": True,
+                "profile_loaded": True,
+                "chip": "HK64S825",
+            },
+        )
+
+    def test_request_chip_mismatch_is_reported_as_an_error_finding(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n  NOP\nEND\n",
+            "--toolchain",
+            "company_ide",
+            request={"chip": "OTHER_CHIP"},
+            profile={"chip": "HK64S825", "aliases": ["HK825"]},
+        )
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(payload["summary"]["errors"], 1)
+        self.assertIn("HK-AI-003", self.rule_ids(payload))
+        self.assertIn("OTHER_CHIP", payload["findings"][0]["evidence"])
+        self.assertEqual(
+            payload["contract_context"],
+            {
+                "request_loaded": True,
+                "profile_loaded": True,
+                "chip": "HK64S825",
+            },
+        )
+
     def test_malformed_context_json_is_reported_as_an_error_finding(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
