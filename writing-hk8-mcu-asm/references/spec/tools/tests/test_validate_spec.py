@@ -211,6 +211,9 @@ class ValidateSpecCliTests(unittest.TestCase):
         for name, body in {
             "pass": "        pass\n",
             "ellipsis": "        ...\n",
+            "docstring": '        """No executable assertions."""\n',
+            "docstring-pass": '        """No executable assertions."""\n        pass\n',
+            "docstring-ellipsis": '        """No executable assertions."""\n        ...\n',
         }.items():
             with self.subTest(name=name):
                 self.assert_mapped_test_mutation_is_rejected(method_body=body)

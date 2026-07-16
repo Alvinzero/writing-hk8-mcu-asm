@@ -411,22 +411,32 @@ def check_automated_rule_tests(
             )
             if not is_testcase or node.decorator_list:
                 continue
-            test_methods.update(
-                member.name
-                for member in node.body
-                if isinstance(member, ast.FunctionDef)
-                and member.name.startswith("test_")
-                and not member.decorator_list
-                and not all(
+            for member in node.body:
+                if (
+                    not isinstance(member, ast.FunctionDef)
+                    or not member.name.startswith("test_")
+                    or member.decorator_list
+                ):
+                    continue
+                statements = member.body
+                if (
+                    statements
+                    and isinstance(statements[0], ast.Expr)
+                    and isinstance(statements[0].value, ast.Constant)
+                    and isinstance(statements[0].value.value, str)
+                ):
+                    statements = statements[1:]
+                is_empty = not statements or all(
                     isinstance(statement, ast.Pass)
                     or (
                         isinstance(statement, ast.Expr)
                         and isinstance(statement.value, ast.Constant)
                         and statement.value.value is Ellipsis
                     )
-                    for statement in member.body
+                    for statement in statements
                 )
-            )
+                if not is_empty:
+                    test_methods.add(member.name)
 
     checks["automated_rule_tests"] = dict(AUTOMATED_RULE_TESTS)
     checks["automated_rule_test_files"] = [
