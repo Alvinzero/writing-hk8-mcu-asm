@@ -105,7 +105,7 @@ def collect_gpio_effects(file_model: dict[str, Any]) -> list[dict[str, Any]]:
                 "kind": "rmw",
             }
         )
-    return effects
+    return sorted(effects, key=lambda effect: effect["line"])
 
 
 def audit_gpio_contract(
@@ -116,7 +116,8 @@ def audit_gpio_contract(
         return []
 
     effects = collect_gpio_effects(file_model)
-    issues: list[dict[str, Any]] = []
+    contracts: list[dict[str, Any]] = []
+    owned_bits_by_port: dict[str, set[int]] = {}
     for pin_name in sorted(pins):
         pin = pins[pin_name]
         if not isinstance(pin, dict) or pin.get("direction") != "output":
@@ -143,6 +144,54 @@ def audit_gpio_contract(
         }
         if not owned_bits:
             continue
+        contract = {
+            "name": pin_name,
+            "pin": pin,
+            "port": port,
+            "owned_bits": owned_bits,
+        }
+        contracts.append(contract)
+        owned_bits_by_port.setdefault(port, set()).update(owned_bits)
+
+    issues: list[dict[str, Any]] = []
+    preserve_ports = {
+        contract["port"]
+        for contract in contracts
+        if contract["pin"].get("preserve_unowned_bits") is True
+    }
+    for port in sorted(preserve_ports):
+        task_owned_bits = owned_bits_by_port[port]
+        port_registers = {f"{port}_POD", f"{port}_PIO", f"{port}_POE"}
+        for effect in effects:
+            if effect["register"] not in port_registers:
+                continue
+            touched_bits = effect["set_bits"] | effect["clear_bits"]
+            unowned_bits = touched_bits - task_owned_bits
+            if not unowned_bits:
+                continue
+            issues.append(
+                make_issue(
+                    "HK-GPIO-002",
+                    "BLOCKER",
+                    file_model["path"],
+                    effect["line"],
+                    f"{port} {effect['register']} {effect['kind']} effect touches task-"
+                    f"unowned bits {sorted(unowned_bits)}; task-owned union is "
+                    f"{sorted(task_owned_bits)}",
+                    "The source changes GPIO bits outside every output PinContract on the port.",
+                    f"Limit {port} POD/PIO/POE bit and RMW effects to task-owned bits "
+                    f"{sorted(task_owned_bits)}.",
+                )
+            )
+
+    for contract in contracts:
+        pin_name = contract["name"]
+        pin = contract["pin"]
+        port = contract["port"]
+        owned_bits = contract["owned_bits"]
+        drive = pin["drive"]
+        active_level = pin["active_level"]
+        initial_state = pin["initial_state"]
 
         mode_register = f"{port}_POD"
         data_register = f"{port}_PIO"
@@ -150,78 +199,93 @@ def audit_gpio_contract(
         mode_action = "clear_bits" if drive == "push_pull" else "set_bits"
         initial_high = (initial_state == "on") == (active_level == "high")
         data_action = "set_bits" if initial_high else "clear_bits"
-        preserve_unowned_bits = pin.get("preserve_unowned_bits") is True
-
-        def preserves_ownership(effect: dict[str, Any]) -> bool:
-            if not preserve_unowned_bits:
-                return True
-            touched_bits = effect["set_bits"] | effect["clear_bits"]
-            return effect["kind"] in {"bit", "rmw"} and touched_bits <= owned_bits
-
-        def candidates(register: str, action: str, bit: int) -> list[dict[str, Any]]:
-            return [
-                effect
-                for effect in effects
-                if effect["register"] == register and bit in effect[action]
-            ]
 
         for bit in sorted(owned_bits):
-            required = (
-                (mode_register, mode_action),
-                (data_register, data_action),
-                (enable_register, "set_bits"),
+            enable_effect = next(
+                (
+                    effect
+                    for effect in effects
+                    if effect["register"] == enable_register and bit in effect["set_bits"]
+                ),
+                None,
             )
-            matched: list[dict[str, Any] | None] = []
-            rejected: list[dict[str, Any]] = []
-            for register, action in required:
-                action_candidates = candidates(register, action, bit)
-                first_effect = action_candidates[0] if action_candidates else None
-                accepted = (
-                    first_effect
-                    if first_effect is not None and preserves_ownership(first_effect)
-                    else None
-                )
-                matched.append(accepted)
-                if first_effect is not None and accepted is None:
-                    rejected.append(first_effect)
-
-            mode_effect, data_effect, enable_effect = matched
-            missing = [
-                f"{register} {action}"
-                for (register, action), effect in zip(required, matched)
-                if effect is None
+            enable_line = enable_effect["line"] if enable_effect is not None else None
+            effects_before_enable = [
+                effect
+                for effect in effects
+                if enable_line is None or effect["line"] < enable_line
             ]
+            mode_effects = [
+                effect
+                for effect in effects_before_enable
+                if effect["register"] == mode_register
+                and bit in effect["set_bits"] | effect["clear_bits"]
+            ]
+            data_effects = [
+                effect
+                for effect in effects_before_enable
+                if effect["register"] == data_register
+                and bit in effect["set_bits"] | effect["clear_bits"]
+            ]
+            mode_effect = mode_effects[-1] if mode_effects else None
+            data_effect = data_effects[-1] if data_effects else None
+
+            def effect_action(effect: dict[str, Any] | None) -> str | None:
+                if effect is None:
+                    return None
+                if bit in effect["set_bits"]:
+                    return "set_bits"
+                if bit in effect["clear_bits"]:
+                    return "clear_bits"
+                return None
+
+            final_mode_action = effect_action(mode_effect)
+            final_data_action = effect_action(data_effect)
+            state_errors: list[str] = []
+            if mode_effect is None:
+                state_errors.append(
+                    f"lacks {mode_register} {mode_action} before first {enable_register} set"
+                )
+            elif final_mode_action != mode_action:
+                state_errors.append(
+                    f"final {mode_register} action before enable is "
+                    f"{final_mode_action}@{mode_effect['line']}, required {mode_action}"
+                )
+            if data_effect is None:
+                state_errors.append(
+                    f"lacks {data_register} {data_action} before first {enable_register} set"
+                )
+            elif final_data_action != data_action:
+                state_errors.append(
+                    f"final {data_register} action before enable is "
+                    f"{final_data_action}@{data_effect['line']}, required {data_action}"
+                )
+            if enable_effect is None:
+                state_errors.append(f"lacks first {enable_register} set")
+
             ordered = (
-                not missing
+                mode_effect is not None
+                and data_effect is not None
+                and enable_effect is not None
+                and final_mode_action == mode_action
+                and final_data_action == data_action
                 and mode_effect["line"] < data_effect["line"] < enable_effect["line"]
             )
-            if not missing and ordered:
+            if not state_errors and ordered:
                 continue
 
-            present = [effect for effect in matched if effect is not None]
-            relevant = present + rejected
+            if not ordered:
+                state_errors.append(
+                    "required POD < PIO < POE using final POD/PIO state before the first "
+                    "POE set"
+                )
+            relevant = [
+                effect
+                for effect in (mode_effect, data_effect, enable_effect)
+                if effect is not None
+            ]
             line = min((effect["line"] for effect in relevant), default=None)
-            if missing:
-                evidence = (
-                    f"PinContract {pin_name} {port}{bit} lacks proof for "
-                    f"{', '.join(missing)}"
-                )
-                if rejected:
-                    rejected_details = "; ".join(
-                        f"line {effect['line']} {effect['register']} {effect['kind']} touches "
-                        f"unowned bits "
-                        f"{sorted((effect['set_bits'] | effect['clear_bits']) - owned_bits)}; "
-                        f"owned bits are {sorted(owned_bits)}"
-                        for effect in rejected
-                    )
-                    evidence += f"; rejected ownership-unsafe effect(s): {rejected_details}"
-            else:
-                evidence = (
-                    f"PinContract {pin_name} {port}{bit} order is "
-                    f"{mode_register}@{mode_effect['line']}, "
-                    f"{data_register}@{data_effect['line']}, "
-                    f"{enable_register}@{enable_effect['line']}; required POD < PIO < POE"
-                )
+            evidence = f"PinContract {pin_name} {port}{bit}: {'; '.join(state_errors)}"
             issues.append(
                 make_issue(
                     "HK-GPIO-002",
