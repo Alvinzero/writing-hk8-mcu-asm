@@ -18,9 +18,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 try:
-    from .asm_semantic_gates import audit_unused_equ
+    from .asm_semantic_gates import audit_gpio_contract, audit_unused_equ
 except ImportError:
-    from asm_semantic_gates import audit_unused_equ
+    from asm_semantic_gates import audit_gpio_contract, audit_unused_equ
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -898,6 +898,8 @@ def main(argv: list[str] | None = None) -> int:
     table_pairs, pair_findings = audit_table_pairs(files, args.table_pair, [path.resolve() for path in args.maps])
     findings.extend(pair_findings)
     for file_result in files:
+        if request_context is not None:
+            findings.extend(audit_gpio_contract(file_result, request_context))
         findings.extend(audit_unused_equ(file_result))
         file_result.pop("_instructions", None)
         file_result.pop("_equ_symbols", None)

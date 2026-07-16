@@ -12,6 +12,32 @@ TOOLS = Path(__file__).resolve().parents[1]
 CHECKER = TOOLS / "asm_static_check.py"
 
 
+def gpio_request(*, drive: str = "push_pull", active_level: str = "high") -> dict:
+    return {
+        "schema_version": 1,
+        "chip": "HK64S825",
+        "behavior": "PA0 PA3 PA5 LED 输出",
+        "clock": {"osc_hz": 16_000_000, "sck_ps": "reset"},
+        "pins": {
+            "led_outputs": {
+                "port": "PA",
+                "bits": [0, 3, 5],
+                "direction": "output",
+                "drive": drive,
+                "active_level": active_level,
+                "initial_state": "off",
+                "preserve_unowned_bits": True,
+            }
+        },
+        "peripherals": [{"name": "gpio"}],
+        "timing": {"precision": "approximate"},
+        "memory_limits": {"rom_bytes": 2048, "ram_bytes": 64},
+        "board": {"id": "HK64S825-DEFAULT"},
+        "acceptance": [],
+        "allow_nonvolatile_changes": False,
+    }
+
+
 class AsmStaticCheckCliTests(unittest.TestCase):
     def run_checker(
         self,
@@ -45,6 +71,15 @@ class AsmStaticCheckCliTests(unittest.TestCase):
     @staticmethod
     def rule_ids(payload: dict) -> set[str]:
         return {finding["rule_id"] for finding in payload["findings"]}
+
+    def assert_gpio_blocker(self, completed, payload: dict) -> list[dict]:
+        self.assertEqual(completed.returncode, 2)
+        findings = [
+            finding for finding in payload["findings"] if finding["rule_id"] == "HK-GPIO-002"
+        ]
+        self.assertTrue(findings, payload["findings"])
+        self.assertTrue(all(finding["severity"] == "BLOCKER" for finding in findings))
+        return findings
 
     def test_reports_loaded_request_and_profile_context(self):
         completed, payload = self.run_checker(
@@ -347,6 +382,134 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 1)
         self.assertIn("HK-GPIO-INIT-001", self.rule_ids(payload))
+
+    def test_push_pull_output_requires_explicit_pod_clear(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "START:\n"
+            "  BCLR PA_PIO,0\n"
+            "  BCLR PA_PIO,3\n"
+            "  BCLR PA_PIO,5\n"
+            "  BSET PA_POE,0\n"
+            "  BSET PA_POE,3\n"
+            "  BSET PA_POE,5\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            request=gpio_request(),
+        )
+        findings = self.assert_gpio_blocker(completed, payload)
+        self.assertIn("PA_POD clear_bits", findings[0]["evidence"])
+
+    def test_push_pull_rmw_gpio_contract_passes(self):
+        completed, payload = self.run_checker(
+            "GPIO_CLEAR_MASK EQU 0D6H\n"
+            "GPIO_SET_MASK EQU 29H\n"
+            "ORG 0x0000\n"
+            "START:\n"
+            "  MOV A,PA_POD\n"
+            "  AND A,#GPIO_CLEAR_MASK\n"
+            "  MOV PA_POD,A\n"
+            "  MOV A,PA_PIO\n"
+            "  AND A,#GPIO_CLEAR_MASK\n"
+            "  MOV PA_PIO,A\n"
+            "  MOV A,PA_POE\n"
+            "  OR A,#GPIO_SET_MASK\n"
+            "  MOV PA_POE,A\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            "--strict-warnings",
+            request=gpio_request(),
+        )
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertNotIn("HK-GPIO-002", self.rule_ids(payload))
+
+    def test_open_drain_output_requires_explicit_pod_set(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "START:\n"
+            "  BCLR PA_PIO,0\n"
+            "  BCLR PA_PIO,3\n"
+            "  BCLR PA_PIO,5\n"
+            "  BSET PA_POE,0\n"
+            "  BSET PA_POE,3\n"
+            "  BSET PA_POE,5\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            request=gpio_request(drive="open_drain"),
+        )
+        findings = self.assert_gpio_blocker(completed, payload)
+        self.assertIn("PA_POD set_bits", findings[0]["evidence"])
+
+    def test_gpio_output_enable_must_follow_mode_and_safe_latch(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "START:\n"
+            "  BSET PA_POE,0\n"
+            "  BSET PA_POE,3\n"
+            "  BSET PA_POE,5\n"
+            "  BCLR PA_POD,0\n"
+            "  BCLR PA_POD,3\n"
+            "  BCLR PA_POD,5\n"
+            "  BCLR PA_PIO,0\n"
+            "  BCLR PA_PIO,3\n"
+            "  BCLR PA_PIO,5\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            request=gpio_request(),
+        )
+        findings = self.assert_gpio_blocker(completed, payload)
+        self.assertIn("required POD < PIO < POE", findings[0]["evidence"])
+
+    def test_gpio_rmw_rejects_changes_to_unowned_bits(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "START:\n"
+            "  MOV A,PA_POD\n"
+            "  AND A,#00H\n"
+            "  MOV PA_POD,A\n"
+            "  BCLR PA_PIO,0\n"
+            "  BCLR PA_PIO,3\n"
+            "  BCLR PA_PIO,5\n"
+            "  BSET PA_POE,0\n"
+            "  BSET PA_POE,3\n"
+            "  BSET PA_POE,5\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            request=gpio_request(),
+        )
+        findings = self.assert_gpio_blocker(completed, payload)
+        self.assertIn("unowned bits", findings[0]["evidence"])
+
+    def test_gpio_does_not_skip_unsafe_first_effect_for_a_later_safe_effect(self):
+        completed, payload = self.run_checker(
+            "GPIO_CLEAR_MASK EQU 0D6H\n"
+            "GPIO_SET_MASK EQU 29H\n"
+            "ORG 0x0000\n"
+            "START:\n"
+            "  MOV A,PA_POD\n"
+            "  AND A,#00H\n"
+            "  MOV PA_POD,A\n"
+            "  MOV A,PA_POD\n"
+            "  AND A,#GPIO_CLEAR_MASK\n"
+            "  MOV PA_POD,A\n"
+            "  MOV A,PA_PIO\n"
+            "  AND A,#GPIO_CLEAR_MASK\n"
+            "  MOV PA_PIO,A\n"
+            "  MOV A,PA_POE\n"
+            "  OR A,#GPIO_SET_MASK\n"
+            "  MOV PA_POE,A\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            request=gpio_request(),
+        )
+        findings = self.assert_gpio_blocker(completed, payload)
+        self.assertIn("unowned bits", findings[0]["evidence"])
 
     def test_minimal_led_init_with_clrwdt_delay_passes(self):
         completed, payload = self.run_checker(
