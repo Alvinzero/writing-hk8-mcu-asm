@@ -3,6 +3,57 @@ from __future__ import annotations
 from typing import Any
 
 
+GPIO_STATE_REGISTERS = {
+    f"{port}_{register}"
+    for port in ("PA", "PB")
+    for register in ("POD", "PIO", "POE")
+}
+GPIO_SECOND_OPERAND_WRITE_OPS = {
+    "ADDR",
+    "ADDCR",
+    "SUBR",
+    "SUBCR",
+    "ANDR",
+    "ORR",
+    "XORR",
+}
+GPIO_FIRST_OPERAND_WRITE_OPS = {
+    "BSET",
+    "BCLR",
+    "BCPL",
+}
+GPIO_UNARY_WRITE_OPS = {
+    "CLR",
+    "SET",
+    "CPLR",
+    "INCR",
+    "INCSZR",
+    "DECR",
+    "DECSZR",
+    "RLCR",
+    "RLR",
+    "RRCR",
+    "RRR",
+    "XCH",
+    "SWAPR",
+}
+GPIO_CONTROL_BOUNDARY_OPS = {
+    "JMP",
+    "CALL",
+    "RET",
+    "RETI",
+    "DECSZ",
+    "DECSZR",
+    "INCSZ",
+    "INCSZR",
+    "BTSZ",
+    "BTSNZ",
+    "SE",
+    "SZ",
+    "SZR",
+}
+
+
 def make_issue(
     rule_id: str,
     severity: str,
@@ -51,21 +102,39 @@ def resolve_byte(token: str, equ_symbols: dict[str, dict[str, Any]]) -> int | No
     return resolved
 
 
+def gpio_written_register(instruction: dict[str, Any]) -> str | None:
+    op = instruction["op"]
+    args = split_args(instruction["args"])
+    if op == "MOV" and len(args) == 2 and args[0].upper() != "A":
+        return args[0].upper()
+    if op in GPIO_SECOND_OPERAND_WRITE_OPS and len(args) == 2:
+        return args[1].upper()
+    if op in GPIO_FIRST_OPERAND_WRITE_OPS and len(args) == 2:
+        return args[0].upper()
+    if op in GPIO_UNARY_WRITE_OPS and len(args) == 1:
+        return args[0].upper()
+    return None
+
+
 def collect_gpio_effects(file_model: dict[str, Any]) -> list[dict[str, Any]]:
     instructions = file_model.get("_instructions", [])
     equ_symbols = file_model.get("_equ_symbols", {})
     effects: list[dict[str, Any]] = []
+    safe_write_indices: set[int] = set()
     for index, instruction in enumerate(instructions):
         args = split_args(instruction["args"])
         if instruction["op"] in {"BSET", "BCLR"} and len(args) == 2:
             bit = resolve_byte(args[1], equ_symbols)
             if bit is not None and 0 <= bit <= 7:
+                safe_write_indices.add(index)
                 effects.append(
                     {
                         "register": args[0].upper(),
                         "set_bits": {bit} if instruction["op"] == "BSET" else set(),
                         "clear_bits": {bit} if instruction["op"] == "BCLR" else set(),
                         "line": instruction["line"],
+                        "index": index,
+                        "source": instruction["source"],
                         "kind": "bit",
                     }
                 )
@@ -92,6 +161,7 @@ def collect_gpio_effects(file_model: dict[str, Any]) -> list[dict[str, Any]]:
         mask = resolve_byte(logic_args[1], equ_symbols)
         if mask is None:
             continue
+        safe_write_indices.add(index + 2)
         effects.append(
             {
                 "register": store_args[0].upper(),
@@ -102,48 +172,121 @@ def collect_gpio_effects(file_model: dict[str, Any]) -> list[dict[str, Any]]:
                     bit for bit in range(8) if logic["op"] == "AND" and not mask & (1 << bit)
                 },
                 "line": store["line"],
+                "index": index + 2,
+                "source": store["source"],
                 "kind": "rmw",
             }
         )
-    return sorted(effects, key=lambda effect: effect["line"])
+    for index, instruction in enumerate(instructions):
+        register = gpio_written_register(instruction)
+        if register not in GPIO_STATE_REGISTERS or index in safe_write_indices:
+            continue
+        effects.append(
+            {
+                "register": register,
+                "set_bits": set(),
+                "clear_bits": set(),
+                "line": instruction["line"],
+                "index": index,
+                "source": instruction["source"],
+                "kind": "unknown",
+            }
+        )
+    return sorted(effects, key=lambda effect: (effect["line"], effect["index"]))
 
 
 def audit_gpio_contract(
     file_model: dict[str, Any], request: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    pins = request.get("pins")
-    if not isinstance(pins, dict):
+    if "pins" not in request:
         return []
+    pins = request["pins"]
+    if not isinstance(pins, dict):
+        return [
+            make_issue(
+                "HK-AI-003",
+                "ERROR",
+                "<request>",
+                None,
+                "request pins must be an object when present",
+                "Malformed pin contracts cannot be bound to source-level GPIO safety checks.",
+                "Provide pins as an object containing string mappings or structured pin contracts.",
+            )
+        ]
 
+    instructions = file_model.get("_instructions", [])
     effects = collect_gpio_effects(file_model)
+    issues: list[dict[str, Any]] = []
     contracts: list[dict[str, Any]] = []
     owned_bits_by_port: dict[str, set[int]] = {}
     for pin_name in sorted(pins):
         pin = pins[pin_name]
-        if not isinstance(pin, dict) or pin.get("direction") != "output":
+        if isinstance(pin, str):
+            continue
+        if not isinstance(pin, dict):
+            issues.append(
+                make_issue(
+                    "HK-AI-003",
+                    "ERROR",
+                    "<request>",
+                    None,
+                    f"pins.{pin_name} must be a string or object",
+                    "The checker cannot classify this pin entry as legacy or structured.",
+                    f"Replace pins.{pin_name} with a string mapping or structured pin object.",
+                )
+            )
+            continue
+        if pin.get("direction") != "output":
             continue
         port = pin.get("port")
         bits = pin.get("bits")
         drive = pin.get("drive")
         active_level = pin.get("active_level")
         initial_state = pin.get("initial_state")
-        if (
-            not isinstance(port, str)
-            or port.upper() not in {"PA", "PB"}
-            or not isinstance(bits, list)
-            or drive not in {"push_pull", "open_drain"}
-            or active_level not in {"high", "low"}
-            or initial_state not in {"on", "off"}
-        ):
+        contract_errors: list[str] = []
+        if not isinstance(port, str) or port.upper() not in {"PA", "PB"}:
+            contract_errors.append(f"pins.{pin_name}.port must be PA or PB")
+        bits_are_valid = (
+            isinstance(bits, list)
+            and bool(bits)
+            and all(
+                isinstance(bit, int) and not isinstance(bit, bool) and 0 <= bit <= 7
+                for bit in bits
+            )
+            and len(set(bits)) == len(bits)
+        )
+        if not bits_are_valid:
+            contract_errors.append(
+                f"pins.{pin_name}.bits must be a non-empty unique list of bit numbers 0..7"
+            )
+        if drive not in {"push_pull", "open_drain"}:
+            contract_errors.append(
+                f"pins.{pin_name}.drive must be push_pull or open_drain"
+            )
+        if active_level not in {"high", "low"}:
+            contract_errors.append(f"pins.{pin_name}.active_level must be high or low")
+        if initial_state not in {"on", "off"}:
+            contract_errors.append(f"pins.{pin_name}.initial_state must be on or off")
+        if not isinstance(pin.get("preserve_unowned_bits"), bool):
+            contract_errors.append(
+                f"pins.{pin_name}.preserve_unowned_bits must be boolean"
+            )
+        if contract_errors:
+            issues.append(
+                make_issue(
+                    "HK-AI-003",
+                    "ERROR",
+                    "<request>",
+                    None,
+                    "; ".join(contract_errors),
+                    "Malformed output contracts make GPIO mode, polarity, ownership, "
+                    "or safety ambiguous.",
+                    f"Correct the structured fields for pins.{pin_name} before source audit.",
+                )
+            )
             continue
         port = port.upper()
-        owned_bits = {
-            bit
-            for bit in bits
-            if isinstance(bit, int) and not isinstance(bit, bool) and 0 <= bit <= 7
-        }
-        if not owned_bits:
-            continue
+        owned_bits = set(bits)
         contract = {
             "name": pin_name,
             "pin": pin,
@@ -153,7 +296,27 @@ def audit_gpio_contract(
         contracts.append(contract)
         owned_bits_by_port.setdefault(port, set()).update(owned_bits)
 
-    issues: list[dict[str, Any]] = []
+    contract_ports = set(owned_bits_by_port)
+    for effect in effects:
+        if effect["kind"] != "unknown":
+            continue
+        port = effect["register"].split("_", 1)[0]
+        if port not in contract_ports:
+            continue
+        issues.append(
+            make_issue(
+                "HK-GPIO-002",
+                "BLOCKER",
+                file_model["path"],
+                effect["line"],
+                f"unknown GPIO write {effect['source']} targets {effect['register']} "
+                f"at instruction index {effect['index']}",
+                "The checker cannot prove which GPIO bits or electrical state this write changes.",
+                "Replace the write with BSET/BCLR on owned bits or an exact MOV/AND-or-OR/MOV "
+                "read-modify-write sequence.",
+            )
+        )
+
     preserve_ports = {
         contract["port"]
         for contract in contracts
@@ -262,6 +425,24 @@ def audit_gpio_contract(
                 )
             if enable_effect is None:
                 state_errors.append(f"lacks first {enable_register} set")
+
+            control_boundaries: list[dict[str, Any]] = []
+            if mode_effect is not None and enable_effect is not None:
+                control_boundaries = [
+                    instruction
+                    for index, instruction in enumerate(instructions)
+                    if mode_effect["index"] < index < enable_effect["index"]
+                    and instruction["op"] in GPIO_CONTROL_BOUNDARY_OPS
+                ]
+            if control_boundaries:
+                boundary_evidence = ", ".join(
+                    f"{instruction['op']}@{instruction['line']}"
+                    for instruction in control_boundaries
+                )
+                state_errors.append(
+                    f"control-flow boundary {boundary_evidence} lies between final "
+                    f"{mode_register} and first {enable_register} set"
+                )
 
             ordered = (
                 mode_effect is not None
