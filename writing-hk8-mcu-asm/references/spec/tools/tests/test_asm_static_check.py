@@ -1,5 +1,7 @@
 ﻿from __future__ import annotations
 
+import contextlib
+import io
 import json
 import shutil
 import subprocess
@@ -7,10 +9,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+
+from references.spec.tools import asm_static_check
 
 
 TOOLS = Path(__file__).resolve().parents[1]
 CHECKER = TOOLS / "asm_static_check.py"
+PROFILE_EXAMPLE = TOOLS.parent.parent / "profiles" / "HK64S825.profile.example.json"
 
 
 def gpio_request(*, drive: str = "push_pull", active_level: str = "high") -> dict:
@@ -39,20 +45,85 @@ def gpio_request(*, drive: str = "push_pull", active_level: str = "high") -> dic
     }
 
 
+def ready_profile() -> dict:
+    return json.loads(PROFILE_EXAMPLE.read_text(encoding="utf-8-sig"))
+
+
+def timing_request(
+    *,
+    label: str = "DELAY_500MS",
+    target_us: float = 500_000,
+    tolerance_percent: float = 1.0,
+    osc_hz: int = 16_000_000,
+    sck_ps: str | int = "reset",
+) -> dict:
+    return {
+        "chip": "HK64S825",
+        "clock": {"osc_hz": osc_hz, "sck_ps": sck_ps},
+        "timing": {
+            "precision": "precise",
+            "delay_targets": [
+                {
+                    "label": label,
+                    "target_us": target_us,
+                    "tolerance_percent": tolerance_percent,
+                }
+            ],
+        },
+    }
+
+
+def delay_source(outer: int = 4, *, prefix: str = "") -> str:
+    return (
+        prefix
+        + "ORG 0x0000\n"
+        + "DELAY_500MS:\n"
+        + f"  MOV A,#{outer}\n"
+        + "  MOV 82H,A\n"
+        + "DELAY_OUTER_LOOP:\n"
+        + "  MOV A,#250\n"
+        + "  MOV 81H,A\n"
+        + "DELAY_MIDDLE_LOOP:\n"
+        + "  MOV A,#250\n"
+        + "  MOV 80H,A\n"
+        + "DELAY_INNER_LOOP:\n"
+        + "  CLRWDT\n"
+        + "  DECSZR 80H\n"
+        + "  JMP DELAY_INNER_LOOP\n"
+        + "  DECSZR 81H\n"
+        + "  JMP DELAY_MIDDLE_LOOP\n"
+        + "  DECSZR 82H\n"
+        + "  JMP DELAY_OUTER_LOOP\n"
+        + "  RET\n"
+        + "END\n"
+    )
+
+
 class AsmStaticCheckCliTests(unittest.TestCase):
     def run_checker(
         self,
-        source: str,
+        source: str | list[tuple[str, str]],
         *args: str,
         map_text: str | None = None,
         request: dict | None = None,
         profile: dict | None = None,
+        subprocess_mode: bool = False,
     ):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            asm = root / "main.asm"
-            asm.write_text(source, encoding="utf-8", newline="\n")
-            command = [sys.executable, str(CHECKER), str(asm), *args, "--json"]
+            sources = [("main.asm", source)] if isinstance(source, str) else source
+            asm_paths: list[Path] = []
+            for name, text in sources:
+                asm = root / name
+                asm.write_text(text, encoding="utf-8", newline="\n")
+                asm_paths.append(asm)
+            command = [
+                sys.executable,
+                str(CHECKER),
+                *(str(path) for path in asm_paths),
+                *args,
+                "--json",
+            ]
             if map_text is not None:
                 map_path = root / "main.map"
                 map_path.write_text(map_text, encoding="utf-8", newline="\n")
@@ -65,7 +136,26 @@ class AsmStaticCheckCliTests(unittest.TestCase):
                 profile_path = root / "profile.json"
                 profile_path.write_text(json.dumps(profile), encoding="utf-8")
                 command.extend(["--profile", str(profile_path)])
-            completed = subprocess.run(command, text=True, encoding="utf-8", capture_output=True)
+            if subprocess_mode:
+                completed = subprocess.run(
+                    command,
+                    text=True,
+                    encoding="utf-8",
+                    capture_output=True,
+                )
+            else:
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    try:
+                        returncode = asm_static_check.main(command[2:])
+                    except SystemExit as exc:
+                        returncode = int(exc.code or 0)
+                completed = SimpleNamespace(
+                    returncode=returncode,
+                    stdout=stdout.getvalue(),
+                    stderr=stderr.getvalue(),
+                )
             payload = json.loads(completed.stdout)
             return completed, payload
 
@@ -1358,6 +1448,350 @@ class AsmStaticCheckCliTests(unittest.TestCase):
             "--strict-warnings",
         )
         self.assertEqual(completed.returncode, 0, payload["findings"])
+
+    def test_precise_delay_uses_reset_sck_and_emits_exact_timing_audit(self):
+        completed, payload = self.run_checker(
+            delay_source(),
+            "--toolchain",
+            "company_ide",
+            request=timing_request(),
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertEqual(len(payload["semantic_audits"]["timing"]), 1)
+        audit = payload["semantic_audits"]["timing"][0]
+        self.assertEqual(
+            {
+                key: audit[key]
+                for key in (
+                    "label",
+                    "osc_hz",
+                    "sck_ps",
+                    "sck_hz",
+                    "cycles",
+                    "actual_us",
+                    "target_us",
+                    "error_percent",
+                    "status",
+                )
+            },
+            {
+                "label": "DELAY_500MS",
+                "osc_hz": 16_000_000,
+                "sck_ps": 52,
+                "sck_hz": 2_000_000,
+                "cycles": 1_004_021,
+                "actual_us": 502_010.5,
+                "target_us": 500_000,
+                "error_percent": 0.4021,
+                "status": "pass",
+            },
+        )
+        for internal in (
+            "_instructions",
+            "_equ_symbols",
+            "_word_owners",
+            "_ambiguous_word_addresses",
+            "_duplicate_label_names",
+        ):
+            self.assertNotIn(internal, payload["files"][0])
+
+    def test_static_immediate_sck_alias_write_overrides_reset(self):
+        source = delay_source(
+            prefix=(
+                "SCK_ALIAS EQU 10H\n"
+                "ORG 0x0000\n"
+                "  MOV A,#32H\n"
+                "  MOV SCK_ALIAS,A\n"
+            )
+        ).replace("ORG 0x0000\nDELAY_500MS:", "DELAY_500MS:", 1)
+        completed, payload = self.run_checker(
+            source,
+            "--toolchain",
+            "company_ide",
+            request=timing_request(target_us=125_502.625, tolerance_percent=0.001),
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        audit = payload["semantic_audits"]["timing"][0]
+        self.assertEqual(audit["sck_ps"], 0x32)
+        self.assertEqual(audit["sck_hz"], 8_000_000)
+        self.assertEqual(audit["status"], "pass")
+
+    def test_dynamic_raw_and_multiple_sck_writes_do_not_fall_back_to_reset(self):
+        prefixes = {
+            "dynamic": "ORG 0\n  NOP\n  MOV SCK_PS,A\n",
+            "raw": "ORG 0\n  BCLR 10H,0\n",
+            "multiple": (
+                "ORG 0\n"
+                "  MOV A,#34H\n"
+                "  MOV SCK_PS,A\n"
+                "  MOV A,#32H\n"
+                "  MOV 10H,A\n"
+            ),
+        }
+        for name, prefix in prefixes.items():
+            with self.subTest(name=name):
+                source = delay_source(prefix=prefix).replace(
+                    "ORG 0x0000\nDELAY_500MS:", "DELAY_500MS:", 1
+                )
+                completed, payload = self.run_checker(
+                    source,
+                    "--toolchain",
+                    "company_ide",
+                    request=timing_request(),
+                    profile=ready_profile(),
+                )
+                clock_findings = [
+                    finding
+                    for finding in payload["findings"]
+                    if finding["rule_id"] == "HK-CLOCK-001"
+                ]
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(len(clock_findings), 1, payload["findings"])
+                audit = payload["semantic_audits"]["timing"][0]
+                self.assertEqual(audit["status"], "unproven")
+                self.assertIn("reason", audit)
+                self.assertNotEqual(audit.get("sck_hz"), 2_000_000)
+
+    def test_bad_clock_contracts_are_findings_not_tracebacks(self):
+        cases = {
+            "bool_osc": (timing_request(osc_hz=True), ready_profile()),
+            "selector_zero": (timing_request(sck_ps=0x30), ready_profile()),
+            "missing_model": (timing_request(), {"chip": "HK64S825"}),
+        }
+        for name, (request, profile) in cases.items():
+            with self.subTest(name=name):
+                completed, payload = self.run_checker(
+                    delay_source(),
+                    "--toolchain",
+                    "company_ide",
+                    request=request,
+                    profile=profile,
+                )
+                self.assertEqual(completed.returncode, 2)
+                self.assertNotIn("Traceback", completed.stderr)
+                self.assertEqual(
+                    len(
+                        [
+                            finding
+                            for finding in payload["findings"]
+                            if finding["rule_id"] == "HK-CLOCK-001"
+                        ]
+                    ),
+                    1,
+                )
+                self.assertEqual(
+                    payload["semantic_audits"]["timing"][0]["status"],
+                    "unproven",
+                )
+
+    def test_precise_label_missing_or_duplicate_is_reported_once_globally(self):
+        cases = {
+            "missing": "ORG 0\n  NOP\nEND\n",
+            "duplicate_same_file": (
+                "ORG 0\n"
+                "DELAY_500MS:\n"
+                "  CLRWDT\n"
+                "  RET\n"
+                "ORG 10H\n"
+                "DELAY_500MS:\n"
+                "  CLRWDT\n"
+                "  RET\n"
+                "END\n"
+            ),
+            "duplicate": [
+                ("one.asm", delay_source()),
+                ("two.asm", delay_source()),
+            ],
+        }
+        for name, source in cases.items():
+            with self.subTest(name=name):
+                completed, payload = self.run_checker(
+                    source,
+                    "--toolchain",
+                    "company_ide",
+                    request=timing_request(),
+                    profile=ready_profile(),
+                )
+                timing_findings = [
+                    finding
+                    for finding in payload["findings"]
+                    if finding["rule_id"] == "HK-TIME-001"
+                ]
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(len(timing_findings), 1, payload["findings"])
+                self.assertEqual(
+                    payload["semantic_audits"]["timing"][0]["status"],
+                    "unproven",
+                )
+
+    def test_timing_rejects_real_gap_data_overlap_duplicate_and_skip_hole(self):
+        cases = {
+            "gap": (
+                "ORG 0\n"
+                "DELAY_500MS:\n"
+                "  CLRWDT\n"
+                "  NOP\n"
+                "ORG 4\n"
+                "  RET\n"
+                "END\n"
+            ),
+            "data_overlap": (
+                "ORG 0\n"
+                "DELAY_500MS:\n"
+                "  CLRWDT\n"
+                "  NOP\n"
+                "ORG 2\n"
+                "  DB 00H,00H\n"
+                "ORG 2\n"
+                "  RET\n"
+                "END\n"
+            ),
+            "duplicate": (
+                "ORG 0\n"
+                "DELAY_500MS:\n"
+                "  CLRWDT\n"
+                "  NOP\n"
+                "ORG 2\n"
+                "  NOP\n"
+                "ORG 2\n"
+                "  RET\n"
+                "END\n"
+            ),
+            "skip_hole": (
+                "ORG 0\n"
+                "DELAY_500MS:\n"
+                "  MOV A,#1\n"
+                "  MOV 80H,A\n"
+                "  CLRWDT\n"
+                "  DECSZR 80H\n"
+                "ORG 5\n"
+                "  RET\n"
+                "END\n"
+            ),
+        }
+        for name, source in cases.items():
+            with self.subTest(name=name):
+                completed, payload = self.run_checker(
+                    source,
+                    "--toolchain",
+                    "company_ide",
+                    request=timing_request(),
+                    profile=ready_profile(),
+                )
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(
+                    payload["semantic_audits"]["timing"][0]["status"],
+                    "unproven",
+                )
+                self.assertEqual(
+                    len(
+                        [
+                            finding
+                            for finding in payload["findings"]
+                            if finding["rule_id"] == "HK-TIME-001"
+                        ]
+                    ),
+                    1,
+                )
+
+    def test_unsupported_step_capped_and_unterminated_delays_are_unproven(self):
+        cases = {
+            "unsupported": (
+                "ORG 0\nDELAY_500MS:\n  CLRWDT\n  ADD A,#1\n  RET\nEND\n"
+            ),
+            "step_cap": delay_source(64),
+            "no_ret": "ORG 0\nDELAY_500MS:\n  CLRWDT\n  NOP\nEND\n",
+        }
+        for name, source in cases.items():
+            with self.subTest(name=name):
+                completed, payload = self.run_checker(
+                    source,
+                    "--toolchain",
+                    "company_ide",
+                    request=timing_request(),
+                    profile=ready_profile(),
+                )
+                timing_findings = [
+                    finding
+                    for finding in payload["findings"]
+                    if finding["rule_id"] == "HK-TIME-001"
+                ]
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(len(timing_findings), 1, payload["findings"])
+                audit = payload["semantic_audits"]["timing"][0]
+                self.assertEqual(audit["status"], "unproven")
+                self.assertIn("reason", audit)
+
+    def test_tolerance_uses_unrounded_error_for_boundary_decision(self):
+        target_us = 502_010.5 / 1.0100004
+        completed, payload = self.run_checker(
+            delay_source(),
+            "--toolchain",
+            "company_ide",
+            request=timing_request(
+                target_us=target_us,
+                tolerance_percent=1.0,
+            ),
+            profile=ready_profile(),
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        audit = payload["semantic_audits"]["timing"][0]
+        self.assertGreater(audit["error_percent"], 1.0)
+        self.assertEqual(audit["status"], "fail")
+        self.assertEqual(
+            len(
+                [
+                    finding
+                    for finding in payload["findings"]
+                    if finding["rule_id"] == "HK-TIME-001"
+                ]
+            ),
+            1,
+        )
+
+    def test_approximate_or_targetless_timing_remains_compatible(self):
+        requests = [
+            {
+                "chip": "HK64S825",
+                "timing": {
+                    "precision": "approximate",
+                    "delay_targets": [{"label": "MISSING"}],
+                },
+            },
+            {"chip": "HK64S825", "timing": {"precision": "precise"}},
+        ]
+        for request in requests:
+            with self.subTest(request=request):
+                completed, payload = self.run_checker(
+                    "ORG 0\n  NOP\nEND\n",
+                    "--toolchain",
+                    "company_ide",
+                    request=request,
+                )
+                self.assertEqual(completed.returncode, 0, payload["findings"])
+                self.assertEqual(payload["semantic_audits"]["timing"], [])
+
+    def test_timing_real_subprocess_pass_and_fail_smoke(self):
+        cases = [(4, 0, "pass"), (32, 2, "fail")]
+        for outer, returncode, status in cases:
+            with self.subTest(outer=outer):
+                completed, payload = self.run_checker(
+                    delay_source(outer),
+                    "--toolchain",
+                    "company_ide",
+                    request=timing_request(),
+                    profile=ready_profile(),
+                    subprocess_mode=True,
+                )
+                self.assertEqual(completed.returncode, returncode, payload["findings"])
+                self.assertEqual(
+                    payload["semantic_audits"]["timing"][0]["status"], status
+                )
 
 
 if __name__ == "__main__":

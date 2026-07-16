@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,44 @@ GPIO_UNARY_WRITE_OPS = {
     "XCH",
     "SWAPR",
 }
+SCK_UNARY_WRITE_OPS = GPIO_UNARY_WRITE_OPS | {"SZR"}
+SCK_READ_FIRST_OPERAND_OPS = {
+    "CPL",
+    "INC",
+    "DEC",
+    "DECSZ",
+    "INCSZ",
+    "RLC",
+    "RL",
+    "RRC",
+    "RR",
+    "SWAP",
+    "BTSZ",
+    "BTSNZ",
+    "SE",
+    "SZ",
+}
+SCK_READ_SECOND_OPERAND_OPS = {
+    "ADD",
+    "ADDC",
+    "SUB",
+    "SUBC",
+    "AND",
+    "OR",
+    "XOR",
+}
+SCK_NO_REGISTER_OPS = {
+    "NOP",
+    "RET",
+    "RETI",
+    "CLRWDT",
+    "IDLE",
+    "STOP",
+    "TABL",
+    "TABH",
+    "JMP",
+    "CALL",
+}
 GPIO_CONTROL_BOUNDARY_OPS = {
     "JMP",
     "CALL",
@@ -68,6 +107,433 @@ REQUIRED_COUNTER_EFFECTS = {
     "DECSZR": "R",
     "INCSZR": "R",
 }
+SUPPORTED_DELAY_OPS = {
+    "MOV",
+    "NOP",
+    "CLRWDT",
+    "DECR",
+    "INCR",
+    "DECSZ",
+    "DECSZR",
+    "INCSZ",
+    "INCSZR",
+    "SZ",
+    "SZR",
+    "JMP",
+    "RET",
+}
+SUPPORTED_DELAY_FORMS = {
+    "MOV A,R",
+    "MOV R,A",
+    "MOV A,#K",
+    "RET",
+}
+
+
+@dataclass(frozen=True)
+class DelayResult:
+    label: str
+    cycles: int
+    sck_hz: int
+    actual_us: float
+    clrwdt_count: int
+    steps: int
+
+
+def derive_sck_hz(osc_hz: int, sck_ps: str | int, model: dict[str, Any]) -> int:
+    if not isinstance(osc_hz, int) or isinstance(osc_hz, bool) or osc_hz <= 0:
+        raise ValueError("OSC frequency must be a positive integer")
+    if not isinstance(model, dict):
+        raise ValueError("clock model must be an object")
+    raw = model.get("sck_ps_reset") if sck_ps == "reset" else sck_ps
+    if not isinstance(raw, int) or isinstance(raw, bool) or not 0 <= raw <= 0xFF:
+        raise ValueError("SCK_PS must resolve to an 8-bit integer")
+    selector = raw & 0x0F
+    if selector == 0:
+        raise ValueError("SCK_PS selector 0 is prohibited")
+    sckhl_bit = model.get("sckhl_bit")
+    if (
+        not isinstance(sckhl_bit, int)
+        or isinstance(sckhl_bit, bool)
+        or not 0 <= sckhl_bit <= 7
+    ):
+        raise ValueError("clock model sckhl_bit must be a bit number 0..7")
+    mode = "high" if raw & (1 << sckhl_bit) else "low"
+    divider_by_mode = model.get("divider_by_mode")
+    if not isinstance(divider_by_mode, dict):
+        raise ValueError("clock model divider_by_mode must be an object")
+    dividers = divider_by_mode.get(mode)
+    if not isinstance(dividers, dict) or str(selector) not in dividers:
+        raise ValueError(f"clock model lacks {mode} divider selector {selector}")
+    divider = dividers[str(selector)]
+    if not isinstance(divider, int) or isinstance(divider, bool) or divider <= 0:
+        raise ValueError("clock divider must be a positive integer")
+    return round(osc_hz / divider)
+
+
+def effect_cycles(effect: dict[str, Any], skipped: bool = False) -> int:
+    if not isinstance(effect, dict) or "cycles" not in effect:
+        raise ValueError("instruction effect is missing cycle metadata")
+    value = effect["cycles"]
+    if isinstance(value, bool):
+        raise ValueError(f"unsupported cycle metadata: {value!r}")
+    if isinstance(value, int) and value > 0:
+        return value
+    if value == "1or2":
+        return 2 if skipped else 1
+    raise ValueError(f"unsupported cycle metadata: {value!r}")
+
+
+def _delay_register(
+    token: str, equ_symbols: dict[str, dict[str, Any]], line: int | None
+) -> int:
+    if token.strip().startswith("#"):
+        raise ValueError(f"unknown register at line {line}: {token}")
+    register = resolve_byte(token, equ_symbols)
+    if register is None:
+        raise ValueError(f"unknown register at line {line}: {token}")
+    return register
+
+
+def _simulate_delay(
+    file_model: dict[str, Any],
+    label: str,
+    sck_hz: int,
+    effects: dict[str, dict[str, Any]],
+    *,
+    max_steps: int,
+    accelerate: bool,
+) -> DelayResult:
+    if not isinstance(sck_hz, int) or isinstance(sck_hz, bool) or sck_hz <= 0:
+        raise ValueError("SCK frequency must be a positive integer")
+    if (
+        not isinstance(max_steps, int)
+        or isinstance(max_steps, bool)
+        or max_steps <= 0
+    ):
+        raise ValueError("max_steps must be a positive integer")
+    if not isinstance(effects, dict):
+        raise ValueError("instruction effects must be an object")
+
+    instructions = file_model.get("_instructions", [])
+    labels = file_model.get("labels", {})
+    equ_symbols = file_model.get("_equ_symbols", {})
+    address_to_index = collect_unique_address_indices(instructions)
+    start = labels.get(label.upper()) if isinstance(labels, dict) else None
+    start_address = start.get("address") if isinstance(start, dict) else None
+    if (
+        not isinstance(start_address, int)
+        or isinstance(start_address, bool)
+        or start_address not in address_to_index
+    ):
+        raise ValueError(f"delay label cannot be resolved: {label}")
+
+    parsed_args = [split_args(item.get("args", "")) for item in instructions]
+    forms: list[str | None] = [None] * len(instructions)
+    register_operands: list[int | None] = [None] * len(instructions)
+    immediate_operands: list[int | None] = [None] * len(instructions)
+    direct_targets: list[int | None] = [None] * len(instructions)
+    normal_cycles: list[int | None] = [None] * len(instructions)
+    skipped_cycles: list[int | None] = [None] * len(instructions)
+    compile_errors: list[str | None] = [None] * len(instructions)
+    skip_ops = {"DECSZ", "DECSZR", "INCSZ", "INCSZR", "SZ", "SZR"}
+    for index, instruction in enumerate(instructions):
+        op = instruction.get("op")
+        args = parsed_args[index]
+        line = instruction.get("line")
+        try:
+            if op not in SUPPORTED_DELAY_OPS:
+                raise ValueError(
+                    f"unsupported delay instruction at line {line}: {op}"
+                )
+            effect_key = op
+            if op == "MOV":
+                if len(args) != 2:
+                    raise ValueError(f"unsupported MOV at line {line}")
+                destination, source = args[0].upper(), args[1]
+                if destination == "A" and source.startswith("#"):
+                    effect_key = "MOV A,#K"
+                    value = resolve_byte(source, equ_symbols)
+                    if value is None:
+                        raise ValueError(
+                            f"unknown MOV immediate at line {line}: {source}"
+                        )
+                    immediate_operands[index] = value
+                    forms[index] = "load-immediate"
+                elif destination == "A" and source.upper() != "A":
+                    effect_key = "MOV A,R"
+                    register_operands[index] = _delay_register(
+                        source, equ_symbols, line
+                    )
+                    forms[index] = "load-register"
+                elif source.upper() == "A" and destination != "A":
+                    effect_key = "MOV R,A"
+                    register_operands[index] = _delay_register(
+                        destination, equ_symbols, line
+                    )
+                    forms[index] = "store-register"
+                else:
+                    raise ValueError(f"unsupported MOV form at line {line}")
+            elif op in {"NOP", "CLRWDT", "RET"}:
+                if any(args):
+                    raise ValueError(f"unsupported {op} operands at line {line}")
+            elif op in {
+                "DECR",
+                "INCR",
+                "DECSZ",
+                "DECSZR",
+                "INCSZ",
+                "INCSZR",
+                "SZ",
+                "SZR",
+            }:
+                if len(args) != 1 or not args[0]:
+                    raise ValueError(f"unsupported {op} operands at line {line}")
+                register_operands[index] = _delay_register(
+                    args[0], equ_symbols, line
+                )
+            elif op == "JMP":
+                if len(args) != 1 or not args[0]:
+                    raise ValueError(f"unsupported JMP operands at line {line}")
+                target = resolve_direct_target_address(file_model, instruction)
+                if target is None:
+                    raise ValueError(
+                        f"jump target cannot be resolved at line {line}: {args[0]}"
+                    )
+                direct_targets[index] = target
+
+            effect = effects.get(effect_key)
+            if effect is None:
+                raise ValueError(f"instruction effect is missing for {effect_key}")
+            normal_cycles[index] = effect_cycles(effect)
+            skipped_cycles[index] = (
+                effect_cycles(effect, skipped=True)
+                if op in skip_ops
+                else normal_cycles[index]
+            )
+        except ValueError as exc:
+            compile_errors[index] = str(exc)
+
+    def fetch(address: int) -> tuple[int, dict[str, Any], list[str]]:
+        index = address_to_index.get(address)
+        if index is None or not instruction_uniquely_owns_word(
+            file_model, address, index
+        ):
+            owner = file_model.get("_word_owners", {}).get(address)
+            if isinstance(owner, dict) and owner.get("instruction_index") is None:
+                raise ValueError(
+                    f"delay execution reached {owner.get('kind')} word at {address:#06x}"
+                )
+            raise ValueError(
+                f"delay execution reached a gap or ambiguous word at {address:#06x}"
+            )
+        if compile_errors[index] is not None:
+            raise ValueError(compile_errors[index])
+        return index, instructions[index], parsed_args[index]
+
+    def next_word(address: int, distance: int = 1) -> int:
+        target = address + distance
+        fetch(target)
+        return target
+
+    cycles = effect_cycles(effects.get("CALL", {}))
+    pc = start_address
+    accumulator: int | None = None
+    registers: dict[int, int] = {}
+    clrwdt_count = 0
+    steps = 0
+
+    def accelerated_countdown(
+        start_address: int,
+    ) -> tuple[int, int, int, int, int] | None:
+        prefix_cycles = 0
+        prefix_steps = 0
+        prefix_clrwdt = 0
+        address = start_address
+        try:
+            while True:
+                _prefix_index, prefix, _prefix_args = fetch(address)
+                prefix_op = prefix.get("op")
+                if prefix_op not in {"NOP", "CLRWDT"}:
+                    break
+                prefix_cycles += normal_cycles[_prefix_index]
+                prefix_steps += 1
+                prefix_clrwdt += int(prefix_op == "CLRWDT")
+                address += 1
+
+            _counter_index, counter, _counter_args = fetch(address)
+            counter_op = counter.get("op")
+            if counter_op not in {"DECSZR", "INCSZR"}:
+                return None
+            register = register_operands[_counter_index]
+            if register is None:
+                return None
+            if register not in registers:
+                return None
+            _jump_index, jump, _jump_args = fetch(address + 1)
+            if jump.get("op") != "JMP":
+                return None
+            target = direct_targets[_jump_index]
+            if target != start_address:
+                return None
+            fetch(address + 2)
+        except ValueError:
+            return None
+
+        value = registers[register]
+        if counter_op == "DECSZR":
+            iterations = value if value else 256
+        else:
+            iterations = 256 - value if value else 256
+        cycles_delta = (
+            prefix_cycles * iterations
+            + normal_cycles[_counter_index] * (iterations - 1)
+            + skipped_cycles[_counter_index]
+            + normal_cycles[_jump_index] * (iterations - 1)
+        )
+        steps_delta = (prefix_steps + 1) * iterations + (iterations - 1)
+        return (
+            address + 2,
+            cycles_delta,
+            steps_delta,
+            prefix_clrwdt * iterations,
+            register,
+        )
+
+    while True:
+        if steps >= max_steps:
+            raise ValueError(f"delay routine exceeded {max_steps} interpreter steps")
+        _index, instruction, args = fetch(pc)
+        op = instruction.get("op")
+        line = instruction.get("line")
+        cycle = normal_cycles[_index]
+        if cycle is None:
+            raise ValueError(f"instruction cycle is unavailable at line {line}")
+
+        if accelerate:
+            accelerated = accelerated_countdown(pc)
+            if accelerated is not None:
+                next_pc, cycle_delta, step_delta, wdt_delta, register = accelerated
+                if steps + step_delta > max_steps:
+                    raise ValueError(
+                        f"delay routine exceeded {max_steps} interpreter steps"
+                    )
+                cycles += cycle_delta
+                steps += step_delta
+                clrwdt_count += wdt_delta
+                registers[register] = 0
+                pc = next_pc
+                continue
+        steps += 1
+
+        if op == "MOV":
+            form = forms[_index]
+            if form == "load-immediate":
+                accumulator = immediate_operands[_index]
+            elif form == "load-register":
+                register = register_operands[_index]
+                if register not in registers:
+                    raise ValueError(f"unknown MOV source at line {line}: {args[1]}")
+                accumulator = registers[register]
+            elif form == "store-register":
+                register = register_operands[_index]
+                if accumulator is None:
+                    raise ValueError(f"A is unknown at line {line}")
+                registers[register] = accumulator
+            else:
+                raise ValueError(f"unsupported MOV form at line {line}")
+            cycles += cycle
+            pc = next_word(pc)
+            continue
+
+        if op in {"NOP", "CLRWDT"}:
+            cycles += cycle
+            if op == "CLRWDT":
+                clrwdt_count += 1
+            pc = next_word(pc)
+            continue
+
+        if op in {"DECR", "INCR"}:
+            register = register_operands[_index]
+            if register not in registers:
+                raise ValueError(f"counter is unknown at line {line}: {args[0]}")
+            delta = -1 if op == "DECR" else 1
+            registers[register] = (registers[register] + delta) & 0xFF
+            cycles += cycle
+            pc = next_word(pc)
+            continue
+
+        if op in {"DECSZ", "DECSZR", "INCSZ", "INCSZR"}:
+            register = register_operands[_index]
+            if register not in registers:
+                raise ValueError(f"counter is unknown at line {line}: {args[0]}")
+            delta = -1 if op.startswith("DEC") else 1
+            result = (registers[register] + delta) & 0xFF
+            if op.endswith("R"):
+                registers[register] = result
+            else:
+                accumulator = result
+            skipped = result == 0
+            cycles += skipped_cycles[_index] if skipped else cycle
+            if skipped:
+                next_word(pc)
+                pc = next_word(pc, 2)
+            else:
+                pc = next_word(pc)
+            continue
+
+        if op in {"SZ", "SZR"}:
+            register = register_operands[_index]
+            if register not in registers:
+                raise ValueError(f"counter is unknown at line {line}: {args[0]}")
+            result = registers[register]
+            if op == "SZ":
+                accumulator = result
+            skipped = result == 0
+            cycles += skipped_cycles[_index] if skipped else cycle
+            if skipped:
+                next_word(pc)
+                pc = next_word(pc, 2)
+            else:
+                pc = next_word(pc)
+            continue
+
+        if op == "JMP":
+            target = direct_targets[_index]
+            fetch(target)
+            cycles += cycle
+            pc = target
+            continue
+
+        if op == "RET":
+            cycles += cycle
+            return DelayResult(
+                label=label,
+                cycles=cycles,
+                sck_hz=sck_hz,
+                actual_us=cycles * 1_000_000 / sck_hz,
+                clrwdt_count=clrwdt_count,
+                steps=steps,
+            )
+
+        raise ValueError(f"unhandled delay instruction: {op}")
+
+
+def simulate_delay(
+    file_model: dict[str, Any],
+    label: str,
+    sck_hz: int,
+    effects: dict[str, dict[str, Any]],
+    max_steps: int = 10_000_000,
+) -> DelayResult:
+    return _simulate_delay(
+        file_model,
+        label,
+        sck_hz,
+        effects,
+        max_steps=max_steps,
+        accelerate=True,
+    )
 
 
 def make_issue(
@@ -133,6 +599,8 @@ def resolve_direct_target_address(
     if not args or not args[0]:
         return None
     target = args[0].upper()
+    if target in file_model.get("_duplicate_label_names", set()):
+        return None
     label = file_model.get("labels", {}).get(target)
     if label is not None:
         address = label.get("address")
@@ -214,6 +682,7 @@ def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
         }
         for variant in variants:
             mnemonic = variant["mnemonic"].upper()
+            form = " ".join(variant["asm_syntax"].upper().split())
             notes = (variant.get("raw_notes") or "").strip()
             effect = {
                 "writes": (
@@ -229,15 +698,33 @@ def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
                 "semantic_status": variant["semantic_status"],
                 "delivery_policy": variant["delivery_policy"],
             }
-            previous_effect = effects.get(mnemonic)
+            if mnemonic == "MOV":
+                if form not in SUPPORTED_DELAY_FORMS:
+                    continue
+                effect_key = form
+            elif mnemonic == "RET":
+                if form != "RET":
+                    continue
+                effect_key = "RET"
+            else:
+                effect_key = mnemonic
+            previous_effect = effects.get(effect_key)
             if (
                 previous_effect is not None
-                and previous_effect["skip"] != effect["skip"]
+                and (
+                    previous_effect["skip"] != effect["skip"]
+                    or previous_effect["cycles"] != effect["cycles"]
+                    or previous_effect["writes"] != effect["writes"]
+                    or previous_effect["semantic_status"]
+                    != effect["semantic_status"]
+                    or previous_effect["delivery_policy"]
+                    != effect["delivery_policy"]
+                )
             ):
                 raise ValueError(
-                    f"instruction reference {mnemonic} has conflicting skip semantics"
+                    f"instruction reference {effect_key} has conflicting semantics or safety metadata"
                 )
-            effects.setdefault(mnemonic, effect)
+            effects.setdefault(effect_key, effect)
             if mnemonic in required_variants:
                 required_variants[mnemonic].append(effect)
     except (AttributeError, KeyError, TypeError) as exc:
@@ -269,6 +756,47 @@ def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
         ):
             raise ValueError(
                 f"instruction reference {mnemonic} semantic_status must be one of "
+                f"{sorted(ALLOWED_COUNTER_SEMANTIC_STATUSES)!r}; got {semantic_status!r}"
+            )
+    required_delay_effects = (
+        SUPPORTED_DELAY_FORMS | (SUPPORTED_DELAY_OPS - {"MOV"}) | {"CALL"}
+    )
+    missing_forms = sorted(required_delay_effects - effects.keys())
+    if missing_forms:
+        raise ValueError(
+            f"instruction reference lacks supported delay form(s): {missing_forms!r}"
+        )
+    skip_effects = {"DECSZ", "DECSZR", "INCSZ", "INCSZR", "SZ", "SZR"}
+    for effect_key in sorted(required_delay_effects):
+        effect = effects[effect_key]
+        expected_skip = effect_key in skip_effects
+        if effect.get("skip") is not expected_skip:
+            raise ValueError(
+                f"instruction reference {effect_key} skip must be {expected_skip}"
+            )
+        if expected_skip:
+            if effect.get("cycles") != "1or2":
+                raise ValueError(
+                    f"instruction reference {effect_key} cycles must be '1or2'"
+                )
+            effect_cycles(effect)
+            effect_cycles(effect, skipped=True)
+        else:
+            effect_cycles(effect)
+        expected_policy = (
+            "label_or_equ_target_only"
+            if effect_key in {"JMP", "CALL"}
+            else "allowed"
+        )
+        if effect.get("delivery_policy") != expected_policy:
+            raise ValueError(
+                f"instruction reference {effect_key} delivery_policy must be "
+                f"{expected_policy!r}; got {effect.get('delivery_policy')!r}"
+            )
+        semantic_status = effect.get("semantic_status")
+        if semantic_status not in ALLOWED_COUNTER_SEMANTIC_STATUSES:
+            raise ValueError(
+                f"instruction reference {effect_key} semantic_status must be one of "
                 f"{sorted(ALLOWED_COUNTER_SEMANTIC_STATUSES)!r}; got {semantic_status!r}"
             )
     return effects
@@ -903,6 +1431,321 @@ def audit_gpio_contract(
                 )
             )
     return issues
+
+
+def _token_is_sck_ps(token: str, file_model: dict[str, Any]) -> bool:
+    value = token.strip()
+    if not value or value.startswith("#"):
+        return False
+    if value.upper() == "SCK_PS":
+        return True
+    return resolve_byte(value, file_model.get("_equ_symbols", {})) == 0x10
+
+
+def _classify_sck_ps_reference(
+    file_model: dict[str, Any], instruction: dict[str, Any]
+) -> str | None:
+    op = instruction.get("op")
+    args = split_args(instruction.get("args", ""))
+    if op in SCK_NO_REGISTER_OPS:
+        return None
+    referenced = [
+        index for index, argument in enumerate(args) if _token_is_sck_ps(argument, file_model)
+    ]
+    if not referenced:
+        return None
+    if op == "MOV" and len(args) == 2:
+        if referenced == [0] and args[0].upper() != "A":
+            return "write"
+        if referenced == [1] and args[0].upper() == "A":
+            return "read"
+        return "potential-write"
+    if op in GPIO_SECOND_OPERAND_WRITE_OPS and len(args) == 2:
+        return "write" if referenced == [1] else "potential-write"
+    if op in GPIO_FIRST_OPERAND_WRITE_OPS and len(args) == 2:
+        return "write" if referenced == [0] else "potential-write"
+    if op in SCK_UNARY_WRITE_OPS and len(args) == 1:
+        return "write" if referenced == [0] else "potential-write"
+    if op in SCK_READ_FIRST_OPERAND_OPS:
+        return "read" if referenced == [0] else "potential-write"
+    if op in SCK_READ_SECOND_OPERAND_OPS and len(args) == 2:
+        return (
+            "read"
+            if referenced == [1] and args[0].upper() == "A"
+            else "potential-write"
+        )
+    return "potential-write"
+
+
+def _source_sck_ps_value(files: list[dict[str, Any]]) -> int | None:
+    writes: list[tuple[dict[str, Any], int, dict[str, Any], str]] = []
+    for file_model in files:
+        official_alias = file_model.get("_equ_symbols", {}).get("SCK_PS")
+        if official_alias is not None and official_alias.get("value") != 0x10:
+            raise ValueError(
+                f"{file_model.get('path', '<source>')} redefines SCK_PS to a conflicting address"
+            )
+        for index, instruction in enumerate(file_model.get("_instructions", [])):
+            classification = _classify_sck_ps_reference(file_model, instruction)
+            if classification in {"write", "potential-write"}:
+                writes.append((file_model, index, instruction, classification))
+
+    if not writes:
+        return None
+    if len(writes) != 1:
+        raise ValueError(
+            f"source contains {len(writes)} possible SCK_PS writes; exactly one static write is required"
+        )
+
+    file_model, store_index, store, classification = writes[0]
+    store_args = split_args(store.get("args", ""))
+    if (
+        classification != "write"
+        or store.get("op") != "MOV"
+        or len(store_args) != 2
+        or not _token_is_sck_ps(store_args[0], file_model)
+        or store_args[1].upper() != "A"
+    ):
+        raise ValueError(
+            f"SCK_PS write at line {store.get('line')} is not MOV SCK_PS,A"
+        )
+    store_address = store.get("address")
+    if (
+        not isinstance(store_address, int)
+        or isinstance(store_address, bool)
+        or not instruction_uniquely_owns_word(file_model, store_address, store_index)
+    ):
+        raise ValueError("SCK_PS store does not uniquely own its machine word")
+
+    address_to_index = collect_unique_address_indices(file_model.get("_instructions", []))
+    load_address = store_address - 1
+    load_index = address_to_index.get(load_address)
+    if load_index is None or not instruction_uniquely_owns_word(
+        file_model, load_address, load_index
+    ):
+        raise ValueError("SCK_PS store lacks an adjacent unique immediate load")
+    load = file_model["_instructions"][load_index]
+    load_args = split_args(load.get("args", ""))
+    if (
+        load.get("op") != "MOV"
+        or len(load_args) != 2
+        or load_args[0].upper() != "A"
+        or not load_args[1].startswith("#")
+    ):
+        raise ValueError("SCK_PS store is not preceded by MOV A,#K")
+    value = resolve_byte(load_args[1], file_model.get("_equ_symbols", {}))
+    if value is None:
+        raise ValueError("SCK_PS immediate value cannot be resolved")
+    return value
+
+
+def _prove_effective_clock(
+    files: list[dict[str, Any]],
+    request: dict[str, Any],
+    profile: dict[str, Any] | None,
+) -> tuple[int, int, int]:
+    if not isinstance(request, dict):
+        raise ValueError("precise timing requires a request object")
+    if not isinstance(profile, dict):
+        raise ValueError("precise timing requires a profile object")
+    clock = request.get("clock")
+    if clock is None:
+        osc_hz = request.get("clock_hz")
+        requested_sck_ps: str | int = "reset"
+    elif isinstance(clock, dict):
+        osc_hz = clock.get("osc_hz")
+        requested_sck_ps = clock.get("sck_ps", "reset")
+    else:
+        raise ValueError("request clock must be an object")
+    model = profile.get("clock_model")
+    if not isinstance(model, dict):
+        raise ValueError("profile clock_model is missing or invalid")
+    if model.get("sck_ps_register") != "SCK_PS":
+        raise ValueError("profile clock_model.sck_ps_register must be SCK_PS")
+
+    source_sck_ps = _source_sck_ps_value(files)
+    effective_sck_ps: str | int = (
+        requested_sck_ps if source_sck_ps is None else source_sck_ps
+    )
+    sck_hz = derive_sck_hz(osc_hz, effective_sck_ps, model)
+    raw_sck_ps = (
+        model.get("sck_ps_reset")
+        if effective_sck_ps == "reset"
+        else effective_sck_ps
+    )
+    if (
+        not isinstance(raw_sck_ps, int)
+        or isinstance(raw_sck_ps, bool)
+        or not 0 <= raw_sck_ps <= 0xFF
+    ):
+        raise ValueError("effective SCK_PS is not an 8-bit integer")
+    return osc_hz, raw_sck_ps, sck_hz
+
+
+def _resolve_global_delay_label(
+    files: list[dict[str, Any]], label: str
+) -> dict[str, Any]:
+    definitions: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    key = label.upper()
+    for file_model in files:
+        if key in file_model.get("_duplicate_label_names", set()):
+            raise ValueError(
+                f"delay label {label} is defined more than once in "
+                f"{file_model.get('path', '<source>')}"
+            )
+        candidate = file_model.get("labels", {}).get(key)
+        if isinstance(candidate, dict):
+            definitions.append((file_model, candidate))
+    if len(definitions) != 1:
+        raise ValueError(
+            f"delay label {label} must resolve once across all files; found {len(definitions)}"
+        )
+    file_model, definition = definitions[0]
+    address = definition.get("address")
+    address_to_index = collect_unique_address_indices(file_model.get("_instructions", []))
+    index = address_to_index.get(address)
+    if (
+        index is None
+        or not isinstance(address, int)
+        or isinstance(address, bool)
+        or not instruction_uniquely_owns_word(file_model, address, index)
+    ):
+        raise ValueError(
+            f"delay label {label} does not uniquely name an instruction word"
+        )
+    return file_model
+
+
+def audit_timing_contract(
+    files: list[dict[str, Any]],
+    request: dict[str, Any] | None,
+    profile: dict[str, Any] | None,
+    effects: dict[str, dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not isinstance(request, dict):
+        return [], []
+    timing = request.get("timing")
+    if not isinstance(timing, dict) or timing.get("precision") != "precise":
+        return [], []
+    targets = timing.get("delay_targets")
+    if not isinstance(targets, list) or not targets:
+        return [], []
+
+    try:
+        osc_hz, sck_ps, sck_hz = _prove_effective_clock(files, request, profile)
+        clock_reason = None
+    except ValueError as exc:
+        osc_hz = None
+        sck_ps = None
+        sck_hz = None
+        clock_reason = str(exc)
+
+    audits: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
+    for position, target in enumerate(targets):
+        label = target.get("label") if isinstance(target, dict) else None
+        target_us = target.get("target_us") if isinstance(target, dict) else None
+        tolerance = (
+            target.get("tolerance_percent") if isinstance(target, dict) else None
+        )
+        audit: dict[str, Any] = {
+            "label": label,
+            "osc_hz": osc_hz,
+            "sck_ps": sck_ps,
+            "sck_hz": sck_hz,
+            "cycles": None,
+            "actual_us": None,
+            "target_us": target_us,
+            "error_percent": None,
+        }
+
+        def unproven(rule_id: str, reason: str, file: str = "<request>") -> None:
+            audit["status"] = "unproven"
+            audit["reason"] = reason
+            issues.append(
+                make_issue(
+                    rule_id,
+                    "BLOCKER",
+                    file,
+                    None,
+                    f"timing target {label!r} is unproven: {reason}",
+                    "Precise delay timing cannot be proven before compilation.",
+                    "Provide a complete clock contract and a uniquely auditable delay routine.",
+                )
+            )
+
+        if clock_reason is not None:
+            unproven("HK-CLOCK-001", clock_reason)
+            audits.append(audit)
+            continue
+        if not isinstance(label, str) or not label.strip():
+            unproven("HK-TIME-001", f"delay target {position} has no valid label")
+            audits.append(audit)
+            continue
+        if (
+            not isinstance(target_us, (int, float))
+            or isinstance(target_us, bool)
+            or target_us <= 0
+            or not isinstance(tolerance, (int, float))
+            or isinstance(tolerance, bool)
+            or tolerance < 0
+        ):
+            unproven("HK-TIME-001", "target_us/tolerance_percent is invalid")
+            audits.append(audit)
+            continue
+        try:
+            file_model = _resolve_global_delay_label(files, label)
+        except ValueError as exc:
+            unproven("HK-TIME-001", str(exc))
+            audits.append(audit)
+            continue
+        if effects is None:
+            unproven(
+                "HK-TIME-001",
+                "instruction cycle metadata is unavailable",
+                file_model.get("path", "<source>"),
+            )
+            audits.append(audit)
+            continue
+        try:
+            result = simulate_delay(file_model, label, sck_hz, effects)
+        except ValueError as exc:
+            unproven(
+                "HK-TIME-001", str(exc), file_model.get("path", "<source>")
+            )
+            audits.append(audit)
+            continue
+
+        error_percent = abs(result.actual_us - target_us) / target_us * 100
+        audit.update(
+            {
+                "cycles": result.cycles,
+                "actual_us": result.actual_us,
+                "error_percent": error_percent,
+            }
+        )
+        if error_percent <= tolerance:
+            audit["status"] = "pass"
+        else:
+            reason = (
+                f"error {error_percent}% exceeds tolerance {tolerance}%"
+            )
+            audit["status"] = "fail"
+            audit["reason"] = reason
+            issues.append(
+                make_issue(
+                    "HK-TIME-001",
+                    "BLOCKER",
+                    file_model.get("path", "<source>"),
+                    file_model.get("labels", {}).get(label.upper(), {}).get("line"),
+                    f"{label}: {result.cycles} cycles at {sck_hz} Hz gives "
+                    f"{result.actual_us} us; target {target_us} us, {reason}",
+                    "The generated delay is outside its declared TimingContract.",
+                    "Recalculate loop counts from the proven SCK and rerun the cycle audit.",
+                )
+            )
+        audits.append(audit)
+    return audits, issues
 
 
 def audit_unused_equ(file_model: dict[str, Any]) -> list[dict[str, Any]]:

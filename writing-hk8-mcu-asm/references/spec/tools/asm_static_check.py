@@ -21,6 +21,7 @@ try:
     from .asm_semantic_gates import (
         audit_counter_loops,
         audit_gpio_contract,
+        audit_timing_contract,
         audit_unused_equ,
         load_instruction_effects,
     )
@@ -28,6 +29,7 @@ except ImportError:
     from asm_semantic_gates import (
         audit_counter_loops,
         audit_gpio_contract,
+        audit_timing_contract,
         audit_unused_equ,
         load_instruction_effects,
     )
@@ -223,6 +225,7 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
     occupied: dict[int, dict[str, Any]] = {}
     ambiguous_word_addresses: set[int] = set()
     labels: dict[str, dict[str, Any]] = {}
+    duplicate_label_names: set[str] = set()
     table_pairs: list[dict[str, str]] = []
     instructions: list[dict[str, Any]] = []
     equ_symbols: dict[str, dict[str, Any]] = {}
@@ -277,7 +280,10 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
 
         label, rest = split_label(code)
         if label:
-            labels[label.upper()] = {"name": label, "address": address, "line": line_number, "file": str(path)}
+            label_key = label.upper()
+            if label_key in labels:
+                duplicate_label_names.add(label_key)
+            labels[label_key] = {"name": label, "address": address, "line": line_number, "file": str(path)}
         rest = rest.strip()
         if not rest:
             continue
@@ -632,6 +638,7 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
         "uses_tabh": any(item["op"] == "TABH" for item in instructions),
         "sram_addresses": [f"0x{value:02X}" for value in sorted(sram_addresses)],
         "labels": labels,
+        "_duplicate_label_names": duplicate_label_names,
         "table_pair_declarations": table_pairs,
         "_instructions": instructions,
         "_equ_symbols": equ_symbols,
@@ -978,10 +985,19 @@ def main(argv: list[str] | None = None) -> int:
         if request_context is not None:
             findings.extend(audit_gpio_contract(file_result, request_context))
         findings.extend(audit_unused_equ(file_result))
+    timing_audits, timing_findings = audit_timing_contract(
+        files,
+        request_context,
+        profile_context,
+        instruction_effects,
+    )
+    findings.extend(timing_findings)
+    for file_result in files:
         file_result.pop("_instructions", None)
         file_result.pop("_equ_symbols", None)
         file_result.pop("_word_owners", None)
         file_result.pop("_ambiguous_word_addresses", None)
+        file_result.pop("_duplicate_label_names", None)
     severity_counts = Counter(item["severity"] for item in findings)
     if severity_counts["BLOCKER"] or severity_counts["ERROR"]:
         exit_code = 2
@@ -1006,6 +1022,7 @@ def main(argv: list[str] | None = None) -> int:
         "map_files": [str(path.resolve()) for path in args.maps],
         "files": files,
         "table_pairs": table_pairs,
+        "semantic_audits": {"timing": timing_audits},
         "findings": findings,
         "summary": {
             "blockers": severity_counts["BLOCKER"],
