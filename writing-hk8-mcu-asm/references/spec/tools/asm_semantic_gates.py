@@ -55,6 +55,9 @@ GPIO_CONTROL_BOUNDARY_OPS = {
     "SZR",
 }
 ACCUMULATOR_ONLY_COUNTER_OPS = {"DECSZ", "INCSZ"}
+NONLINEAR_CONTROL_OPS = {"JMP", "CALL", "RET", "RETI"}
+PROGRAM_MIN = 0x0000
+PROGRAM_MAX = 0x03FF
 REQUIRED_COUNTER_EFFECTS = {
     "DECSZ": "A",
     "INCSZ": "A",
@@ -87,6 +90,46 @@ def split_args(args: str) -> list[str]:
     return [part.strip() for part in args.split(",")]
 
 
+def collect_unique_address_indices(
+    instructions: list[dict[str, Any]],
+) -> dict[int, int]:
+    address_to_index: dict[int, int] = {}
+    ambiguous_addresses: set[int] = set()
+    for index, instruction in enumerate(instructions):
+        address = instruction.get("address")
+        if not isinstance(address, int) or isinstance(address, bool):
+            continue
+        if address in address_to_index:
+            ambiguous_addresses.add(address)
+        else:
+            address_to_index[address] = index
+    for address in ambiguous_addresses:
+        address_to_index.pop(address, None)
+    return address_to_index
+
+
+def resolve_direct_target_address(
+    file_model: dict[str, Any], instruction: dict[str, Any]
+) -> int | None:
+    args = split_args(instruction.get("args", ""))
+    if not args or not args[0]:
+        return None
+    target = args[0].upper()
+    label = file_model.get("labels", {}).get(target)
+    if label is not None:
+        address = label.get("address")
+    else:
+        symbol = file_model.get("_equ_symbols", {}).get(target)
+        address = symbol.get("value") if symbol is not None else None
+    if (
+        not isinstance(address, int)
+        or isinstance(address, bool)
+        or not PROGRAM_MIN <= address <= PROGRAM_MAX
+    ):
+        return None
+    return address
+
+
 def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
     try:
         document = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -98,10 +141,13 @@ def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
         if not isinstance(variants, list):
             raise TypeError("variants must be a list")
         effects: dict[str, dict[str, Any]] = {}
+        required_variants = {
+            mnemonic: [] for mnemonic in REQUIRED_COUNTER_EFFECTS
+        }
         for variant in variants:
             mnemonic = variant["mnemonic"].upper()
             notes = (variant.get("raw_notes") or "").strip()
-            effects[mnemonic] = {
+            effect = {
                 "writes": (
                     "R"
                     if notes.startswith("R ←")
@@ -115,21 +161,40 @@ def load_instruction_effects(path: Path) -> dict[str, dict[str, Any]]:
                 "semantic_status": variant["semantic_status"],
                 "delivery_policy": variant["delivery_policy"],
             }
+            effects[mnemonic] = effect
+            if mnemonic in required_variants:
+                required_variants[mnemonic].append(effect)
     except (AttributeError, KeyError, TypeError) as exc:
         raise ValueError(f"instruction reference has invalid structure: {exc}") from exc
 
-    missing = sorted(set(REQUIRED_COUNTER_EFFECTS) - set(effects))
-    if missing:
-        raise ValueError(
-            "instruction reference is missing required mnemonic(s): " + ", ".join(missing)
-        )
     for mnemonic, expected_writes in REQUIRED_COUNTER_EFFECTS.items():
-        effect = effects[mnemonic]
+        variants_for_mnemonic = required_variants[mnemonic]
+        if len(variants_for_mnemonic) != 1:
+            raise ValueError(
+                f"instruction reference {mnemonic} must have exactly one variant; "
+                f"found {len(variants_for_mnemonic)}"
+            )
+        effect = variants_for_mnemonic[0]
         if effect["skip"] is not True or effect["writes"] != expected_writes:
             raise ValueError(
                 f"instruction reference {mnemonic} must have skip=True and "
                 f"writes={expected_writes}; got skip={effect['skip']!r}, "
                 f"writes={effect['writes']!r}"
+            )
+        if effect["delivery_policy"] != "allowed":
+            raise ValueError(
+                f"instruction reference {mnemonic} delivery_policy must be 'allowed'; "
+                f"got {effect['delivery_policy']!r}"
+            )
+        semantic_status = effect["semantic_status"]
+        if (
+            not isinstance(semantic_status, str)
+            or not semantic_status.strip()
+            or semantic_status.strip().lower() in {"open", "restricted"}
+        ):
+            raise ValueError(
+                f"instruction reference {mnemonic} semantic_status must be non-empty and "
+                f"not open/restricted; got {semantic_status!r}"
             )
     return effects
 
@@ -138,10 +203,8 @@ def audit_counter_loops(
     file_model: dict[str, Any], effects: dict[str, dict[str, Any]]
 ) -> list[dict[str, Any]]:
     instructions = file_model.get("_instructions", [])
-    labels = file_model.get("labels", {})
-    address_to_index: dict[int, int] = {}
-    for index, instruction in enumerate(instructions):
-        address_to_index.setdefault(instruction["address"], index)
+    address_to_index = collect_unique_address_indices(instructions)
+    reachable_indices = collect_reachable_instruction_indices(file_model)
 
     issues: list[dict[str, Any]] = []
     for index, instruction in enumerate(instructions[:-1]):
@@ -153,22 +216,26 @@ def audit_counter_loops(
         jump = instructions[index + 1]
         if jump["op"] != "JMP":
             continue
+        instruction_address = instruction.get("address")
+        jump_address = jump.get("address")
+        if (
+            not isinstance(instruction_address, int)
+            or isinstance(instruction_address, bool)
+            or not isinstance(jump_address, int)
+            or isinstance(jump_address, bool)
+            or jump_address != instruction_address + 1
+            or address_to_index.get(instruction_address) != index
+            or address_to_index.get(jump_address) != index + 1
+        ):
+            continue
         jump_args = split_args(jump["args"])
         if not jump_args or not jump_args[0]:
             continue
         target = jump_args[0].upper()
-        label = labels.get(target)
-        if label is None:
+        target_address = resolve_direct_target_address(file_model, jump)
+        if target_address is None or target_address > instruction_address:
             continue
-        label_address = label.get("address")
-        instruction_address = instruction.get("address")
-        if (
-            not isinstance(label_address, int)
-            or not isinstance(instruction_address, int)
-            or label_address > instruction_address
-        ):
-            continue
-        loop_start = address_to_index.get(label_address)
+        loop_start = address_to_index.get(target_address)
         if loop_start is None or effect.get("writes") != "A":
             continue
 
@@ -182,7 +249,7 @@ def audit_counter_loops(
                 file_model["path"],
                 instruction["line"],
                 f"{op} writes A instead of operand {operand}; following JMP {target} "
-                f"is a backward/same target ({label_address:#06x} <= "
+                f"is a backward/same target ({target_address:#06x} <= "
                 f"{instruction_address:#06x})",
                 "The loop-carried counter is not written back, so the loop may never progress "
                 "to its exit path.",
@@ -190,7 +257,26 @@ def audit_counter_loops(
             )
         )
 
+        if loop_start > index:
+            continue
         loop_slice = instructions[loop_start : index + 2]
+        slice_is_contiguous = all(
+            candidate.get("address") == target_address + offset
+            and address_to_index.get(target_address + offset) == loop_start + offset
+            for offset, candidate in enumerate(loop_slice)
+        )
+        required_reachable = {loop_start, index, index + 1}
+        prefix_has_control_boundary = any(
+            candidate["op"] in NONLINEAR_CONTROL_OPS
+            or effects.get(candidate["op"], {}).get("skip") is True
+            for candidate in loop_slice[:-2]
+        )
+        if (
+            not slice_is_contiguous
+            or not required_reachable.issubset(reachable_indices)
+            or prefix_has_control_boundary
+        ):
+            continue
         if any(candidate["op"] == "CLRWDT" for candidate in loop_slice):
             issues.append(
                 make_issue(
@@ -198,7 +284,7 @@ def audit_counter_loops(
                     "BLOCKER",
                     file_model["path"],
                     instruction["line"],
-                    f"loop {label['name']} through JMP {target} contains CLRWDT, but "
+                    f"loop ending at JMP {target} contains CLRWDT, but "
                     f"{op} writes A and counter operand {operand} is not written back",
                     "The watchdog is continuously cleared while a non-progressing loop can "
                     "run forever.",
@@ -330,33 +416,40 @@ def collect_reachable_instruction_indices(file_model: dict[str, Any]) -> set[int
     instructions = file_model.get("_instructions", [])
     if not instructions:
         return set()
-    labels = file_model.get("labels", {})
-    address_to_index: dict[int, int] = {}
-    for index, instruction in enumerate(instructions):
-        address_to_index.setdefault(instruction["address"], index)
-    entry_address = 0 if 0 in address_to_index else min(address_to_index)
-    entry_index = address_to_index[entry_address]
+    address_to_index = collect_unique_address_indices(instructions)
+    source_addresses = [
+        instruction.get("address")
+        for instruction in instructions
+        if isinstance(instruction.get("address"), int)
+        and not isinstance(instruction.get("address"), bool)
+    ]
+    if not source_addresses:
+        return set()
+    entry_address = 0 if 0 in source_addresses else min(source_addresses)
+    entry_index = address_to_index.get(entry_address)
+    if entry_index is None:
+        return set()
 
     def sequential_index(index: int, distance: int = 1) -> int | None:
         candidate = index + distance
         if candidate >= len(instructions):
             return None
         address = instructions[index]["address"]
+        if address_to_index.get(address) != index:
+            return None
         if any(
             instructions[index + offset]["address"] != address + offset
+            or address_to_index.get(address + offset) != index + offset
             for offset in range(1, distance + 1)
         ):
             return None
         return candidate
 
     def direct_target_index(instruction: dict[str, Any]) -> int | None:
-        args = split_args(instruction["args"])
-        if not args:
-            return None
-        label = labels.get(args[0].upper())
-        if label is None:
-            return None
-        return address_to_index.get(label["address"])
+        target_address = resolve_direct_target_address(file_model, instruction)
+        return (
+            None if target_address is None else address_to_index.get(target_address)
+        )
 
     reachable: set[int] = set()
     pending = [entry_index]

@@ -205,6 +205,37 @@ class AsmStaticCheckCliTests(unittest.TestCase):
                     mnemonic,
                 )
             )
+        decsz_variant = next(
+            variant
+            for variant in reference_document["variants"]
+            if variant["mnemonic"].upper() == "DECSZ"
+        )
+        duplicate_document = dict(reference_document)
+        duplicate_document["variants"] = [
+            *reference_document["variants"],
+            dict(decsz_variant),
+        ]
+        reference_cases.append(
+            (
+                "duplicate_DECSZ",
+                json.dumps(duplicate_document, ensure_ascii=False),
+                "DECSZ",
+            )
+        )
+        restricted_document = dict(reference_document)
+        restricted_document["variants"] = [
+            {**variant, "delivery_policy": "restricted"}
+            if variant["mnemonic"].upper() == "DECSZ"
+            else variant
+            for variant in reference_document["variants"]
+        ]
+        reference_cases.append(
+            (
+                "restricted_DECSZ",
+                json.dumps(restricted_document, ensure_ascii=False),
+                "delivery_policy",
+            )
+        )
 
         for case_name, reference_text, expected_evidence in reference_cases:
             with self.subTest(case_name=case_name):
@@ -554,6 +585,83 @@ class AsmStaticCheckCliTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, payload["findings"])
         self.assertNotIn("HK-SYN-012", self.rule_ids(payload))
+        self.assertNotIn("HK-WDT-002", self.rule_ids(payload))
+
+    def test_counter_skip_and_jump_must_be_adjacent_machine_words(self):
+        separators = {
+            "db_word": "  DB 00H,00H\n",
+            "org_gap": "ORG 0x0010\n",
+        }
+        for case_name, separator in separators.items():
+            with self.subTest(case_name=case_name):
+                completed, payload = self.run_checker(
+                    "ORG 0x0000\n"
+                    "LOOP:\n"
+                    "  CLRWDT\n"
+                    "  DECSZ 80H\n"
+                    f"{separator}"
+                    "  JMP LOOP\n"
+                    "END\n",
+                    "--toolchain",
+                    "company_ide",
+                )
+
+                self.assertEqual(completed.returncode, 0, payload["findings"])
+                self.assertNotIn("HK-SYN-012", self.rule_ids(payload))
+                self.assertNotIn("HK-WDT-002", self.rule_ids(payload))
+
+    def test_overlapping_counter_skip_and_jump_do_not_feed_semantic_audit(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "LOOP:\n"
+            "  CLRWDT\n"
+            "  DECSZ 80H\n"
+            "ORG 0x0001\n"
+            "  JMP LOOP\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("HK-LAYOUT-004", self.rule_ids(payload))
+        self.assertNotIn("HK-SYN-012", self.rule_ids(payload))
+        self.assertNotIn("HK-WDT-002", self.rule_ids(payload))
+
+    def test_equ_counter_loop_target_is_resolved(self):
+        for op in ("DECSZ", "INCSZ"):
+            with self.subTest(op=op):
+                completed, payload = self.run_checker(
+                    "LOOP_ADDR EQU 00H\n"
+                    "ORG 0x0000\n"
+                    "START:\n"
+                    f"  {op} 80H\n"
+                    "  JMP LOOP_ADDR\n"
+                    "END\n",
+                    "--toolchain",
+                    "company_ide",
+                )
+
+                self.assertEqual(completed.returncode, 2)
+                self.assertIn("HK-SYN-012", self.rule_ids(payload))
+                self.assertNotIn("HK-WDT-002", self.rule_ids(payload))
+
+    def test_unreachable_clrwdt_does_not_mask_a_non_progressing_counter_loop(self):
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "LOOP:\n"
+            "  JMP CHECK\n"
+            "  CLRWDT\n"
+            "CHECK:\n"
+            "  DECSZ 80H\n"
+            "  JMP LOOP\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("HK-SYN-012", self.rule_ids(payload))
         self.assertNotIn("HK-WDT-002", self.rule_ids(payload))
 
     def test_decszr_backward_counter_loop_has_no_constructive_finding(self):
@@ -1036,6 +1144,36 @@ class AsmStaticCheckCliTests(unittest.TestCase):
             "--strict-warnings",
             request=gpio_request(),
         )
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertNotIn("HK-GPIO-002", self.rule_ids(payload))
+
+    def test_gpio_contract_accepts_init_routine_reached_by_equ_call(self):
+        completed, payload = self.run_checker(
+            "INIT_GPIO_ADDR EQU 03H\n"
+            "ORG 0x0000\n"
+            "START:\n"
+            "  CALL INIT_GPIO_ADDR\n"
+            "MAIN:\n"
+            "  NOP\n"
+            "  JMP MAIN\n"
+            "INIT_GPIO:\n"
+            "  BCLR PA_POD,0\n"
+            "  BCLR PA_POD,3\n"
+            "  BCLR PA_POD,5\n"
+            "  BCLR PA_PIO,0\n"
+            "  BCLR PA_PIO,3\n"
+            "  BCLR PA_PIO,5\n"
+            "  BSET PA_POE,0\n"
+            "  BSET PA_POE,3\n"
+            "  BSET PA_POE,5\n"
+            "  RET\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            "--strict-warnings",
+            request=gpio_request(),
+        )
+
         self.assertEqual(completed.returncode, 0, payload["findings"])
         self.assertNotIn("HK-GPIO-002", self.rule_ids(payload))
 
