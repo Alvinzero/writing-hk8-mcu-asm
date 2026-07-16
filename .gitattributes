@@ -1,0 +1,4 @@
+# 保持内容哈希依赖文件在所有平台使用固定换行符。
+writing-hk8-mcu-asm/references/spec/templates/*.asm text eol=lf
+writing-hk8-mcu-asm/references/spec/rules/instruction-metadata.json text eol=crlf
+writing-hk8-mcu-asm/references/spec/rules/register-reference.json text eol=crlf
