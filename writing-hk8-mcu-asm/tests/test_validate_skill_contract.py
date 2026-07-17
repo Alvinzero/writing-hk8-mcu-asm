@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import subprocess
@@ -12,6 +13,16 @@ from pathlib import Path
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = SKILL_ROOT / "scripts" / "validate_skill.py"
 SPEC_ROOT = SKILL_ROOT / "references" / "spec"
+PORTABLE_RUNTIME_SCRIPTS = [
+    SKILL_ROOT / "scripts" / "hk8asm.py",
+    SKILL_ROOT / "scripts" / "builtin_compiler.py",
+    SKILL_ROOT / "scripts" / "compiler_adapter.py",
+    SKILL_ROOT / "scripts" / "install.py",
+    SKILL_ROOT / "scripts" / "validate_skill.py",
+    SPEC_ROOT / "tools" / "asm_static_check.py",
+    SPEC_ROOT / "tools" / "asm_semantic_gates.py",
+    SPEC_ROOT / "tools" / "validate_spec.py",
+]
 
 
 class ValidateSkillContractTests(unittest.TestCase):
@@ -102,6 +113,19 @@ class ValidateSkillContractTests(unittest.TestCase):
                 text = path.read_text(encoding="utf-8")
                 for stale in ("D:/spec", "D:\\spec", "D:/path", "D:\\path", "D:/hk64s8x"):
                     self.assertNotIn(stale, text)
+
+    def test_portable_runtime_supports_python37_without_newer_path_apis(self) -> None:
+        skill_text = self.skill_text()
+        self.assertIn("Python 3.7+", skill_text)
+        self.assertNotIn("Python 3.8+", skill_text)
+        self.assertNotIn("Python 3.10+", skill_text)
+        for path in PORTABLE_RUNTIME_SCRIPTS:
+            with self.subTest(path=path.relative_to(SKILL_ROOT).as_posix()):
+                source = path.read_text(encoding="utf-8")
+                ast.parse(source, filename=str(path), feature_version=(3, 7))
+                self.assertNotIn(":=", source)
+                self.assertNotIn(".is_relative_to(", source)
+                self.assertNotIn("missing_ok=", source)
 
     def test_default_compile_path_is_builtin_and_portable(self) -> None:
         skill_text = self.skill_text()

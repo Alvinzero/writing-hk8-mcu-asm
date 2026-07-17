@@ -1483,11 +1483,11 @@ def _classify_sck_ps_reference(
     args = split_args(instruction.get("args", ""))
     if op in SCK_NO_REGISTER_OPS:
         return None
-    references = {
-        index: status
-        for index, argument in enumerate(args)
-        if (status := _sck_ps_token_status(argument, file_model)) is not None
-    }
+    references = {}
+    for index, argument in enumerate(args):
+        status = _sck_ps_token_status(argument, file_model)
+        if status is not None:
+            references[index] = status
     referenced = list(references)
     if not referenced:
         return None

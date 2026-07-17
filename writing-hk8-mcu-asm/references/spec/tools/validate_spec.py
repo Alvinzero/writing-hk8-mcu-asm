@@ -165,13 +165,17 @@ def collect_valid_rule_ids(rules: Any, schema: dict[str, Any]) -> list[str]:
     pattern = rule_id_schema.get("pattern")
     if not isinstance(rules, list):
         return []
-    return [
-        value
-        for rule in rules
-        if isinstance(rule, dict)
-        and isinstance((value := rule.get("rule_id")), str)
-        and (not isinstance(pattern, str) or re.fullmatch(pattern, value) is not None)
-    ]
+    rule_ids = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        value = rule.get("rule_id")
+        if not isinstance(value, str):
+            continue
+        if isinstance(pattern, str) and re.fullmatch(pattern, value) is None:
+            continue
+        rule_ids.append(value)
+    return rule_ids
 
 
 def fallback_rule_schema_check(

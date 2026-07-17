@@ -145,6 +145,21 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def unlink_if_exists(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+
+
+def path_is_relative_to(path: Path, base: Path) -> bool:
+    try:
+        path.relative_to(base)
+    except ValueError:
+        return False
+    return True
+
+
 def require(condition: bool, code: str, message: str) -> None:
     if not condition:
         raise GateError(code, message)
@@ -866,7 +881,7 @@ def invoke_adapter(
     stdout_path = work_dir / "logs" / f"{label}.stdout.txt"
     stderr_path = work_dir / "logs" / f"{label}.stderr.txt"
     write_json(input_path, payload)
-    output_path.unlink(missing_ok=True)
+    unlink_if_exists(output_path)
     command = [
         *expand_adapter_command(adapter["command"]),
         role,
@@ -1324,7 +1339,7 @@ def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
     run["artifact_sha256"] = None
     run["evidence_sha256"] = None
     run.pop("failure", None)
-    (run_dir / "evidence.json").unlink(missing_ok=True)
+    unlink_if_exists(run_dir / "evidence.json")
     write_json(run_dir / "run.json", run)
 
     try:
@@ -1409,7 +1424,7 @@ def command_release(args: argparse.Namespace) -> dict[str, Any]:
     resolved_run_dir = run_dir.resolve()
     resolved_output = args.output.resolve(strict=False)
     require(
-        not resolved_output.is_relative_to(resolved_run_dir),
+        not path_is_relative_to(resolved_output, resolved_run_dir),
         "RELEASE_BLOCKED",
         "Release output must be outside the run directory",
     )
@@ -1439,7 +1454,7 @@ def command_release(args: argparse.Namespace) -> dict[str, Any]:
         run["verified_source_sha256"] = None
         append_history(run, "SOURCE_CHANGED_RESET")
         write_json(run_dir / "run.json", run)
-        evidence_path.unlink(missing_ok=True)
+        unlink_if_exists(evidence_path)
         raise GateError("SOURCE_CHANGED", "Candidate source changed after compile")
     artifact = run_dir / "build" / "firmware.hex"
     require(artifact.is_file(), "RELEASE_BLOCKED", "Compiled artifact is missing")

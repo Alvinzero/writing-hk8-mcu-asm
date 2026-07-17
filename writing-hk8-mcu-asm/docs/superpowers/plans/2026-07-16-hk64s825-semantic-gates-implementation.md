@@ -6,7 +6,7 @@
 
 **Architecture:** 保留 `builtin_compiler.py` 作为指令编码器，在 `asm_static_check.py` 前端解析的源码模型之上新增纯 Python 语义门禁模块。`hk8asm.py` 将隔离运行目录中的 request/profile 一并传入静态检查器，使 GPIO、时钟和延时从用户契约一路绑定到 release evidence。
 
-**Tech Stack:** Python 3.10+ 标准库、`unittest`、JSON、Agent Skills Markdown、PowerShell、Git。
+**Tech Stack:** Python 3.7+ 标准库、`unittest`、JSON、Agent Skills Markdown、PowerShell、Git。
 
 ---
 
