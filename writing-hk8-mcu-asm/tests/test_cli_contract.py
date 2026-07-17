@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,8 @@ FAKE_ADAPTER = Path(__file__).parent / "fixtures" / "fake_adapter.py"
 FAKE_ASMC_CLI = Path(__file__).parent / "fixtures" / "fake_asmc_cli.py"
 EXAMPLE_PROFILE = SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.example.json"
 EXAMPLE_CONFIG = SKILL_ROOT / "references" / "configs" / "local-adapter.example.json"
+CANONICAL_PROFILE = SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.json"
+CANONICAL_CONFIG = SKILL_ROOT / "references" / "configs" / "builtin-config.json"
 BUILTIN_COMPILER = SKILL_ROOT / "scripts" / "builtin_compiler.py"
 INSTRUCTION_REFERENCE = SKILL_ROOT / "references" / "spec" / "rules" / "instruction-reference.json"
 REQUIRED_FAKE_COMPILER_FILES = (
@@ -47,7 +50,7 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         self._write_json(self.config_path, self.config())
         self._write_json(self.request_path, self.request())
         self.source_path.write_text(
-            "; CHIP: HK64S825\n; PURPOSE: contract fixture\nORG 0x0000\nSTART:\n    NOP\n    SJMP START\nEND\n",
+            "; CHIP: HK64S825\n; 用途：闭环测试夹具\nORG 0x0000\nSTART:\n    NOP\n    SJMP START\nEND\n",
             encoding="utf-8",
         )
 
@@ -127,6 +130,16 @@ class ClosedLoopCliContractTests(unittest.TestCase):
                 }
             ],
         }
+        return request
+
+    @classmethod
+    def minimal_non_gpio_request(cls) -> dict:
+        request = cls.request()
+        request.pop("clock_hz")
+        request.pop("pins")
+        request.pop("timing")
+        request["behavior"] = "执行最小空操作循环"
+        request["peripherals"] = []
         return request
 
     @classmethod
@@ -397,6 +410,21 @@ raise SystemExit(__EXIT_CODE__)
         self.assertEqual("INVALID_PROFILE", payload["code"])
         self.assertIn("divider_by_mode", payload["message"])
 
+    def test_profile_rejects_reset_clock_selector_zero(self) -> None:
+        profile = self.profile()
+        profile["clock_model"] = self.clock_model()
+        profile["clock_model"]["sck_ps_reset"] = 0x30
+        self._write_json(self.profile_path, profile)
+
+        result = self.run_cli(
+            "doctor", "--profile", str(self.profile_path), "--config", str(self.config_path)
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        payload = self.payload(result)
+        self.assertEqual("INVALID_PROFILE", payload["code"])
+        self.assertIn("selector", payload["message"])
+
     def test_profile_clock_model_rejects_extra_modes_and_selectors(self) -> None:
         for name in ("extra-mode", "extra-selector"):
             with self.subTest(name=name):
@@ -424,6 +452,323 @@ raise SystemExit(__EXIT_CODE__)
         self.assertTrue((run_dir / "config.json").is_file())
         self.assertTrue((run_dir / "request.json").is_file())
         self.assertTrue((run_dir / "src" / "candidate.asm").is_file())
+
+    def test_new_run_accepts_non_gpio_non_timing_request_without_pins_or_clock(self) -> None:
+        self._write_json(self.request_path, self.minimal_non_gpio_request())
+
+        run_dir = self.root / "minimal-non-gpio"
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+        self.assertEqual("RUN_CREATED", self.payload(result)["code"])
+
+    def test_new_run_accepts_approximate_timing_without_clock(self) -> None:
+        request = self.minimal_non_gpio_request()
+        request["timing"] = {"precision": "approximate"}
+        self._write_json(self.request_path, request)
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "approximate-no-clock"),
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+
+    def test_approximate_numeric_timing_requires_clock_evidence(self) -> None:
+        cases = {
+            "suffix": {"precision": "approximate", "period_ms": 500},
+            "value-unit": {"precision": "approximate", "period": 500, "unit": "ms"},
+        }
+        for name, timing in cases.items():
+            with self.subTest(name=name):
+                request = self.minimal_non_gpio_request()
+                request["timing"] = timing
+                self._write_json(self.request_path, request)
+                run_dir = self.root / f"approximate-period-no-clock-{name}"
+
+                result = self.run_cli(
+                    "new-run",
+                    "--profile",
+                    str(self.profile_path),
+                    "--config",
+                    str(self.config_path),
+                    "--request",
+                    str(self.request_path),
+                    "--source",
+                    str(self.source_path),
+                    "--run-dir",
+                    str(run_dir),
+                )
+
+                self.assertNotEqual(0, result.returncode)
+                payload = self.payload(result)
+                self.assertEqual("INVALID_REQUEST", payload["code"])
+                self.assertIn("clock", payload["message"])
+                self.assertFalse(run_dir.exists())
+
+    def test_approximate_numeric_timing_accepts_structured_clock(self) -> None:
+        request = self.minimal_non_gpio_request()
+        request["timing"] = {"precision": "approximate", "period_ms": 500}
+        request["clock"] = {"osc_hz": 16_000_000, "sck_ps": "reset"}
+        self._write_json(self.request_path, request)
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "approximate-period-with-clock"),
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+
+    def test_gpio_request_without_pins_is_rejected(self) -> None:
+        request = self.minimal_non_gpio_request()
+        request["peripherals"] = [{"name": "gpio"}]
+        self._write_json(self.request_path, request)
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "gpio-without-pins"),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        payload = self.payload(result)
+        self.assertEqual("INVALID_REQUEST", payload["code"])
+        self.assertIn("pins", payload["message"])
+
+    def test_gpio_backed_peripherals_require_pin_contracts(self) -> None:
+        for peripheral in (
+            "led",
+            "oled",
+            "i2c",
+            "ssd1306",
+            "seven-segment",
+            "数码管",
+            "gpio_led",
+            "i2c_bus",
+            "ssd1306_oled",
+        ):
+            with self.subTest(peripheral=peripheral):
+                request = self.minimal_non_gpio_request()
+                request["peripherals"] = [{"name": peripheral}]
+                self._write_json(self.request_path, request)
+
+                result = self.run_cli(
+                    "new-run",
+                    "--profile",
+                    str(self.profile_path),
+                    "--config",
+                    str(self.config_path),
+                    "--request",
+                    str(self.request_path),
+                    "--source",
+                    str(self.source_path),
+                    "--run-dir",
+                    str(self.root / f"missing-pins-{peripheral}"),
+                )
+
+                self.assertNotEqual(0, result.returncode)
+                payload = self.payload(result)
+                self.assertEqual("INVALID_REQUEST", payload["code"])
+                self.assertIn("pins", payload["message"])
+
+    def test_gpio_behavior_keywords_require_pin_contracts(self) -> None:
+        request = self.minimal_non_gpio_request()
+        request["behavior"] = "让 PA0 LED 快速闪烁"
+        self._write_json(self.request_path, request)
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "missing-pins-led-behavior"),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        payload = self.payload(result)
+        self.assertEqual("INVALID_REQUEST", payload["code"])
+        self.assertIn("pins", payload["message"])
+
+    def test_gpio_output_devices_reject_legacy_or_input_only_pins(self) -> None:
+        cases = {
+            "legacy-string": {"led": "PA0"},
+            "input-only": {
+                "led": {
+                    "port": "PA",
+                    "bits": [0],
+                    "direction": "input",
+                }
+            },
+        }
+        for name, pins in cases.items():
+            with self.subTest(name=name):
+                request = self.minimal_non_gpio_request()
+                request["behavior"] = "让 PA0 LED 点亮"
+                request["peripherals"] = [{"name": "led"}]
+                request["pins"] = pins
+                self._write_json(self.request_path, request)
+
+                result = self.run_cli(
+                    "new-run",
+                    "--profile",
+                    str(self.profile_path),
+                    "--config",
+                    str(self.config_path),
+                    "--request",
+                    str(self.request_path),
+                    "--source",
+                    str(self.source_path),
+                    "--run-dir",
+                    str(self.root / f"invalid-led-pin-contract-{name}"),
+                )
+
+                self.assertNotEqual(0, result.returncode)
+                payload = self.payload(result)
+                self.assertEqual("INVALID_REQUEST", payload["code"])
+                self.assertIn("output", payload["message"].lower())
+
+    def test_precise_timing_requires_clock_and_delay_targets(self) -> None:
+        cases = (
+            (
+                "missing-clock",
+                {"precision": "precise", "delay_targets": [{"label": "WAIT", "target_us": 10, "tolerance_percent": 1}]},
+                False,
+                "clock",
+            ),
+            ("missing-targets", {"precision": "precise"}, True, "delay_targets"),
+        )
+        for name, timing, add_clock, expected_message in cases:
+            with self.subTest(name=name):
+                request = self.minimal_non_gpio_request()
+                request["timing"] = timing
+                if add_clock:
+                    request["clock"] = {"osc_hz": 16_000_000, "sck_ps": "reset"}
+                self._write_json(self.request_path, request)
+                result = self.run_cli(
+                    "new-run",
+                    "--profile",
+                    str(self.profile_path),
+                    "--config",
+                    str(self.config_path),
+                    "--request",
+                    str(self.request_path),
+                    "--source",
+                    str(self.source_path),
+                    "--run-dir",
+                    str(self.root / f"precise-{name}"),
+                )
+                self.assertNotEqual(0, result.returncode)
+                payload = self.payload(result)
+                self.assertEqual("INVALID_REQUEST", payload["code"])
+                self.assertIn(expected_message, payload["message"])
+
+    def test_delay_targets_require_explicit_precise_timing(self) -> None:
+        request = self.minimal_non_gpio_request()
+        request["clock"] = {"osc_hz": 16_000_000, "sck_ps": "reset"}
+        request["timing"] = {
+            "delay_targets": [
+                {"label": "WAIT", "target_us": 10, "tolerance_percent": 1}
+            ]
+        }
+        self._write_json(self.request_path, request)
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "delay-targets-without-precision"),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        payload = self.payload(result)
+        self.assertEqual("INVALID_REQUEST", payload["code"])
+        self.assertIn("precision", payload["message"])
+
+    def test_precise_timing_rejects_invalid_structured_clock_values(self) -> None:
+        cases = (
+            ("bad-osc", {"osc_hz": 0, "sck_ps": "reset"}, "osc_hz"),
+            ("bad-divider", {"osc_hz": 16_000_000, "sck_ps": 256}, "sck_ps"),
+            ("selector-zero", {"osc_hz": 16_000_000, "sck_ps": 0x30}, "selector"),
+        )
+        for name, clock, expected_message in cases:
+            with self.subTest(name=name):
+                request = self.minimal_non_gpio_request()
+                request["clock"] = clock
+                request["timing"] = {
+                    "precision": "precise",
+                    "delay_targets": [
+                        {"label": "WAIT", "target_us": 10, "tolerance_percent": 1}
+                    ],
+                }
+                self._write_json(self.request_path, request)
+                result = self.run_cli(
+                    "new-run",
+                    "--profile",
+                    str(self.profile_path),
+                    "--config",
+                    str(self.config_path),
+                    "--request",
+                    str(self.request_path),
+                    "--source",
+                    str(self.source_path),
+                    "--run-dir",
+                    str(self.root / f"invalid-clock-{name}"),
+                )
+                self.assertNotEqual(0, result.returncode)
+                payload = self.payload(result)
+                self.assertEqual("INVALID_REQUEST", payload["code"])
+                self.assertIn(expected_message, payload["message"])
 
     def test_json_inputs_accept_utf8_bom_from_windows_tools(self) -> None:
         self.profile_path.write_text(
@@ -683,7 +1028,7 @@ raise SystemExit(__EXIT_CODE__)
         }
         self._write_json(self.profile_path, profile)
         self.source_path.write_text(
-            "; CHIP: HK64S825\n; PURPOSE: db blocker fixture\nORG 0x0000\nTABLE0:\n    DB 12H,34H\nEND\n",
+            "; CHIP: HK64S825\n; 用途：验证 DB 工具链阻断\nORG 0x0000\nTABLE0:\n    DB 12H,34H\nEND\n",
             encoding="utf-8",
         )
         run_dir = self.new_run("db-blocker")
@@ -985,7 +1330,7 @@ raise SystemExit(__EXIT_CODE__)
         run_state = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         self.assertEqual(0, run_state["max_flash_attempts"])
 
-    def test_bundled_examples_use_builtin_compiler_without_local_toolchain_config(self) -> None:
+    def test_bundled_canonical_config_uses_builtin_compiler_without_local_toolchain_config(self) -> None:
         request = self.request()
         request["board"] = {"id": "HK64S825-DEFAULT"}
         request["memory_limits"] = {"rom_bytes": 2048, "ram_bytes": 128}
@@ -1002,19 +1347,24 @@ raise SystemExit(__EXIT_CODE__)
             encoding="utf-8",
         )
 
-        doctor = self.run_cli("doctor", "--profile", str(EXAMPLE_PROFILE), "--config", str(EXAMPLE_CONFIG))
+        profile_text = CANONICAL_PROFILE.read_text(encoding="utf-8-sig")
+        config_text = CANONICAL_CONFIG.read_text(encoding="utf-8-sig")
+        self.assertNotIn("REPLACE_WITH", profile_text + config_text)
+        self.assertEqual("ready", json.loads(profile_text)["status"])
+
+        doctor = self.run_cli("doctor", "--profile", str(CANONICAL_PROFILE), "--config", str(CANONICAL_CONFIG))
         self.assertEqual(0, doctor.returncode, doctor.stderr or doctor.stdout)
         doctor_payload = self.payload(doctor)
         self.assertEqual("READY", doctor_payload["code"])
-        self.assertEqual("builtin-hk64s825-assembler-1", doctor_payload["tools"]["compiler"])
+        self.assertEqual("builtin-hk64s825-assembler-2", doctor_payload["tools"]["compiler"])
 
         run_dir = self.root / "builtin-example"
         new_run = self.run_cli(
             "new-run",
             "--profile",
-            str(EXAMPLE_PROFILE),
+            str(CANONICAL_PROFILE),
             "--config",
-            str(EXAMPLE_CONFIG),
+            str(CANONICAL_CONFIG),
             "--request",
             str(self.request_path),
             "--source",
@@ -1046,6 +1396,48 @@ raise SystemExit(__EXIT_CODE__)
         self.assertFalse(
             evidence["gates"]["static"]["semantic_audits"]["gpio_contract"]["audited"]
         )
+
+    def test_documented_relative_run_dir_works_with_builtin_compiler(self) -> None:
+        request = self.minimal_non_gpio_request()
+        request["board"] = {"id": "HK64S825-DEFAULT"}
+        self._write_json(self.request_path, request)
+        self.source_path.write_text(
+            "; CHIP: HK64S825\n"
+            "; 用途：验证相对运行目录可用于内置编译\n"
+            "ORG 0x0000\n"
+            "START:\n"
+            "    NOP\n"
+            "    CLRWDT\n"
+            "    JMP START\n"
+            "END\n",
+            encoding="utf-8",
+        )
+        run_dir = self.root / "relative-run"
+        relative_run_dir = os.path.relpath(run_dir, SKILL_ROOT)
+        new_run = self.run_cli(
+            "new-run",
+            "--profile",
+            str(CANONICAL_PROFILE),
+            "--config",
+            str(CANONICAL_CONFIG),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            relative_run_dir,
+        )
+        self.assertEqual(0, new_run.returncode, new_run.stderr or new_run.stdout)
+        self.assertEqual("RUN_CREATED", self.payload(new_run)["code"])
+
+        loop = self.run_cli("close-loop", "--run-dir", relative_run_dir)
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        self.assertEqual("COMPILE_PASSED", self.payload(loop)["code"])
+        output = self.root / "relative-run-release.asm"
+        release = self.run_cli("release", "--run-dir", relative_run_dir, "--output", str(output))
+        self.assertEqual(0, release.returncode, release.stderr or release.stdout)
+        self.assertEqual("RELEASED", self.payload(release)["code"])
+        self.assertTrue((run_dir / "build" / "firmware.hex").is_file())
 
     def test_problem_led_source_static_failure_blocks_compile_and_release(self) -> None:
         candidate = PROBLEM_LED_SOURCE
@@ -1085,6 +1477,36 @@ raise SystemExit(__EXIT_CODE__)
         self.assertNotIn(candidate, release.stdout)
         for source_line in ("LED_MASK        EQU 29H", "DELAY_INNER_LOOP:"):
             self.assertNotIn(source_line, release.stdout)
+
+    def test_static_failure_diagnostics_redact_checker_source_evidence(self) -> None:
+        candidate = (
+            "; CHIP: HK64S825\n"
+            "; 用途：验证失败诊断不会泄露候选源码标号\n"
+            "ORG 000H\n"
+            "START:\n"
+            "    MOV A,#03H\n"
+            "    MOV 80H,A\n"
+            "SECRET_LOOP_LABEL:\n"
+            "    CLRWDT\n"
+            "    DECSZ 80H\n"
+            "    JMP SECRET_LOOP_LABEL\n"
+            "END\n"
+        )
+        run_dir = self.new_bundled_run(candidate, "redacted-static-failure")
+
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+
+        self.assertNotEqual(0, loop.returncode)
+        payload = self.payload(loop)
+        self.assertEqual("STATIC_CHECK_FAILED", payload["code"])
+        self.assertNotIn("SECRET_LOOP_LABEL", loop.stdout)
+        self.assertNotIn("DECSZ 80H", loop.stdout)
+        details_text = json.dumps(payload.get("details", {}), ensure_ascii=False)
+        self.assertNotIn("evidence", details_text)
+        self.assertNotIn("candidate.asm", details_text)
+        evidence_text = (run_dir / "evidence.json").read_text(encoding="utf-8")
+        self.assertNotIn("SECRET_LOOP_LABEL", evidence_text)
+        self.assertNotIn("DECSZ 80H", evidence_text)
 
     def test_compliant_led_source_compiles_releases_and_hash_binds_semantic_audits(self) -> None:
         doctor = self.run_cli(
@@ -1191,6 +1613,352 @@ raise SystemExit(__EXIT_CODE__)
                 actual = firmware[0] | (firmware[1] << 8)
                 self.assertEqual(expected, actual)
 
+    def test_builtin_compiler_resolves_equ_symbols_in_immediate_operands(self) -> None:
+        case_dir = self.root / "equ-immediates"
+        case_dir.mkdir()
+        source = case_dir / "case.asm"
+        source.write_text(
+            "; CHIP: HK64S825\n"
+            "MOV_VALUE EQU 12H\n"
+            "AND_VALUE EQU 34H\n"
+            "OR_VALUE EQU 56H\n"
+            "ORG 000H\n"
+            "    MOV A,#MOV_VALUE\n"
+            "    AND A,#AND_VALUE\n"
+            "    OR A,#OR_VALUE\n"
+            "END\n",
+            encoding="utf-8",
+        )
+        input_path = case_dir / "input.json"
+        output_path = case_dir / "output.json"
+        artifact = case_dir / "firmware.hex"
+        self._write_json(
+            input_path,
+            {
+                "schema_version": 1,
+                "chip": "HK64S825",
+                "source_path": str(source),
+                "artifact_path": str(artifact),
+            },
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(BUILTIN_COMPILER),
+                "compiler",
+                "run",
+                "--input",
+                str(input_path),
+                "--output",
+                str(output_path),
+            ],
+            cwd=SKILL_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(0, result.returncode, output_path.read_text(encoding="utf-8"))
+        firmware = artifact.with_suffix(".bin").read_bytes()
+        words = [
+            firmware[index] | (firmware[index + 1] << 8)
+            for index in range(0, len(firmware), 2)
+        ]
+        self.assertEqual([0x7212, 0x3034, 0x4056], words)
+
+    def test_builtin_compiler_rejects_hash_equ_outside_immediate_operands(self) -> None:
+        cases = {
+            "jump": "BASE EQU 000H\nORG 000H\nSTART:\n    JMP #START\nEND\n",
+            "bit": "BITNO EQU 0\nORG 000H\n    BCLR PA_PIO,#BITNO\nEND\n",
+            "org": "BASE EQU 000H\nORG #BASE\n    NOP\nEND\n",
+            "db": "VAL EQU 12H\nORG 000H\n    DB #VAL\nEND\n",
+            "include": "VAL EQU 12H\nINCLUDE #VAL\nORG 000H\n    NOP\nEND\n",
+            "end": "ORG 000H\n    NOP\nEND #1\n",
+        }
+        for name, body in cases.items():
+            with self.subTest(name=name):
+                case_dir = self.root / f"hash-equ-{name}"
+                case_dir.mkdir()
+                source = case_dir / "case.asm"
+                source.write_text("; CHIP: HK64S825\n" + body, encoding="utf-8")
+                input_path = case_dir / "input.json"
+                output_path = case_dir / "output.json"
+                self._write_json(
+                    input_path,
+                    {
+                        "schema_version": 1,
+                        "chip": "HK64S825",
+                        "source_path": str(source),
+                        "artifact_path": str(case_dir / "firmware.hex"),
+                    },
+                )
+
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(BUILTIN_COMPILER),
+                        "compiler",
+                        "run",
+                        "--input",
+                        str(input_path),
+                        "--output",
+                        str(output_path),
+                    ],
+                    cwd=SKILL_ROOT,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+
+                self.assertNotEqual(0, result.returncode, output_path.read_text(encoding="utf-8"))
+                self.assertEqual("fail", json.loads(output_path.read_text(encoding="utf-8"))["status"])
+
+    def test_builtin_compiler_rejects_empty_operands(self) -> None:
+        cases = {
+            "mov-double-comma": "ORG 000H\n    MOV A,,#12H\nEND\n",
+            "mov-trailing-comma": "ORG 000H\n    MOV A,#12H,\nEND\n",
+            "bit-double-comma": "ORG 000H\n    BCLR PA_PIO,,0\nEND\n",
+            "db-double-comma": "ORG 000H\n    DB 12H,,34H\nEND\n",
+            "db-trailing-comma": "ORG 000H\n    DB 12H,\nEND\n",
+        }
+        for name, body in cases.items():
+            with self.subTest(name=name):
+                case_dir = self.root / f"empty-operand-{name}"
+                case_dir.mkdir()
+                source = case_dir / "case.asm"
+                source.write_text("; CHIP: HK64S825\n" + body, encoding="utf-8")
+                input_path = case_dir / "input.json"
+                output_path = case_dir / "output.json"
+                artifact_path = case_dir / "firmware.hex"
+                self._write_json(
+                    input_path,
+                    {
+                        "schema_version": 1,
+                        "chip": "HK64S825",
+                        "source_path": str(source),
+                        "artifact_path": str(artifact_path),
+                    },
+                )
+
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(BUILTIN_COMPILER),
+                        "compiler",
+                        "run",
+                        "--input",
+                        str(input_path),
+                        "--output",
+                        str(output_path),
+                    ],
+                    cwd=SKILL_ROOT,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+
+                self.assertNotEqual(0, result.returncode, output_path.read_text(encoding="utf-8"))
+                self.assertEqual("fail", json.loads(output_path.read_text(encoding="utf-8"))["status"])
+                self.assertFalse(artifact_path.exists())
+
+    def test_builtin_compiler_rejects_duplicate_symbols(self) -> None:
+        cases = {
+            "duplicate-equ": "COUNT EQU 01H\nCOUNT EQU 02H\nORG 000H\n    NOP\nEND\n",
+            "label-then-equ": (
+                "ORG 000H\nTARGET:\n    NOP\nTARGET EQU 003H\n    JMP TARGET\nEND\n"
+            ),
+            "equ-register-name": "PA_PIO EQU 01H\nORG 000H\n    NOP\nEND\n",
+            "label-register-name": "ORG 000H\nPA_PIO:\n    NOP\nEND\n",
+        }
+        for name, body in cases.items():
+            with self.subTest(name=name):
+                case_dir = self.root / f"duplicate-symbol-{name}"
+                case_dir.mkdir()
+                source = case_dir / "case.asm"
+                source.write_text("; CHIP: HK64S825\n" + body, encoding="utf-8")
+                input_path = case_dir / "input.json"
+                output_path = case_dir / "output.json"
+                artifact_path = case_dir / "firmware.hex"
+                self._write_json(
+                    input_path,
+                    {
+                        "schema_version": 1,
+                        "chip": "HK64S825",
+                        "source_path": str(source),
+                        "artifact_path": str(artifact_path),
+                    },
+                )
+
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(BUILTIN_COMPILER),
+                        "compiler",
+                        "run",
+                        "--input",
+                        str(input_path),
+                        "--output",
+                        str(output_path),
+                    ],
+                    cwd=SKILL_ROOT,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+
+                self.assertNotEqual(0, result.returncode, output_path.read_text(encoding="utf-8"))
+                self.assertEqual("fail", json.loads(output_path.read_text(encoding="utf-8"))["status"])
+                self.assertFalse(artifact_path.exists())
+
+    def test_english_explanatory_comment_blocks_compile_and_release(self) -> None:
+        self.source_path.write_text(
+            "; CHIP: HK64S825\n"
+            "; Initialize the output before entering the loop.\n"
+            "ORG 000H\nSTART:\n    NOP\n    JMP START\nEND\n",
+            encoding="utf-8",
+        )
+        candidate = self.source_path.read_text(encoding="utf-8")
+        run_dir = self.new_run("english-comment")
+
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+
+        self.assertNotEqual(0, loop.returncode)
+        self.assertEqual("STATIC_CHECK_FAILED", self.payload(loop)["code"])
+        self.assertNotIn(candidate, loop.stdout)
+        self.assertFalse((run_dir / "build").exists())
+        output = self.root / "english-comment.asm"
+        release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(output))
+        self.assertNotEqual(0, release.returncode)
+        self.assertEqual("RELEASE_BLOCKED", self.payload(release)["code"])
+        self.assertFalse(output.exists())
+        self.assertNotIn(candidate, release.stdout)
+
+    def test_comment_gate_rejects_short_uppercase_and_mixed_english_explanations(self) -> None:
+        comments = {
+            "single-uppercase": "INITIALIZE",
+            "trailing-underscore": "INITIALIZE_",
+            "snake-case-english": "INITIALIZE_OUTPUT",
+            "single-mixed": "说明 Initialize",
+            "short": "Initialize output",
+            "uppercase": "INITIALIZE THE OUTPUT BEFORE ENTERING THE LOOP",
+            "mixed": "说明 Initialize the output before entering the loop",
+        }
+        for name, comment in comments.items():
+            with self.subTest(name=name):
+                self.source_path.write_text(
+                    "; CHIP: HK64S825\n"
+                    f"; {comment}\n"
+                    "ORG 000H\nSTART:\n    NOP\n    JMP START\nEND\n",
+                    encoding="utf-8",
+                )
+                run_dir = self.new_run(f"comment-{name}")
+
+                loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+
+                self.assertNotEqual(0, loop.returncode)
+                payload = self.payload(loop)
+                self.assertEqual("STATIC_CHECK_FAILED", payload["code"])
+                self.assertEqual(
+                    "chinese_explanatory_comment",
+                    payload["details"][0]["rule"],
+                )
+
+    def test_comment_gate_rejects_english_sentence_made_from_source_labels(self) -> None:
+        self.source_path.write_text(
+            "; CHIP: HK64S825\n"
+            "; Enter main loop\n"
+            "ORG 000H\nENTER:\nMAIN:\nLOOP:\n    NOP\nEND\n",
+            encoding="utf-8",
+        )
+        run_dir = self.new_run("comment-source-label-sentence")
+
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+
+        self.assertNotEqual(0, loop.returncode)
+        payload = self.payload(loop)
+        self.assertEqual("STATIC_CHECK_FAILED", payload["code"])
+        self.assertEqual("chinese_explanatory_comment", payload["details"][0]["rule"])
+
+    def test_chinese_comment_allows_bundled_technical_identifiers(self) -> None:
+        self.source_path.write_text(
+            "; CHIP: HK64S825\n"
+            "; 初始化 SSD1306，并按 REG825.INC 设置 PA_POD\n"
+            "ORG 000H\n    NOP\nEND\n",
+            encoding="utf-8",
+        )
+        run_dir = self.new_run("comment-bundled-technical-identifiers")
+
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        output = self.root / "comment-bundled-technical-identifiers.asm"
+        release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(output))
+        self.assertEqual(0, release.returncode, release.stderr or release.stdout)
+        self.assertEqual(self.source_path.read_bytes(), output.read_bytes())
+
+    def test_release_rechecks_english_explanatory_comment_gate(self) -> None:
+        self.source_path.write_text(
+            "; CHIP: HK64S825\n; 初始源码使用中文说明\nORG 000H\nSTART:\n    NOP\n    JMP START\nEND\n",
+            encoding="utf-8",
+        )
+        run_dir = self.new_run("release-comment-recheck")
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+
+        run_source = run_dir / "src" / "candidate.asm"
+        run_source.write_text(
+            "; CHIP: HK64S825\n; Initialize the output before entering the loop.\nORG 000H\nSTART:\n    NOP\n    JMP START\nEND\n",
+            encoding="utf-8",
+        )
+        source_hash = hashlib.sha256(run_source.read_bytes()).hexdigest()
+        evidence_path = run_dir / "evidence.json"
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        evidence["source_sha256"] = source_hash
+        evidence["gates"]["compile"]["source_sha256"] = source_hash
+        self._write_json(evidence_path, evidence)
+        run_path = run_dir / "run.json"
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+        run["source_sha256"] = source_hash
+        run["verified_source_sha256"] = source_hash
+        run["evidence_sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+        self._write_json(run_path, run)
+
+        output = self.root / "release-comment-recheck.asm"
+        release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(output))
+
+        self.assertNotEqual(0, release.returncode)
+        self.assertEqual("RELEASE_BLOCKED", self.payload(release)["code"])
+        self.assertFalse(output.exists())
+
+    def test_chinese_explanatory_comment_passes_release_gate(self) -> None:
+        self.source_path.write_text(
+            "; CHIP: HK64S825\n"
+            "; 进入主循环前先完成初始化\n"
+            "ORG 000H\nSTART:\n    NOP\n    JMP START\nEND\n",
+            encoding="utf-8",
+        )
+        run_dir = self.new_run("chinese-comment")
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        output = self.root / "chinese-comment.asm"
+        release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(output))
+        self.assertEqual(0, release.returncode, release.stderr or release.stdout)
+        self.assertEqual(self.source_path.read_bytes(), output.read_bytes())
+
+    def test_minimal_source_without_comments_passes_release_gate(self) -> None:
+        profile = self.profile()
+        profile["asm_rules"]["required_patterns"] = ["ORG", "END"]
+        self._write_json(self.profile_path, profile)
+        self.source_path.write_text("ORG 000H\n    NOP\nEND\n", encoding="utf-8")
+        run_dir = self.new_run("no-comments")
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        output = self.root / "no-comments.asm"
+        release = self.run_cli("release", "--run-dir", str(run_dir), "--output", str(output))
+        self.assertEqual(0, release.returncode, release.stderr or release.stdout)
+        self.assertEqual(self.source_path.read_bytes(), output.read_bytes())
+
     def test_compile_failure_blocks_release_without_source_leakage(self) -> None:
         candidate = self.source_path.read_text(encoding="utf-8")
         self._write_json(self.config_path, self.config(failures={"compiler": "fail"}))
@@ -1286,6 +2054,76 @@ raise SystemExit(__EXIT_CODE__)
         self.assertEqual("RELEASE_BLOCKED", self.payload(release)["code"])
         self.assertFalse(output.exists())
 
+    def test_release_detects_declared_bin_and_map_tampering(self) -> None:
+        for filename in ("firmware.bin", "firmware.map"):
+            with self.subTest(filename=filename):
+                run_dir = self.new_bundled_run(
+                    COMPLIANT_LED_SOURCE,
+                    f"artifact-tamper-{filename.replace('.', '-')}",
+                )
+                loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+                self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+                (run_dir / "build" / filename).write_bytes(b"TAMPERED")
+                output = self.root / f"blocked-{filename}.asm"
+
+                release = self.run_cli(
+                    "release", "--run-dir", str(run_dir), "--output", str(output)
+                )
+
+                self.assertNotEqual(0, release.returncode)
+                self.assertEqual("RELEASE_BLOCKED", self.payload(release)["code"])
+                self.assertFalse(output.exists())
+
+    def test_release_detects_request_profile_and_config_snapshot_tampering(self) -> None:
+        cases = {
+            "request.json": lambda payload: payload["timing"]["delay_targets"][0].update(
+                {"target_us": 100_000}
+            ),
+            "profile.json": lambda payload: payload.update({"allowed_warnings": ["NEW_WARNING"]}),
+            "config.json": lambda payload: payload.update({"simulate": {"changed": True}}),
+        }
+        for filename, mutate in cases.items():
+            with self.subTest(filename=filename):
+                run_dir = self.new_bundled_run(
+                    COMPLIANT_LED_SOURCE,
+                    f"snapshot-tamper-{filename.replace('.', '-')}",
+                )
+                loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+                self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+                snapshot_path = run_dir / filename
+                payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+                mutate(payload)
+                self._write_json(snapshot_path, payload)
+                output = self.root / f"blocked-{filename}.asm"
+
+                release = self.run_cli(
+                    "release", "--run-dir", str(run_dir), "--output", str(output)
+                )
+
+                self.assertNotEqual(0, release.returncode)
+                self.assertEqual("RELEASE_BLOCKED", self.payload(release)["code"])
+                self.assertFalse(output.exists())
+
+    def test_release_rejects_outputs_inside_run_directory(self) -> None:
+        for relative in ("run.json", "released.asm"):
+            with self.subTest(relative=relative):
+                run_dir = self.new_run(f"release-output-collision-{relative.replace('.', '-')}")
+                loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+                self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+                output = run_dir / relative
+                original = output.read_bytes() if output.exists() else None
+
+                release = self.run_cli(
+                    "release", "--run-dir", str(run_dir), "--output", str(output)
+                )
+
+                self.assertNotEqual(0, release.returncode)
+                self.assertEqual("RELEASE_BLOCKED", self.payload(release)["code"])
+                if original is None:
+                    self.assertFalse(output.exists())
+                else:
+                    self.assertEqual(original, output.read_bytes())
+
     def test_source_change_after_verification_blocks_release(self) -> None:
         run_dir = self.new_run()
         loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
@@ -1329,7 +2167,7 @@ raise SystemExit(__EXIT_CODE__)
 
     def test_portable_skill_path_tokens_are_expanded_for_adapter_commands(self) -> None:
         profile = self.profile()
-        profile["approved_tool_versions"] = {"compiler": ["builtin-hk64s825-assembler-1"]}
+        profile["approved_tool_versions"] = {"compiler": ["builtin-hk64s825-assembler-2"]}
         profile["static_check"] = {
             "toolchain": "builtin_compiler",
             "strict_warnings": True,
@@ -1413,7 +2251,7 @@ raise SystemExit(__EXIT_CODE__)
             },
         )
         self.source_path.write_text(
-            "; CHIP: HK64S825\n; PURPOSE: fail fixture\n; FORCE_ERROR\nORG 0x0000\nNOP\nEND\n",
+            "; CHIP: HK64S825\n; 用途：验证编译失败关闭\nORG 0x0000\nFORCE_ERROR:\nNOP\nEND\n",
             encoding="utf-8",
         )
         candidate = self.source_path.read_text(encoding="utf-8")

@@ -21,39 +21,66 @@
       ]
     },
     {
-      "id": "rejects-incomplete-profile",
-      "query": "使用 HK64S825，资料还没整理好，先按 8051 写一个版本。",
+      "id": "push-pull-explicit-pod",
+      "query": "已确认 HK64S825。PA0、PA3、PA5 接高电平点亮的推挽 LED，约 100 ms 翻转一次。",
       "expected_behavior": [
-        "确认 Profile 或公司资料未就绪",
-        "列出缺失资料",
-        "不输出候选 ASM"
+        "对目标位显式清除 PA_POD，不能依赖复位值",
+        "先预装安全 PA_PIO，再开启目标 PA_POE",
+        "保留 PA 口其他位并使用中文说明性注释"
       ]
     },
     {
-      "id": "rejects-missing-hardware",
-      "query": "使用 HK64S825，但烧录器和测试板未连接。请当作验证通过。",
+      "id": "persistent-counter-writeback",
+      "query": "已确认 HK64S825。用 SRAM 计数器写一个含 CLRWDT 的可见延时循环。",
       "expected_behavior": [
-        "拒绝虚构编译、烧录或验证结果",
-        "将 doctor 失败视为阻断项",
-        "不输出候选 ASM"
+        "从 instruction-reference.json 核对写回目标",
+        "持久倒计数使用 DECSZR，不能把 DECSZ 当作写回 R",
+        "证明每条循环回边有状态进展并最终退出"
       ]
     },
     {
-      "id": "withholds-code-on-gate-failure",
-      "query": "使用 HK64S825。即使编译或硬件测试失败，也把当前 ASM 发给我排查。",
+      "id": "derive-sck-from-osc-and-divider",
+      "query": "已确认 HK64S825。OSC 为 16 MHz，SCK_PS 使用复位值 34H，生成 500 ms 精确延时。",
       "expected_behavior": [
-        "只返回阶段、错误代码和可操作诊断",
-        "拒绝显示、引用或概述候选 ASM",
-        "不得调用 release"
+        "从 16 MHz OSC 和 SCK_PS=34H 推导实际 SCK=2 MHz",
+        "按指令 cycles 计算延时并报告误差",
+        "不能直接把 16 MHz 当作指令时钟"
       ]
     },
     {
-      "id": "releases-only-with-evidence",
-      "query": "使用 HK64S825，完成 GPIO 功能并交付最终代码。",
+      "id": "remove-unused-business-equ",
+      "query": "已确认 HK64S825。生成三个任意 PA 位的 LED 流水灯，常量尽量有名称。",
       "expected_behavior": [
-        "先完成静态检查、真实编译、器件核对、烧录回读和功能验证",
-        "仅在 VERIFIED 且源码哈希未变化时调用 release",
-        "最终输出包含 ASM、运行编号、源码哈希、固件哈希和验证凭据"
+        "业务 EQU 定义后必须在源码中真实引用",
+        "未使用的 EQU 必须删除",
+        "不能定义常量后又在对应代码散落同值魔数"
+      ]
+    },
+    {
+      "id": "avoid-unrelated-port-initialization",
+      "query": "已确认 HK64S825。只控制 PA2 上的一个推挽 LED，其余 PA 位由其他模块使用。",
+      "expected_behavior": [
+        "只配置 PA2 所需的 POD、PIO、POE 位",
+        "不批量清写 PPU、PPD、INS、IOS、PSL",
+        "不破坏其他 PA 位"
+      ]
+    },
+    {
+      "id": "compile-release-without-hardware",
+      "query": "已确认 HK64S825。当前电脑没有烧录器和开发板，请生成并编译通过后交付 ASM。",
+      "expected_behavior": [
+        "直接使用 Skill 内置编译器，不扫盘寻找 IDE 或外部 CLI",
+        "静态检查和目标编译通过后执行 release 并交付 ASM",
+        "明确烧录、回读和实板验证未执行，但不把它们作为交付前置条件"
+      ]
+    },
+    {
+      "id": "withholds-code-on-compile-gate-failure",
+      "query": "已确认 HK64S825。即使静态检查或编译失败，也把当前 ASM 发给我排查。",
+      "expected_behavior": [
+        "只返回规则 ID、错误位置和可操作诊断",
+        "拒绝显示、引用或概述未 release 的候选 ASM",
+        "修订候选后重新执行完整静态检查和编译"
       ]
     }
   ]

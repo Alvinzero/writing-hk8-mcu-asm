@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,63 @@ RUN_SCHEMA_VERSION = 1
 MAX_FLASH_ATTEMPTS = 3
 PLACEHOLDER_MARKERS = ("REPLACE_WITH", "实际路径")
 SKILL_ROOT = Path(__file__).resolve().parents[1]
+IDENTIFIER_RE = re.compile(r"\b[A-Za-z_.$?][A-Za-z0-9_.$?]*\b")
+CHINESE_TEXT_RE = re.compile(r"[\u3400-\u9fff]")
+TECHNICAL_FILENAME_RE = re.compile(
+    r"^[A-Za-z0-9_.$?-]+\.(?:ASM|BIN|HEX|INC|JSON|MAP)$", re.IGNORECASE
+)
+GPIO_DEPENDENCY_RE = re.compile(
+    r"(?i)(?<![a-z0-9])(?:gpio|led|oled|i2c|ssd1306|seven[-_ ]?segment|7[-_ ]?segment|p[ab][0-7])(?![a-z0-9])"
+)
+GPIO_OUTPUT_DEPENDENCY_RE = re.compile(
+    r"(?i)(?<![a-z0-9])(?:led|oled|i2c|ssd1306|seven[-_ ]?segment|7[-_ ]?segment)(?![a-z0-9])"
+)
+APPROVED_TECHNICAL_TOKENS = {
+    "A", "ACK", "ASM", "ASSEMBLER", "BIN", "BUILTIN", "CHIP", "CLOBBERS",
+    "COMPILER", "CRC", "GPIO", "HEX", "HK64S825", "HZ", "I2C", "IN", "KHZ",
+    "LED", "MCU", "MHZ", "MS", "MV", "NACK", "NS", "OLED", "OSC", "OUT", "PA",
+    "PB", "RAM", "REENTRANT", "ROM", "RULE", "RULES", "SCK_PS", "SRAM", "TABLE_PAIR",
+    "SSD1306", "TOOLCHAIN", "US", "V", "WDT",
+}
+
+
+def load_bundled_technical_tokens() -> set[str]:
+    rules = SKILL_ROOT / "references" / "spec" / "rules"
+    tokens: set[str] = set()
+    try:
+        instructions = json.loads(
+            (rules / "instruction-reference.json").read_text(encoding="utf-8-sig")
+        )
+        for variant in instructions.get("variants", []):
+            if (
+                isinstance(variant, dict)
+                and isinstance(variant.get("mnemonic"), str)
+                and bool(variant["mnemonic"].strip())
+            ):
+                tokens.add(variant["mnemonic"].upper())
+        registers = json.loads(
+            (rules / "register-reference.json").read_text(encoding="utf-8-sig")
+        )
+        for register in registers.get("registers", []):
+            if not isinstance(register, dict):
+                continue
+            for key in ("name", "kind"):
+                if isinstance(register.get(key), str) and bool(register[key].strip()):
+                    tokens.add(register[key].upper())
+            for field in register.get("bit_fields", []):
+                if (
+                    not isinstance(field, dict)
+                    or not isinstance(field.get("name"), str)
+                    or not field["name"].strip()
+                ):
+                    continue
+                tokens.update(token.upper() for token in IDENTIFIER_RE.findall(field["name"]))
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
+        return set()
+    return tokens
+
+
+BUNDLED_TECHNICAL_TOKENS = load_bundled_technical_tokens()
 
 
 class GateError(Exception):
@@ -92,6 +150,32 @@ def require(condition: bool, code: str, message: str) -> None:
         raise GateError(code, message)
 
 
+SENSITIVE_DETAIL_KEYS = {
+    "evidence",
+    "file",
+    "files",
+    "inputs",
+    "labels",
+    "line_text",
+    "path",
+    "snippet",
+    "source",
+    "source_line",
+}
+
+
+def sanitize_diagnostic_details(details: Any) -> Any:
+    if isinstance(details, dict):
+        return {
+            key: sanitize_diagnostic_details(value)
+            for key, value in details.items()
+            if key not in SENSITIVE_DETAIL_KEYS
+        }
+    if isinstance(details, list):
+        return [sanitize_diagnostic_details(item) for item in details]
+    return details
+
+
 def is_non_empty_string(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
@@ -129,7 +213,67 @@ def contains_unresolved(value: Any) -> bool:
     return False
 
 
-def validate_clock_contract(request: dict[str, Any]) -> None:
+def is_bundled_technical_comment_token(token: str) -> bool:
+    normalized = token.upper()
+    return (
+        normalized in APPROVED_TECHNICAL_TOKENS
+        or normalized in BUNDLED_TECHNICAL_TOKENS
+        or re.fullmatch(r"P[AB][0-7]", normalized) is not None
+        or TECHNICAL_FILENAME_RE.fullmatch(token) is not None
+    )
+
+
+def is_technical_comment_token(token: str, code_identifiers: set[str]) -> bool:
+    return is_bundled_technical_comment_token(token) or token.upper() in code_identifiers
+
+
+def validate_chinese_explanatory_comments(source: Path) -> dict[str, Any]:
+    try:
+        text = source.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError) as exc:
+        raise GateError("STATIC_CHECK_FAILED", f"Cannot read candidate source: {exc}") from exc
+    code_identifiers: set[str] = set()
+    for line in text.splitlines():
+        code = line.partition(";")[0]
+        code_identifiers.update(token.upper() for token in IDENTIFIER_RE.findall(code))
+    checked = 0
+    issues: list[dict[str, Any]] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        _code, marker, comment = line.partition(";")
+        if not marker:
+            continue
+        content = comment.strip()
+        if not content:
+            continue
+        checked += 1
+        latin_tokens = [
+            token
+            for token in IDENTIFIER_RE.findall(content)
+            if re.search(r"[A-Za-z]", token)
+        ]
+        if not all(
+            is_technical_comment_token(token, code_identifiers)
+            for token in latin_tokens
+        ):
+            issues.append({"line": line_number, "rule": "chinese_explanatory_comment"})
+            continue
+        if CHINESE_TEXT_RE.search(content):
+            continue
+        if all(is_bundled_technical_comment_token(token) for token in latin_tokens):
+            continue
+        if len(latin_tokens) == 1 and latin_tokens[0].upper() in code_identifiers:
+            continue
+        issues.append({"line": line_number, "rule": "chinese_explanatory_comment"})
+    if issues:
+        raise GateError(
+            "STATIC_CHECK_FAILED",
+            "ASM explanatory comments must use Chinese",
+            details=issues,
+        )
+    return {"status": "pass", "comments_checked": checked}
+
+
+def validate_clock_contract(request: dict[str, Any], profile: dict[str, Any]) -> None:
     clock = request.get("clock")
     legacy = request.get("clock_hz")
     require(
@@ -162,6 +306,76 @@ def validate_clock_contract(request: dict[str, Any]) -> None:
         "INVALID_REQUEST",
         "clock.sck_ps must be reset or an 8-bit integer",
     )
+    clock_model = profile.get("clock_model")
+    resolved_sck_ps = (
+        clock_model.get("sck_ps_reset")
+        if sck_ps == "reset" and isinstance(clock_model, dict)
+        else sck_ps
+    )
+    if isinstance(resolved_sck_ps, int) and not isinstance(resolved_sck_ps, bool):
+        selector = resolved_sck_ps & 0x0F
+        require(
+            selector != 0,
+            "INVALID_REQUEST",
+            "clock.sck_ps selector 0 is prohibited",
+        )
+        if isinstance(clock_model, dict):
+            sckhl_bit = clock_model["sckhl_bit"]
+            mode = "high" if resolved_sck_ps & (1 << sckhl_bit) else "low"
+            divider_map = clock_model["divider_by_mode"][mode]
+            require(
+                str(selector) in divider_map,
+                "INVALID_REQUEST",
+                f"clock.sck_ps selector {selector} is not defined for {mode} mode",
+            )
+
+
+def request_uses_gpio(request: dict[str, Any]) -> bool:
+    pins = request.get("pins")
+    if isinstance(pins, dict) and any(
+        isinstance(pin, dict) and pin.get("port") in {"PA", "PB"}
+        for pin in pins.values()
+    ):
+        return True
+    behavior = request.get("behavior")
+    if isinstance(behavior, str) and (
+        GPIO_DEPENDENCY_RE.search(behavior) or "数码管" in behavior or "引脚" in behavior
+    ):
+        return True
+    peripherals = request.get("peripherals")
+    if not isinstance(peripherals, list):
+        return False
+    for peripheral in peripherals:
+        name = peripheral.get("name") if isinstance(peripheral, dict) else peripheral
+        if isinstance(name, str) and (
+            GPIO_DEPENDENCY_RE.search(name) or "数码管" in name or "引脚" in name
+        ):
+            return True
+    return False
+
+
+def request_requires_gpio_output(request: dict[str, Any]) -> bool:
+    behavior = request.get("behavior")
+    if isinstance(behavior, str) and (
+        GPIO_OUTPUT_DEPENDENCY_RE.search(behavior) or "数码管" in behavior
+    ):
+        return True
+    peripherals = request.get("peripherals")
+    if not isinstance(peripherals, list):
+        return False
+    for peripheral in peripherals:
+        name = peripheral.get("name") if isinstance(peripheral, dict) else peripheral
+        if isinstance(name, str) and (
+            GPIO_OUTPUT_DEPENDENCY_RE.search(name) or "数码管" in name
+        ):
+            return True
+    return False
+
+
+def timing_requires_clock(timing: Any) -> bool:
+    if not isinstance(timing, dict):
+        return False
+    return timing.get("precision") == "precise" or any(key != "precision" for key in timing)
 
 
 def validate_output_pin_contract(name: str, pin: dict[str, Any]) -> None:
@@ -300,6 +514,11 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
             and 0 <= sck_ps_reset <= 255,
             "INVALID_PROFILE",
             "clock_model.sck_ps_reset must be an 8-bit integer",
+        )
+        require(
+            sck_ps_reset & 0x0F != 0,
+            "INVALID_PROFILE",
+            "clock_model.sck_ps_reset selector 0 is prohibited",
         )
         sckhl_bit = clock_model.get("sckhl_bit")
         require(
@@ -470,26 +689,51 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
     require(request.get("chip") in supported, "INVALID_REQUEST", "Request chip is not supported")
     behavior = request.get("behavior")
     require(isinstance(behavior, str) and bool(behavior.strip()), "INVALID_REQUEST", "behavior is required")
-    validate_clock_contract(request)
+    timing = request.get("timing")
+    clock_required = timing_requires_clock(timing)
+    if clock_required or "clock" in request or "clock_hz" in request:
+        validate_clock_contract(request, profile)
     pins = request.get("pins")
-    require(isinstance(pins, dict), "INVALID_REQUEST", "pins must be an object")
-    require(not contains_unresolved(pins), "INVALID_REQUEST", "pins contain unresolved values")
-    for key, value in pins.items():
-        require(is_non_empty_string(key), "INVALID_REQUEST", "pin names must be non-empty strings")
-        require(
-            is_non_empty_string(value) or isinstance(value, dict),
-            "INVALID_REQUEST",
-            "pin values must be non-empty strings or objects",
-        )
-        if isinstance(value, dict):
-            direction = value.get("direction")
+    uses_gpio = request_uses_gpio(request)
+    requires_gpio_output = request_requires_gpio_output(request)
+    if uses_gpio:
+        require(isinstance(pins, dict) and bool(pins), "INVALID_REQUEST", "pins are required for GPIO tasks")
+    if pins is not None:
+        require(isinstance(pins, dict), "INVALID_REQUEST", "pins must be an object")
+        require(not contains_unresolved(pins), "INVALID_REQUEST", "pins contain unresolved values")
+        for key, value in pins.items():
+            require(is_non_empty_string(key), "INVALID_REQUEST", "pin names must be non-empty strings")
+            if uses_gpio:
+                require(
+                    isinstance(value, dict),
+                    "INVALID_REQUEST",
+                    "GPIO output tasks require structured output pin contracts"
+                    if requires_gpio_output
+                    else "GPIO tasks require structured pin contracts",
+                )
             require(
-                direction in {"input", "output"},
+                is_non_empty_string(value) or isinstance(value, dict),
                 "INVALID_REQUEST",
-                f"pins.{key}.direction must be input or output",
+                "pin values must be non-empty strings or objects",
             )
-            if direction == "output":
-                validate_output_pin_contract(key, value)
+            if isinstance(value, dict):
+                direction = value.get("direction")
+                require(
+                    direction in {"input", "output"},
+                    "INVALID_REQUEST",
+                    f"pins.{key}.direction must be input or output",
+                )
+                if direction == "output":
+                    validate_output_pin_contract(key, value)
+        if requires_gpio_output:
+            require(
+                any(
+                    isinstance(value, dict) and value.get("direction") == "output"
+                    for value in pins.values()
+                ),
+                "INVALID_REQUEST",
+                "GPIO output tasks require at least one structured output pin contract",
+            )
     peripherals = request.get("peripherals")
     require(isinstance(peripherals, list), "INVALID_REQUEST", "peripherals must be an array")
     require(not contains_unresolved(peripherals), "INVALID_REQUEST", "peripherals contain unresolved values")
@@ -501,42 +745,61 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
         )
         if isinstance(item, dict):
             require(is_non_empty_string(item.get("name")), "INVALID_REQUEST", "Peripheral name is required")
-    timing = request.get("timing")
-    require(isinstance(timing, dict), "INVALID_REQUEST", "timing must be an object")
-    require(not contains_unresolved(timing), "INVALID_REQUEST", "timing contains unresolved values")
-    for key, value in timing.items():
-        require(is_non_empty_string(key), "INVALID_REQUEST", "timing keys must be non-empty strings")
-        if key != "delay_targets":
-            require(is_scalar(value), "INVALID_REQUEST", "timing values must be scalar")
-            continue
+    if timing is not None:
+        require(isinstance(timing, dict), "INVALID_REQUEST", "timing must be an object")
+        require(not contains_unresolved(timing), "INVALID_REQUEST", "timing contains unresolved values")
+        precision = timing.get("precision")
         require(
-            isinstance(value, list),
+            precision is None or precision in {"approximate", "precise"},
             "INVALID_REQUEST",
-            "timing.delay_targets must be an array",
+            "timing.precision must be approximate or precise",
         )
-        for item in value:
+        delay_targets = timing.get("delay_targets")
+        if "delay_targets" in timing:
             require(
-                isinstance(item, dict),
+                precision == "precise",
                 "INVALID_REQUEST",
-                "Each timing.delay_targets item must be an object",
+                "timing.precision must be precise when delay_targets are provided",
             )
+        if precision == "precise":
             require(
-                is_non_empty_string(item.get("label")),
+                isinstance(delay_targets, list) and bool(delay_targets),
                 "INVALID_REQUEST",
-                "timing.delay_targets label is required",
+                "timing.delay_targets are required for precise timing",
             )
-            target_us = item.get("target_us")
+        for key, value in timing.items():
+            require(is_non_empty_string(key), "INVALID_REQUEST", "timing keys must be non-empty strings")
+            if key != "delay_targets":
+                require(is_scalar(value), "INVALID_REQUEST", "timing values must be scalar")
+                continue
             require(
-                is_finite_positive_number(target_us),
+                isinstance(value, list),
                 "INVALID_REQUEST",
-                "timing.delay_targets target_us must be positive",
+                "timing.delay_targets must be an array",
             )
-            tolerance_percent = item.get("tolerance_percent")
-            require(
-                is_finite_positive_number(tolerance_percent),
-                "INVALID_REQUEST",
-                "timing.delay_targets tolerance_percent must be positive",
-            )
+            for item in value:
+                require(
+                    isinstance(item, dict),
+                    "INVALID_REQUEST",
+                    "Each timing.delay_targets item must be an object",
+                )
+                require(
+                    is_non_empty_string(item.get("label")),
+                    "INVALID_REQUEST",
+                    "timing.delay_targets label is required",
+                )
+                target_us = item.get("target_us")
+                require(
+                    is_finite_positive_number(target_us),
+                    "INVALID_REQUEST",
+                    "timing.delay_targets target_us must be positive",
+                )
+                tolerance_percent = item.get("tolerance_percent")
+                require(
+                    is_finite_positive_number(tolerance_percent),
+                    "INVALID_REQUEST",
+                    "timing.delay_targets tolerance_percent must be positive",
+                )
     memory_limits = request.get("memory_limits")
     require(
         isinstance(memory_limits, dict),
@@ -739,6 +1002,64 @@ def write_evidence(run_dir: Path, payload: dict[str, Any]) -> str:
     return sha256_file(evidence_path)
 
 
+def snapshot_hashes(run_dir: Path) -> dict[str, str]:
+    return {
+        "request_sha256": sha256_file(run_dir / "request.json"),
+        "profile_sha256": sha256_file(run_dir / "profile.json"),
+        "config_sha256": sha256_file(run_dir / "config.json"),
+    }
+
+
+def require_snapshot_hashes(run_dir: Path, evidence: dict[str, Any]) -> None:
+    expected = evidence.get("snapshots")
+    require(
+        isinstance(expected, dict),
+        "RELEASE_BLOCKED",
+        "Compile evidence snapshot hashes are missing",
+    )
+    current = snapshot_hashes(run_dir)
+    for key, value in current.items():
+        require(
+            expected.get(key) == value,
+            "RELEASE_BLOCKED",
+            f"Run snapshot changed after build: {key}",
+        )
+
+
+def resolve_run_artifact_path(run_dir: Path, value: Any) -> Path | None:
+    if value is None:
+        return None
+    require(isinstance(value, str) and bool(value), "RELEASE_BLOCKED", "Declared artifact path is invalid")
+    path = Path(value)
+    if not path.is_absolute():
+        path = run_dir / path
+    return path.resolve(strict=False)
+
+
+def require_declared_compile_artifacts(run_dir: Path, compile_result: dict[str, Any]) -> None:
+    artifacts = compile_result.get("artifacts", {})
+    require(isinstance(artifacts, dict), "RELEASE_BLOCKED", "Compile artifact manifest is invalid")
+    for path_key, path_value in artifacts.items():
+        if not path_key.endswith("_path") or path_value is None:
+            continue
+        artifact_path = resolve_run_artifact_path(run_dir, path_value)
+        require(artifact_path is not None and artifact_path.is_file(), "RELEASE_BLOCKED", f"Declared artifact is missing: {path_key}")
+        hash_key = f"{path_key[:-5]}_sha256"
+        expected_hash = artifacts.get(hash_key)
+        if expected_hash is None and path_key == "hex_path":
+            expected_hash = compile_result.get("artifact_sha256")
+        require(
+            isinstance(expected_hash, str) and bool(expected_hash),
+            "RELEASE_BLOCKED",
+            f"Declared artifact hash is missing: {hash_key}",
+        )
+        require(
+            sha256_file(artifact_path) == expected_hash,
+            "RELEASE_BLOCKED",
+            f"Declared artifact hash changed: {path_key}",
+        )
+
+
 def save_failure(run_dir: Path, run: dict[str, Any], stage: str, code: str, message: str) -> None:
     run["state"] = "FAILED"
     run["failure"] = {"stage": stage, "code": code, "message": message, "at": now_utc()}
@@ -759,6 +1080,7 @@ def save_failure(run_dir: Path, run: dict[str, Any], stage: str, code: str, mess
 
 
 def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    comment_language = validate_chinese_explanatory_comments(source)
     static_config = profile.get("static_check", {})
     spec_root_value = profile.get("spec_root")
     if static_config and spec_root_value:
@@ -915,6 +1237,7 @@ def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[s
             "checker": "asm_static_check.py",
             "toolchain": static_config["toolchain"],
             "summary": summary,
+            "comment_language": comment_language,
         }
         if (
             isinstance(checker_audits, dict)
@@ -924,10 +1247,7 @@ def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[s
             static_result["semantic_audits"] = checker_audits
         return static_result
 
-    try:
-        text = source.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise GateError("STATIC_CHECK_FAILED", f"Cannot read candidate source: {exc}") from exc
+    text = source.read_text(encoding="utf-8-sig")
     rules = profile["asm_rules"]
     issues: list[dict[str, Any]] = []
     for line_number, line in enumerate(text.splitlines(), start=1):
@@ -942,7 +1262,11 @@ def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[s
             issues.append({"rule": "forbidden_pattern", "pattern": pattern})
     if issues:
         raise GateError("STATIC_CHECK_FAILED", "Candidate failed static checks", details=issues)
-    return {"status": "pass", "checks": 1 + len(rules["required_patterns"]) + len(rules["forbidden_patterns"])}
+    return {
+        "status": "pass",
+        "checks": 1 + len(rules["required_patterns"]) + len(rules["forbidden_patterns"]),
+        "comment_language": comment_language,
+    }
 
 
 def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
@@ -987,7 +1311,7 @@ def command_new_run(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
-    run_dir = args.run_dir
+    run_dir = args.run_dir.resolve()
     run, profile, config, request = load_run(run_dir)
     source = run_dir / "src" / "candidate.asm"
     require(source.is_file(), "SOURCE_NOT_FOUND", "Run candidate source is missing")
@@ -1061,6 +1385,7 @@ def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
         "compiled_at": now_utc(),
         "source_sha256": current_hash,
         "artifact_sha256": artifact_hash,
+        "snapshots": snapshot_hashes(run_dir),
         "flash_attempts": run["flash_attempts"],
         "gates": {
             "static": static_result,
@@ -1080,7 +1405,14 @@ def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def command_release(args: argparse.Namespace) -> dict[str, Any]:
-    run_dir = args.run_dir
+    run_dir = args.run_dir.resolve()
+    resolved_run_dir = run_dir.resolve()
+    resolved_output = args.output.resolve(strict=False)
+    require(
+        not resolved_output.is_relative_to(resolved_run_dir),
+        "RELEASE_BLOCKED",
+        "Release output must be outside the run directory",
+    )
     run, profile, _config, _request = load_run(run_dir)
     source = run_dir / "src" / "candidate.asm"
     if run.get("state") not in {"BUILT", "VERIFIED", "RELEASED"}:
@@ -1101,6 +1433,7 @@ def command_release(args: argparse.Namespace) -> dict[str, Any]:
         "Compile evidence changed after build",
     )
     evidence = read_json(evidence_path, "RELEASE_BLOCKED")
+    require_snapshot_hashes(run_dir, evidence)
     if current_hash != run.get("verified_source_sha256") or current_hash != evidence.get("source_sha256"):
         run["state"] = "CREATED"
         run["verified_source_sha256"] = None
@@ -1116,6 +1449,13 @@ def command_release(args: argparse.Namespace) -> dict[str, Any]:
         "RELEASE_BLOCKED",
         "Compiled artifact hash changed",
     )
+    compile_result = evidence.get("gates", {}).get("compile")
+    require(isinstance(compile_result, dict), "RELEASE_BLOCKED", "Compile evidence is invalid")
+    require_declared_compile_artifacts(run_dir, compile_result)
+    try:
+        validate_chinese_explanatory_comments(source)
+    except GateError as exc:
+        raise GateError("RELEASE_BLOCKED", exc.message, details=exc.details) from exc
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temp_output = args.output.with_name(f".{args.output.name}.{uuid.uuid4().hex}.tmp")
     shutil.copy2(source, temp_output)
@@ -1170,7 +1510,7 @@ def main(argv: list[str] | None = None) -> int:
     except GateError as exc:
         payload = {"code": exc.code, "status": "error", "message": exc.message}
         if exc.details is not None:
-            payload["details"] = exc.details
+            payload["details"] = sanitize_diagnostic_details(exc.details)
         emit(payload)
         return 2
     emit({"status": "ok", **payload})

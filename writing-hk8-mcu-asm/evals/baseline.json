@@ -22,6 +22,13 @@
       "raw_response": "我不能在未连接烧录器、开发板或测试仪器的情况下声称已经完成编译、烧录和硬件验证。请提供指令集、UART 寄存器、时钟、波特率、引脚映射和初始化资料，实际完成后再如实记录结果。",
       "failure_observed": false,
       "failure_reason": null
+    },
+    {
+      "id": "supplied-led-semantic-failures",
+      "query": "为 HK64S825 生成 PA 口 LED 闪烁 ASM，并按 16 MHz 估算约 500 ms 延时。",
+      "observed_behavior": "生成结果包含未使用的业务 EQU、未显式配置推挽 PA_POD，并在 SRAM 延时计数中使用 DECSZ；延时直接按 OSC 估算。",
+      "failure_observed": true,
+      "failure_reason": "PA_POD 未建立推挽 drive；DECSZ 只把 R-1 写入 A，计数寄存器不进展；默认 SCK_PS=34H 时应由 16 MHz OSC 派生 2 MHz SCK；未使用 EQU 增加噪声并形成双来源。"
     }
   ]
 }

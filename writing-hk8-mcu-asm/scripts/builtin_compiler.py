@@ -25,14 +25,14 @@ from typing import Any
 
 
 ROLE = "compiler"
-TOOL_VERSION = "builtin-hk64s825-assembler-1"
+TOOL_VERSION = "builtin-hk64s825-assembler-2"
 TOOLCHAIN = "hk64s825-builtin-assembler"
 PROGRAM_MIN = 0x0000
 PROGRAM_MAX = 0x03FF
 LABEL_RE = re.compile(r"^\s*([A-Za-z_.$?][\w.$?]*)\s*:\s*(.*)$")
 EQU_RE = re.compile(r"^\s*([A-Za-z_.$?][\w.$?]*)\s+EQU\s+(.+?)\s*$", re.IGNORECASE)
 NUMERIC_RE = re.compile(
-    r"^(?:#?\s*)?(?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|[0-9]+)$",
+    r"^(?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|[0-9]+)$",
     re.IGNORECASE,
 )
 RAW_WORD_RE = re.compile(r"^(?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H)$", re.IGNORECASE)
@@ -93,8 +93,6 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def parse_int(text: str) -> int:
     value = text.strip().replace("_", "")
-    if value.startswith("#"):
-        value = value[1:].strip()
     try:
         if re.fullmatch(r"0x[0-9A-Fa-f]+", value, re.IGNORECASE):
             return int(value, 16)
@@ -115,7 +113,12 @@ def safe_token(text: str) -> str:
 
 
 def split_args(args: str) -> list[str]:
-    return [part.strip() for part in args.split(",") if part.strip()]
+    if not args.strip():
+        return []
+    parts = [part.strip() for part in args.split(",")]
+    if any(not part for part in parts):
+        raise CompileFailure("empty_operand", "operand list contains an empty item")
+    return parts
 
 
 def load_instruction_variants() -> list[dict[str, Any]]:
@@ -168,6 +171,11 @@ def resolve_value(token: str, symbols: dict[str, int], registers: dict[str, int]
     stripped = token.strip()
     if not stripped:
         raise CompileFailure("missing_operand", "operand is missing")
+    if stripped.startswith("#"):
+        raise CompileFailure(
+            "invalid_immediate_position",
+            f"immediate prefix is not allowed here: {safe_token(stripped)}",
+        )
     if NUMERIC_RE.fullmatch(stripped):
         return parse_int(stripped)
     key = stripped.upper()
@@ -178,10 +186,32 @@ def resolve_value(token: str, symbols: dict[str, int], registers: dict[str, int]
     raise CompileFailure("unknown_symbol", f"unknown symbol or register: {safe_token(stripped)}")
 
 
+def resolve_immediate(token: str, symbols: dict[str, int], registers: dict[str, int]) -> int:
+    stripped = token.strip()
+    if not stripped.startswith("#"):
+        raise CompileFailure("missing_immediate_prefix", "immediate operand must start with #")
+    value = stripped[1:].strip()
+    if not value:
+        raise CompileFailure("missing_operand", "immediate operand is missing")
+    return resolve_value(value, symbols, registers)
+
+
 def range_check(value: int, low: int, high: int, name: str, line: int) -> int:
     if not low <= value <= high:
         raise CompileFailure("operand_out_of_range", f"{name} out of range at line {line}")
     return value
+
+
+def define_symbol(
+    name: str,
+    value: int,
+    labels: dict[str, int],
+    registers: dict[str, int],
+    line: int,
+) -> None:
+    if name in labels or name in registers:
+        raise CompileFailure("duplicate_symbol", f"duplicate or reserved symbol at line {line}: {name}")
+    labels[name] = value
 
 
 def first_pass(text: str, registers: dict[str, int]) -> tuple[list[Statement], dict[str, int]]:
@@ -199,9 +229,7 @@ def first_pass(text: str, registers: dict[str, int]) -> tuple[list[Statement], d
         label_match = LABEL_RE.match(code)
         if label_match:
             label = label_match.group(1).upper()
-            if label in labels:
-                raise CompileFailure("duplicate_label", f"duplicate label at line {line_number}: {label}")
-            labels[label] = address
+            define_symbol(label, address, labels, registers, line_number)
             code = label_match.group(2).strip()
             if not code:
                 continue
@@ -209,7 +237,8 @@ def first_pass(text: str, registers: dict[str, int]) -> tuple[list[Statement], d
         equ_match = EQU_RE.match(code)
         if equ_match:
             name = equ_match.group(1).upper()
-            labels[name] = resolve_value(equ_match.group(2), labels, registers)
+            value = resolve_value(equ_match.group(2), labels, registers)
+            define_symbol(name, value, labels, registers, line_number)
             continue
 
         parts = code.split(None, 1)
@@ -220,10 +249,20 @@ def first_pass(text: str, registers: dict[str, int]) -> tuple[list[Statement], d
             address = range_check(resolve_value(args, labels, registers), PROGRAM_MIN, PROGRAM_MAX, "ORG", line_number)
             statements.append(Statement(line_number, address, op, args, "directive"))
             continue
-        if op in {"END", "INCLUDE"}:
+        if op == "END":
+            if args:
+                raise CompileFailure(
+                    "invalid_directive_arguments",
+                    f"END does not accept operands at line {line_number}",
+                )
             statements.append(Statement(line_number, address, op, args, "directive"))
-            ended = op == "END"
+            ended = True
             continue
+        if op == "INCLUDE":
+            raise CompileFailure(
+                "unsupported_directive",
+                f"INCLUDE is not supported by the built-in compiler at line {line_number}",
+            )
         if op == "DB":
             values = split_args(args)
             if not values:
@@ -281,14 +320,14 @@ def assemble_data(statement: Statement, symbols: dict[str, int], registers: dict
 def match_a_immediate(args: str, symbols: dict[str, int], registers: dict[str, int], line: int) -> int | None:
     parts = split_args(args)
     if len(parts) == 2 and parts[0].upper() == "A" and parts[1].lstrip().startswith("#"):
-        return range_check(resolve_value(parts[1], symbols, registers), 0, 0xFF, "k8", line)
+        return range_check(resolve_immediate(parts[1], symbols, registers), 0, 0xFF, "k8", line)
     return None
 
 
 def match_immediate(args: str, symbols: dict[str, int], registers: dict[str, int], line: int) -> int | None:
     parts = split_args(args)
     if len(parts) == 1 and parts[0].lstrip().startswith("#"):
-        return range_check(resolve_value(parts[0], symbols, registers), 0, 0xFF, "k8", line)
+        return range_check(resolve_immediate(parts[0], symbols, registers), 0, 0xFF, "k8", line)
     return None
 
 

@@ -8,7 +8,7 @@ The closed-loop ``hk8asm.py`` runner calls adapters through this contract:
 This adapter does not bundle the company compiler.  It requires explicit paths
 to:
 
-* ``asmc_compile.py`` from ``D:\hk64s8x-cli`` or an equivalent local checkout.
+* an explicitly supplied ``asmc_compile.py`` path from an authorized checkout.
 * the company ``HK_ASM_Compiler`` source root used by that ASMC wrapper.
 
 It fails closed when those paths are missing, and it always runs the ASMC

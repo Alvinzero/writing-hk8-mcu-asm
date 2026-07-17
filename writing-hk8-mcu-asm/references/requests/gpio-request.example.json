@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "chip": "HK64S825",
-  "behavior": "Drive one confirmed GPIO as a measurable heartbeat output.",
+  "behavior": "PA0 高电平点亮，约 500 ms 翻转一次。",
   "clock": {
     "osc_hz": 16000000,
     "sck_ps": "reset"
@@ -39,14 +39,8 @@
     "ram_bytes": 64
   },
   "board": {
-    "id": "REPLACE_WITH_BOARD_ID"
+    "id": "HK64S825-DEFAULT"
   },
-  "acceptance": [
-    {
-      "name": "heartbeat-output",
-      "observable": "logic-analyzer gpio waveform",
-      "expected": "1 kHz square wave within declared tolerance"
-    }
-  ],
+  "acceptance": [],
   "allow_nonvolatile_changes": false
 }
