@@ -179,6 +179,136 @@ END
 """
 
 
+OLED_MINIMAL_REALBOARD_SOURCE = """; CHIP: HK64S825
+; 功能：OLED 全屏点亮，采用实板最小初始化
+; 板级：PB7 为数据线，PB6 为时钟线，七位地址 3CH，写地址 78H
+ORG 0000H
+  JMP INIT
+
+ORG 0008H
+  RETI
+
+INIT:
+  MOV A,#0C0H
+  MOV PB_PPU,A
+  MOV A,#0C0H
+  MOV PB_POE,A
+  MOV A,#0C0H
+  MOV PB_PIO,A
+  CALL DELAY_100MS
+  CALL OLED_FULL_ON
+HOLD:
+  CLRWDT
+  JMP HOLD
+
+I2C_SEND:
+  MOV 80H,A
+  MOV A,#8
+  MOV 81H,A
+I2C_SEND_LOOP:
+  BTSZ 80H,7
+  JMP I2C_SEND_ONE
+  BCLR PB_PIO,7
+  JMP I2C_SEND_CLK
+I2C_SEND_ONE:
+  BSET PB_PIO,7
+I2C_SEND_CLK:
+  BSET PB_PIO,6
+  NOP
+  BCLR PB_PIO,6
+  RLR 80H
+  DECSZR 81H
+  JMP I2C_SEND_LOOP
+  BCLR PB_POE,7
+  NOP
+  BSET PB_PIO,6
+  NOP
+  MOV A,PB_INS
+  AND A,#80H
+  MOV 80H,A
+  BCLR PB_PIO,6
+  BSET PB_POE,7
+  BSET PB_PIO,7
+  RET
+
+OLED_SET_FULL_RANGE:
+  MOV A,#021H
+  CALL I2C_SEND
+  MOV A,#000H
+  CALL I2C_SEND
+  MOV A,#07FH
+  CALL I2C_SEND
+  MOV A,#022H
+  CALL I2C_SEND
+  MOV A,#000H
+  CALL I2C_SEND
+  MOV A,#007H
+  CALL I2C_SEND
+  RET
+
+OLED_FULL_ON:
+  CALL OLED_SET_FULL_RANGE
+  MOV A,#78H
+  CALL I2C_SEND
+  MOV A,#40H
+  CALL I2C_SEND
+  MOV A,#00H
+  MOV 83H,A
+  MOV A,#04H
+  MOV 84H,A
+OLED_FULL_ON_LOOP:
+  MOV A,#0FFH
+  CALL I2C_SEND
+  DECSZR 83H
+  JMP OLED_FULL_ON_LOOP
+  DECSZR 84H
+  JMP OLED_FULL_ON_LOOP
+  RET
+
+DELAY_100MS:
+  MOV A,#20
+  MOV 85H,A
+DELAY_OUTER:
+  MOV A,#250
+  MOV 86H,A
+DELAY_MID:
+  MOV A,#20
+  MOV 87H,A
+DELAY_INNER:
+  CLRWDT
+  DECSZR 87H
+  JMP DELAY_INNER
+  DECSZR 86H
+  JMP DELAY_MID
+  DECSZR 85H
+  JMP DELAY_OUTER
+  RET
+
+END
+"""
+
+
+OLED_ACK_READS_PIO_SOURCE = OLED_MINIMAL_REALBOARD_SOURCE.replace(
+    "  MOV A,PB_INS\n  AND A,#80H",
+    "  MOV A,PB_PIO\n  AND A,#80H",
+)
+
+
+OLED_REVERSED_BTSZ_SOURCE = OLED_MINIMAL_REALBOARD_SOURCE.replace(
+    "  BTSZ 80H,7\n  JMP I2C_SEND_ONE\n  BCLR PB_PIO,7",
+    "  BTSZ 80H,7\n  JMP I2C_SEND_ZERO\n  BSET PB_PIO,7",
+).replace(
+    "I2C_SEND_ONE:\n  BSET PB_PIO,7",
+    "I2C_SEND_ZERO:\n  BCLR PB_PIO,7",
+)
+
+
+OLED_MISSING_POWER_DELAY_SOURCE = OLED_MINIMAL_REALBOARD_SOURCE.replace(
+    "  CALL DELAY_100MS\n  CALL OLED_FULL_ON",
+    "  CALL OLED_FULL_ON",
+)
+
+
 def gpio_request(*, drive: str = "push_pull", active_level: str = "high") -> dict:
     return {
         "schema_version": 1,
@@ -780,7 +910,7 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, payload["findings"])
         self.assertEqual(payload["findings"], [])
         audits = payload["semantic_audits"]
-        self.assertEqual(set(audits), {"gpio_contract", "loop_semantics", "timing"})
+        self.assertEqual(set(audits), {"gpio_contract", "loop_semantics", "oled_i2c", "timing"})
         self.assertEqual(
             audits["gpio_contract"],
             {
@@ -797,6 +927,15 @@ class AsmStaticCheckCliTests(unittest.TestCase):
                 "audited": True,
                 "status": "pass",
                 "rule_ids": ["HK-SYN-012", "HK-WDT-001", "HK-WDT-002"],
+                "finding_rule_ids": [],
+            },
+        )
+        self.assertEqual(
+            audits["oled_i2c"],
+            {
+                "audited": False,
+                "status": "not_applicable",
+                "rule_ids": ["HK-I2C-005", "HK-I2C-006", "HK-OLED-005"],
                 "finding_rule_ids": [],
             },
         )
@@ -824,6 +963,70 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertTrue(gpio_audit["audited"])
         self.assertEqual(gpio_audit["status"], "warning")
         self.assertEqual(gpio_audit["finding_rule_ids"], ["HK-GPIO-INIT-001"])
+
+    def test_oled_minimal_realboard_source_passes_i2c_semantic_gates(self):
+        completed, payload = self.run_checker(
+            OLED_MINIMAL_REALBOARD_SOURCE,
+            "--toolchain",
+            "builtin_compiler",
+            "--strict-warnings",
+        )
+
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertNotIn("HK-I2C-005", self.rule_ids(payload))
+        self.assertNotIn("HK-I2C-006", self.rule_ids(payload))
+        self.assertNotIn("HK-OLED-005", self.rule_ids(payload))
+
+    def test_oled_ack_must_read_input_sense_not_output_latch(self):
+        completed, payload = self.run_checker(
+            OLED_ACK_READS_PIO_SOURCE,
+            "--toolchain",
+            "builtin_compiler",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        findings = [
+            finding
+            for finding in payload["findings"]
+            if finding["rule_id"] == "HK-I2C-005"
+        ]
+        self.assertEqual(1, len(findings), payload["findings"])
+        self.assertIn("PB_PIO", findings[0]["evidence"])
+        self.assertIn("PB_INS", findings[0]["required_fix"])
+
+    def test_oled_btsz_send_bit_branch_must_preserve_msb_order(self):
+        completed, payload = self.run_checker(
+            OLED_REVERSED_BTSZ_SOURCE,
+            "--toolchain",
+            "builtin_compiler",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        findings = [
+            finding
+            for finding in payload["findings"]
+            if finding["rule_id"] == "HK-I2C-006"
+        ]
+        self.assertEqual(1, len(findings), payload["findings"])
+        self.assertIn("BTSZ", findings[0]["evidence"])
+        self.assertIn("JMP I2C_SEND_ONE", findings[0]["required_fix"])
+
+    def test_oled_initialization_requires_power_settle_delay_before_commands(self):
+        completed, payload = self.run_checker(
+            OLED_MISSING_POWER_DELAY_SOURCE,
+            "--toolchain",
+            "builtin_compiler",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        findings = [
+            finding
+            for finding in payload["findings"]
+            if finding["rule_id"] == "HK-OLED-005"
+        ]
+        self.assertEqual(1, len(findings), payload["findings"])
+        self.assertIn("OLED", findings[0]["evidence"])
+        self.assertIn("DELAY", findings[0]["required_fix"])
 
     def test_include_operand_does_not_count_as_business_equ_use(self):
         source = 'LED_MASK EQU 29H\nINCLUDE "LED_MASK"\nORG 0\nSTART:\n  NOP\nEND\n'

@@ -79,11 +79,12 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("内置编译模块", openai_text)
         self.assertNotIn("Generate HK8 ASM", openai_text)
 
-    def test_public_skill_surfaces_name_only_hk64s825(self) -> None:
-        retired_names = ["HK64S8" + suffix for suffix in ("X", "x", "101")]
+    def test_public_skill_surfaces_accept_hk64s8101_as_hk64s825_alias(self) -> None:
+        retired_names = ["HK64S8" + suffix for suffix in ("X", "x")]
         public_paths = [
             SKILL_ROOT / "SKILL.md",
             SKILL_ROOT / "agents" / "openai.yaml",
+            SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.json",
             SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.example.json",
             SKILL_ROOT / "references" / "requests" / "gpio-request.example.json",
         ]
@@ -92,6 +93,14 @@ class ValidateSkillContractTests(unittest.TestCase):
             self.assertIn("HK64S825", text)
             for retired_name in retired_names:
                 self.assertNotIn(retired_name, text)
+        for path in (
+            SKILL_ROOT / "SKILL.md",
+            SKILL_ROOT / "agents" / "openai.yaml",
+            SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.json",
+            SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.example.json",
+        ):
+            with self.subTest(path=path.relative_to(SKILL_ROOT).as_posix()):
+                self.assertIn("HK64S8101", path.read_text(encoding="utf-8"))
 
     def test_validator_json_remains_utf8_under_windows_locale(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -220,6 +229,46 @@ class ValidateSkillContractTests(unittest.TestCase):
             self.assertIn(phrase, skill_text)
         self.assertNotIn("默认只写当前功能必需的 `PIO` 和 `POE`", skill_text)
 
+    def test_oled_realboard_bringup_lessons_are_generalized(self) -> None:
+        skill_text = self.skill_text()
+        oled_spec = self.spec_text("05-GPIO-I2C-OLED驱动规范.md")
+        pitfall_spec = self.spec_text("08-踩坑案例与症状诊断手册.md")
+        agent_spec = self.spec_text("AGENTS.md")
+        combined = "\n".join((skill_text, oled_spec, pitfall_spec, agent_spec))
+        for phrase in (
+            "已验证最小初始化",
+            "`PB_PPU`、`PB_POE`、`PB_PIO`",
+            "`PB_POD/PB_INS/PB_PPD/PB_PSL`",
+            "ACK 采样必须读 `PB_INS`",
+            "不得读 `PB_PIO`",
+            "PB_PIO 可能是输出锁存",
+            "上电稳定延时",
+            "`BTSZ R,b` 是 bit=0 跳过下一条",
+            "低字节 `00H` 配合高计数 `04H`",
+        ):
+            self.assertIn(phrase, combined)
+        self.assertNotIn(
+            "PB6/PB7 初始化必须覆盖 `PB_PPU/PB_POD/PB_INS/PB_PIO/PB_POE`",
+            skill_text,
+        )
+        self.assertIn("MOV A,PB_INS", oled_spec)
+        self.assertNotIn("MOV A,PB_PIO\nAND A,#80H", oled_spec)
+        self.assertIn("MOV A,PB_INS", pitfall_spec)
+        self.assertNotIn("MOV A,PB_PIO\nAND A,#80H", pitfall_spec)
+
+    def test_oled_machine_rules_cover_realboard_regressions(self) -> None:
+        rules = json.loads(
+            (SPEC_ROOT / "rules" / "asm-rules.json").read_text(encoding="utf-8")
+        )
+        by_id = {item["rule_id"]: item for item in rules["rules"]}
+        for rule_id in ("HK-I2C-005", "HK-I2C-006", "HK-OLED-005"):
+            self.assertIn(rule_id, by_id)
+            self.assertEqual("BLOCKER", by_id[rule_id]["severity"])
+        self.assertIn("PB_INS", by_id["HK-I2C-002"]["good_example"])
+        self.assertIn("PB_PIO", by_id["HK-I2C-005"]["bad_example"])
+        self.assertIn("BTSZ", by_id["HK-I2C-006"]["requirement"])
+        self.assertIn("上电稳定延时", by_id["HK-OLED-005"]["requirement"])
+
     def test_simple_tasks_use_targeted_reference_lookup_without_extra_artifacts(self) -> None:
         skill_text = self.skill_text()
         for phrase in (
@@ -244,6 +293,14 @@ class ValidateSkillContractTests(unittest.TestCase):
                 "release",
                 "烧录",
                 "不把它们作为交付前置条件",
+            ),
+            "oled-full-on-realboard-minimal": (
+                "HK64S8101",
+                "PB_INS",
+                "PB_PPU/PB_POE/PB_PIO",
+                "DELAY_100MS",
+                "BTSZ",
+                "1024",
             ),
         }
         for case_id, expected_phrases in expected_by_case.items():
@@ -399,7 +456,7 @@ class ValidateSkillContractTests(unittest.TestCase):
         coding_spec = self.spec_text("01-HK64S825-ASM编码规范.md")
         self.assertNotIn("hardware acceptance required", coding_spec)
 
-    def test_spec_surfaces_report_79_machine_rules(self) -> None:
+    def test_spec_surfaces_report_82_machine_rules(self) -> None:
         document_paths = (
             "README.md",
             "09-AI智能体生成与审查协议.md",
@@ -408,11 +465,13 @@ class ValidateSkillContractTests(unittest.TestCase):
         for relative_path in document_paths:
             with self.subTest(relative_path=relative_path):
                 text = self.spec_text(relative_path)
-                self.assertIn("79 条", text)
+                self.assertIn("82 条", text)
+                self.assertNotIn("79 条", text)
                 self.assertNotIn("78 条", text)
                 self.assertNotIn("70 条", text)
         evidence_index = self.spec_text("10-证据索引与待确认事项.md")
-        self.assertIn("| 规则数 | 79 |", evidence_index)
+        self.assertIn("| 规则数 | 82 |", evidence_index)
+        self.assertNotIn("| 规则数 | 79 |", evidence_index)
         self.assertNotIn("| 规则数 | 78 |", evidence_index)
         self.assertNotIn("| 规则数 | 70 |", evidence_index)
 

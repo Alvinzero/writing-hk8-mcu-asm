@@ -29,6 +29,13 @@
       "observed_behavior": "生成结果包含未使用的业务 EQU、未显式配置推挽 PA_POD，并在 SRAM 延时计数中使用 DECSZ；延时直接按 OSC 估算。",
       "failure_observed": true,
       "failure_reason": "PA_POD 未建立推挽 drive；DECSZ 只把 R-1 写入 A，计数寄存器不进展；默认 SCK_PS=34H 时应由 16 MHz OSC 派生 2 MHz SCK；未使用 EQU 增加噪声并形成双来源。"
+    },
+    {
+      "id": "oled-bringup-semantic-failures",
+      "query": "为 HK64S8101/S825 写 SSD1306 OLED 全屏亮屏 ASM。",
+      "observed_behavior": "生成结果过度初始化 PB_POD/PB_INS/PB_PPD/PB_PSL，ACK 从 PB_PIO 读取，上电后立即发 OLED 命令，且曾经把 BTSZ 分支方向和 1024 字节填充计数写错。",
+      "failure_observed": true,
+      "failure_reason": "HK64S8101 应按 HK64S825 别名处理；OLED 亮屏优先 PB_PPU/PB_POE/PB_PIO 已验证最小初始化；ACK 必须读 PB_INS 真实输入，PB_PIO 可能是输出锁存；首个 OLED/I2C 事务前需要上电稳定延时；BTSZ R,b 为 bit=0 跳过下一条，分支反写会破坏 MSB-first；128x64 全屏填充必须精确 1024 字节。"
     }
   ]
 }

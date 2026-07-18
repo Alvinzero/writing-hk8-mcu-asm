@@ -15,7 +15,7 @@ import re
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Dict, Iterable, List, Optional
 
 try:
     from .asm_semantic_gates import (
@@ -71,6 +71,7 @@ GPIO_COMPLEX_CONTEXT_RE = re.compile(
 )
 GPIO_AUDIT_RULE_IDS = ["HK-GPIO-002", "HK-GPIO-INIT-001"]
 LOOP_AUDIT_RULE_IDS = ["HK-SYN-012", "HK-WDT-001", "HK-WDT-002"]
+OLED_I2C_AUDIT_RULE_IDS = ["HK-I2C-005", "HK-I2C-006", "HK-OLED-005"]
 DELAY_LABEL_RE = re.compile(r"(DELAY|WAIT)", re.IGNORECASE)
 WDT_OFF_RE = re.compile(r"(WDT|看门狗).{0,20}(OFF|DISABLE|DISABLED|关闭|禁用|已关)", re.IGNORECASE)
 WRITE_FIRST_OPERAND_OPS = {"MOV", "BSET", "BCLR", "BCPL"}
@@ -871,6 +872,153 @@ def audit_table_pairs(
     return pair_results, findings
 
 
+def symbol_token(value: str) -> str:
+    return value.strip().upper()
+
+
+def instruction_first_arg(instruction: Dict[str, Any]) -> Optional[str]:
+    args = split_values(instruction["args"])
+    return symbol_token(args[0]) if args else None
+
+
+def instruction_second_arg(instruction: Dict[str, Any]) -> Optional[str]:
+    args = split_values(instruction["args"])
+    return symbol_token(args[1]) if len(args) >= 2 else None
+
+
+def label_addresses(file_result: Dict[str, Any]) -> Dict[str, int]:
+    labels = file_result.get("labels", {})
+    return {
+        name.upper(): info["address"]
+        for name, info in labels.items()
+        if isinstance(info, dict) and isinstance(info.get("address"), int)
+    }
+
+
+def direct_target_label(
+    instruction: Dict[str, Any], labels_by_address: Dict[int, str]
+) -> Optional[str]:
+    target = symbol_token(instruction["args"].split(",", 1)[0])
+    return target or labels_by_address.get(instruction.get("address"))
+
+
+def has_oled_i2c_context(file_result: Dict[str, Any]) -> bool:
+    instructions = file_result.get("_instructions", [])
+    labels = file_result.get("labels", {})
+    label_names = " ".join(info.get("name", "") for info in labels.values())
+    sources = " ".join(instruction.get("source", "") for instruction in instructions)
+    context = f"{label_names} {sources}"
+    if GPIO_COMPLEX_CONTEXT_RE.search(context):
+        return True
+    registers = {
+        first
+        for instruction in instructions
+        for first in (instruction_first_arg(instruction), instruction_second_arg(instruction))
+        if first
+    }
+    return {"PB_PIO", "PB_POE"} <= registers and any(
+        instruction["op"] == "BCLR"
+        and instruction_first_arg(instruction) == "PB_POE"
+        and instruction_second_arg(instruction) == "7"
+        for instruction in instructions
+    )
+
+
+def audit_oled_i2c_practices(file_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not has_oled_i2c_context(file_result):
+        return []
+    path = file_result["path"]
+    instructions = file_result.get("_instructions", [])
+    labels = label_addresses(file_result)
+    labels_by_address = {address: label for label, address in labels.items()}
+    findings: List[Dict[str, Any]] = []
+
+    for index, instruction in enumerate(instructions):
+        if not (
+            instruction["op"] == "BCLR"
+            and instruction_first_arg(instruction) == "PB_POE"
+            and instruction_second_arg(instruction) == "7"
+        ):
+            continue
+        window = instructions[index + 1 : index + 8]
+        for candidate in window:
+            if (
+                candidate["op"] == "MOV"
+                and instruction_first_arg(candidate) == "A"
+                and instruction_second_arg(candidate) == "PB_PIO"
+            ):
+                findings.append(
+                    make_finding(
+                        "HK-I2C-005",
+                        "BLOCKER",
+                        path,
+                        candidate["line"],
+                        "ACK sampling reads PB_PIO after releasing SDA",
+                        "PB_PIO can represent the output latch rather than the real pin level, so ACK can be misread and OLED bring-up can stop on a false NACK.",
+                        "During the ACK clock, release PB7 with PB_POE and sample PB_INS bit7 for the real input level.",
+                    )
+                )
+                break
+
+    for index, instruction in enumerate(instructions[:-2]):
+        if not (
+            instruction["op"] == "BTSZ"
+            and instruction_first_arg(instruction) in {"80H", "I2C_SHIFT"}
+            and instruction_second_arg(instruction) == "7"
+            and instructions[index + 1]["op"] == "JMP"
+        ):
+            continue
+        target = direct_target_label(instructions[index + 1], labels_by_address)
+        skipped = instructions[index + 2]
+        if not (
+            target is not None
+            and "ONE" in target.upper()
+            and skipped["op"] == "BCLR"
+            and instruction_first_arg(skipped) == "PB_PIO"
+            and instruction_second_arg(skipped) == "7"
+        ):
+            findings.append(
+                make_finding(
+                    "HK-I2C-006",
+                    "BLOCKER",
+                    path,
+                    instruction["line"],
+                    f"BTSZ send-bit branch does not match verified MSB-first layout: {instruction['source']}",
+                    "BTSZ R,7 skips the next instruction when bit7 is zero. Reversing the branch sends the complement of each byte, so 0x78 is not put on the I2C bus.",
+                    "Use the verified layout: BTSZ shift,7; JMP I2C_SEND_ONE; BCLR PB_PIO,7; ... I2C_SEND_ONE: BSET PB_PIO,7.",
+                )
+            )
+        break
+
+    oled_call_indices = [
+        index
+        for index, instruction in enumerate(instructions)
+        if instruction["op"] == "CALL"
+        and any(token in symbol_token(instruction["args"]) for token in ("OLED", "I2C_SEND"))
+    ]
+    if oled_call_indices:
+        first_call_index = min(oled_call_indices)
+        has_prior_delay = any(
+            instruction["op"] == "CALL"
+            and any(token in symbol_token(instruction["args"]) for token in ("DELAY", "WAIT"))
+            for instruction in instructions[:first_call_index]
+        )
+        if not has_prior_delay:
+            first_call = instructions[first_call_index]
+            findings.append(
+                make_finding(
+                    "HK-OLED-005",
+                    "BLOCKER",
+                    path,
+                    first_call["line"],
+                    f"OLED/I2C command path starts at {first_call['source']} without a prior power-settle delay",
+                    "SSD1306 modules can ignore or mis-handle commands sent immediately after MCU reset or power-up.",
+                    "Call a bounded power-settle delay such as DELAY_100MS before the first OLED command or I2C data transaction.",
+                )
+            )
+    return findings
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Check HK64S825 ASM source/layout rules; this does not replace compiler or hardware acceptance."
@@ -1078,8 +1226,10 @@ def main(argv: list[str] | None = None) -> int:
     findings.extend(pair_findings)
     loop_audit_calls = 0
     gpio_audit_calls = 0
+    oled_i2c_audit_calls = 0
     loop_execution_findings: list[dict[str, Any]] = []
     gpio_execution_findings: list[dict[str, Any]] = []
+    oled_i2c_execution_findings: list[dict[str, Any]] = []
     for file_result in files:
         if instruction_effects is not None:
             loop_audit_calls += 1
@@ -1087,6 +1237,11 @@ def main(argv: list[str] | None = None) -> int:
             loop_execution_findings.extend(loop_issues)
             findings.extend(loop_issues)
         findings.extend(audit_unused_equ(file_result))
+        if has_oled_i2c_context(file_result):
+            oled_i2c_audit_calls += 1
+            oled_i2c_issues = audit_oled_i2c_practices(file_result)
+            oled_i2c_execution_findings.extend(oled_i2c_issues)
+            findings.extend(oled_i2c_issues)
 
     gpio_contract_ports = (
         structured_output_contract_ports(request_context)
@@ -1211,6 +1366,13 @@ def main(argv: list[str] | None = None) -> int:
         audited=loop_audited,
         unavailable_status="unavailable",
     )
+    oled_i2c_audit = semantic_audit_summary(
+        OLED_I2C_AUDIT_RULE_IDS,
+        findings,
+        execution_findings=oled_i2c_execution_findings,
+        audited=oled_i2c_audit_calls > 0,
+        unavailable_status="not_applicable",
+    )
     payload = {
         "schema_version": "1.0.0",
         "toolchain": args.toolchain,
@@ -1226,6 +1388,7 @@ def main(argv: list[str] | None = None) -> int:
         "semantic_audits": {
             "gpio_contract": gpio_audit,
             "loop_semantics": loop_audit,
+            "oled_i2c": oled_i2c_audit,
             "timing": timing_audits,
         },
         "findings": findings,

@@ -128,7 +128,7 @@ class ValidateSpecCliTests(unittest.TestCase):
         completed, payload = self.run_validator(SPEC)
         self.assertEqual(completed.returncode, 0, payload)
         self.assertEqual(payload["summary"]["errors"], 0)
-        self.assertEqual(payload["checks"]["rule_count"], 79)
+        self.assertEqual(payload["checks"]["rule_count"], 82)
         self.assertEqual(payload["checks"]["instruction_variant_count"], 65)
         self.assertEqual(payload["checks"]["instruction_metadata_count"], 65)
         self.assertEqual(payload["checks"]["register_reference_count"], 96)
@@ -158,6 +158,9 @@ class ValidateSpecCliTests(unittest.TestCase):
                 "HK-WDT-002": (
                     "test_decsz_backward_counter_loop_is_blocked_and_clrwdt_masking_is_reported"
                 ),
+                "HK-I2C-005": "test_oled_ack_must_read_input_sense_not_output_latch",
+                "HK-I2C-006": "test_oled_btsz_send_bit_branch_must_preserve_msb_order",
+                "HK-OLED-005": "test_oled_initialization_requires_power_settle_delay_before_commands",
             },
         )
 

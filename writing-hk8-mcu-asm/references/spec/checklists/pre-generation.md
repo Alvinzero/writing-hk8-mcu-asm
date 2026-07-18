@@ -1,6 +1,6 @@
 # ASM 生成前检查清单
 
-> 适用：人工或 AI 新建/大改 HK64S825 ASM。任一 BLOCKER 未确认时，输出状态保持 `draft`。
+> 适用：人工或 AI 新建/大改 HK64S825 ASM；HK64S8101 按已确认 HK64S825 别名处理。任一 BLOCKER 未确认时，输出状态保持 `draft`。
 
 ## A. 任务与证据
 
@@ -14,7 +14,7 @@
 
 ## B. 芯片与工具链
 
-- [ ] 第一条回复已确认芯片型号为 `HK64S825`。
+- [ ] 第一条回复已确认芯片型号为 `HK64S825`，或已确认别名 `HK64S8101` 并按 HK64S825 规则继续。
 - [ ] program capacity、SRAM range、vector 地址已确认。
 - [ ] 默认使用 Skill 内置编译器；只有用户明确要求时才选外部 ASMC。
 - [ ] 含 DB 时不得使用 `python_source_module_cli`；默认 `builtin_compiler` 支持 DB，可完成编译 release。
@@ -38,6 +38,11 @@
 - [ ] SDA/SCL、外部上拉、目标频率已确认。
 - [ ] 7-bit address 与 wire write/read byte 均已记录。
 - [ ] controller、resolution、window offset、orientation 已确认。
+- [ ] OLED 亮屏默认使用已验证最小初始化：`PB_PPU`、`PB_POE`、`PB_PIO`；额外 `PB_POD/PB_INS/PB_PPD/PB_PSL` 只有明确板级证据才加入。
+- [ ] ACK 采样必须读 `PB_INS`，不得读 `PB_PIO` 输出锁存。
+- [ ] 第一条 OLED 命令或数据事务前已有上电稳定延时。
+- [ ] 已复核 `BTSZ R,b` 是 bit=0 跳过下一条，I2C bit 发送分支方向未反写。
+- [ ] GDDRAM 全屏填充为 1024 字节；8 位计数器实现时低字节 `00H` 配合高计数 `04H` 或等价计数已说明。
 - [ ] clock stretching、NACK/retry、bus recovery 策略已决定。
 
 ### 数码管

@@ -4,7 +4,7 @@
 ; CHIP: HK64S825 baseline
 ; TOOLCHAIN: company_ide or python_source_module_cli (no DB)
 ; BOARD PROFILE EXAMPLE: SDA=PB7, SCL=PB6, 7-bit addr=3CH, write byte=78H
-; RULES: HK-GPIO-001, HK-I2C-001, HK-I2C-002, HK-I2C-003
+; RULES: HK-GPIO-001, HK-I2C-001, HK-I2C-002, HK-I2C-003, HK-I2C-005, HK-I2C-006, HK-OLED-005
 ;
 ; SRAM ALLOCATION
 ; 80H I2C_SHIFT scratch owner=I2C_SEND lifetime=one call
@@ -30,6 +30,7 @@ INIT:
   MOV PB_POE,A
 
 MAIN_LOOP:
+  CALL PROBE_DELAY
   CALL I2C_START
   MOV A,#78H             ; 7-bit 3CH, write byte 78H
   CALL I2C_SEND
@@ -94,7 +95,7 @@ I2C_SEND_CLOCK:
   BSET PB_PIO,6
   NOP
   NOP
-  MOV A,PB_PIO
+  MOV A,PB_INS
   AND A,#80H
   MOV 82H,A
   BCLR PB_PIO,6

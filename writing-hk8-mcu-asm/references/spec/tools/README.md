@@ -9,7 +9,7 @@ python tools/validate_spec.py <spec-root>
 python tools/validate_spec.py <spec-root> --json
 ```
 
-检查范围包括：必需文件、UTF-8、JSON/Schema、79 条规则、65 个指令探针、65 条 instruction metadata、407 行/96 个 register metadata、INC/metadata OPEN、Markdown 相对链接、模板源码哈希，以及模板静态检查的正反例。
+检查范围包括：必需文件、UTF-8、JSON/Schema、82 条规则、65 个指令探针、65 条 instruction metadata、407 行/96 个 register metadata、INC/metadata OPEN、Markdown 相对链接、模板源码哈希，以及模板静态检查的正反例。
 
 退出码：
 

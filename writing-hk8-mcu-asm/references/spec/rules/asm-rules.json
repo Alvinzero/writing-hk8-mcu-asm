@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0.0",
   "rule_set_id": "HK64S825-ASM-CORPORATE",
-  "rule_set_version": "1.1.0",
-  "generated_at": "2026-07-10T20:37:05+08:00",
+  "rule_set_version": "1.2.0",
+  "generated_at": "2026-07-18T00:00:00+08:00",
   "language": "zh-CN",
   "chip_family": "HK64S825",
   "validated_chip_model": "HK64S825",
@@ -1553,7 +1553,7 @@
       "requirement": "发送 8 位后必须清 PB_POE 对应 SDA 位以释放总线，再拉高 SCL、采样 ACK，拉低 SCL，恢复输出使能并回到空闲高。",
       "rationale": "主机推挽高与从机 ACK 拉低会总线争用。",
       "bad_example": "第 8 位后保持 SDA 输出高并采样。",
-      "good_example": "BCLR PB_POE,7; BSET PB_PIO,6; MOV A,PB_PIO; AND A,#80H; BCLR PB_PIO,6; BSET PB_POE,7。",
+      "good_example": "BCLR PB_POE,7; BSET PB_PIO,6; MOV A,PB_INS; AND A,#80H; BCLR PB_PIO,6; BSET PB_POE,7。",
       "verification": [
         "静态匹配 ACK 序列",
         "示波器/逻辑分析仪看第9时钟"
@@ -1643,6 +1643,138 @@
       ],
       "tags": [
         "timing"
+      ]
+    },
+    {
+      "rule_id": "HK-I2C-005",
+      "title": "ACK 必须读取真实输入采样",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "i2c",
+        "oled",
+        "static_check"
+      ],
+      "requirement": "I2C ACK 周期释放 SDA 后，ACK 采样必须读取输入采样寄存器 `PB_INS`，不得读取输出锁存 `PB_PIO`。",
+      "rationale": "`PB_PIO` 可能反映输出 latch 而不是真实引脚电平，会把真实 ACK 误判成 NACK，使 OLED 初始化直接进入错误路径或整屏不亮。",
+      "bad_example": "BCLR PB_POE,7; BSET PB_PIO,6; MOV A,PB_PIO; AND A,#80H。",
+      "good_example": "BCLR PB_POE,7; BSET PB_PIO,6; MOV A,PB_INS; AND A,#80H。",
+      "verification": [
+        "asm_static_check.py 检查 ACK release 后的采样来源",
+        "实板或逻辑分析仪确认真实 ACK"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "HK64S8101/HK64S825 OLED 最小亮屏回归",
+          "note": "ACK 读 PB_INS 后实板可亮，读 PB_PIO 存在 false NACK 风险"
+        },
+        {
+          "level": "E4",
+          "source": "tools/tests/test_asm_static_check.py",
+          "note": "ACK reads PB_PIO negative regression"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "builtin_compiler",
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "i2c",
+        "oled",
+        "ack",
+        "static-check"
+      ]
+    },
+    {
+      "rule_id": "HK-I2C-006",
+      "title": "BTSZ 发送位分支必须保持 MSB-first 语义",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "i2c",
+        "oled",
+        "static_check"
+      ],
+      "requirement": "I2C bit-bang 发送字节时必须按 `BTSZ R,b` 为 bit=0 跳过下一条来布置 0/1 分支；MSB-first 发送 bit7 不得把 `BCLR PB_PIO,7` 与 `BSET PB_PIO,7` 分支反写。",
+      "rationale": "BTSZ 分支方向反写会把每一位发成相反值，导致 `0x78` 地址、control byte 或数据 byte 不再真实出现在 I2C 总线上。",
+      "bad_example": "BTSZ 80H,7; JMP I2C_SEND_ZERO; BSET PB_PIO,7; ... I2C_SEND_ZERO: BCLR PB_PIO,7。",
+      "good_example": "BTSZ 80H,7; JMP I2C_SEND_ONE; BCLR PB_PIO,7; JMP I2C_SEND_CLK; I2C_SEND_ONE: BSET PB_PIO,7。",
+      "verification": [
+        "asm_static_check.py 检查 BTSZ 后的直接分支布局",
+        "逻辑分析仪确认每 byte MSB-first 且地址为 0x78"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "HK64S8101/HK64S825 OLED 最小亮屏回归",
+          "note": "BTSZ 正确分支布局实板可亮"
+        },
+        {
+          "level": "E4",
+          "source": "tools/tests/test_asm_static_check.py",
+          "note": "reversed BTSZ send-bit negative regression"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "builtin_compiler",
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "i2c",
+        "oled",
+        "btsz",
+        "static-check"
+      ]
+    },
+    {
+      "rule_id": "HK-OLED-005",
+      "title": "OLED 首次事务前必须等待上电稳定",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "oled",
+        "i2c",
+        "static_check"
+      ],
+      "requirement": "MCU 复位进入 OLED 初始化前，第一条 OLED 命令或 I2C 数据事务前必须先执行上电稳定延时，例如 `DELAY_100MS` 或经 clock/cycle 审计的等价等待。",
+      "rationale": "SSD1306 模组上电未稳定时可能忽略或错误处理最早的 `0xAE` 和后续初始化命令，造成编译通过但实板不亮。",
+      "bad_example": "INIT 后立即 CALL OLED_INIT 或直接发送 0xAE。",
+      "good_example": "端口 idle high 建立后，CALL DELAY_100MS，再 CALL OLED_INIT / OLED_FULL_ON。",
+      "verification": [
+        "asm_static_check.py 检查首个 OLED/I2C_SEND 调用前存在 DELAY/WAIT 调用",
+        "实板确认冷启动可重复点亮"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "HK64S8101/HK64S825 OLED 最小亮屏回归",
+          "note": "加入 DELAY_100MS 后实板可亮"
+        },
+        {
+          "level": "E4",
+          "source": "tools/tests/test_asm_static_check.py",
+          "note": "missing power-settle delay negative regression"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "builtin_compiler",
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "oled",
+        "i2c",
+        "startup",
+        "static-check"
       ]
     },
     {

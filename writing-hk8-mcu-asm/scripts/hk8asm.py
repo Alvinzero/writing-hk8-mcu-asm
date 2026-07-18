@@ -39,7 +39,7 @@ GPIO_OUTPUT_DEPENDENCY_RE = re.compile(
 )
 APPROVED_TECHNICAL_TOKENS = {
     "A", "ACK", "ASM", "ASSEMBLER", "BIN", "BUILTIN", "CHIP", "CLOBBERS",
-    "COMPILER", "CRC", "GPIO", "HEX", "HK64S825", "HZ", "I2C", "IN", "KHZ",
+    "COMPILER", "CRC", "GPIO", "HEX", "HK64S825", "HK64S8101", "HZ", "I2C", "IN", "KHZ",
     "LED", "MCU", "MHZ", "MS", "MV", "NACK", "NS", "OLED", "OSC", "OUT", "PA",
     "PB", "RAM", "REENTRANT", "ROM", "RULE", "RULES", "SCK_PS", "SRAM", "TABLE_PAIR",
     "SSD1306", "TOOLCHAIN", "US", "V", "WDT",
@@ -1187,6 +1187,7 @@ def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[s
         expected_audit_rules = {
             "gpio_contract": ["HK-GPIO-002", "HK-GPIO-INIT-001"],
             "loop_semantics": ["HK-SYN-012", "HK-WDT-001", "HK-WDT-002"],
+            "oled_i2c": ["HK-I2C-005", "HK-I2C-006", "HK-OLED-005"],
         }
 
         def valid_audit_section(name: str) -> bool:

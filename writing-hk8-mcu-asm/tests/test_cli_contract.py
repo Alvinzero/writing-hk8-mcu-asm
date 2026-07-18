@@ -1058,6 +1058,7 @@ raise SystemExit(__EXIT_CODE__)
     def test_custom_checker_invalid_semantic_audits_are_not_promoted_to_pass(self) -> None:
         valid_gpio_rules = ["HK-GPIO-002", "HK-GPIO-INIT-001"]
         valid_loop_rules = ["HK-SYN-012", "HK-WDT-001", "HK-WDT-002"]
+        valid_oled_rules = ["HK-I2C-005", "HK-I2C-006", "HK-OLED-005"]
         cases = {
             "missing_sections": {"timing": []},
             "audited_false_pass": {
@@ -1073,6 +1074,12 @@ raise SystemExit(__EXIT_CODE__)
                     "rule_ids": valid_loop_rules,
                     "finding_rule_ids": [],
                 },
+                "oled_i2c": {
+                    "audited": False,
+                    "status": "not_applicable",
+                    "rule_ids": valid_oled_rules,
+                    "finding_rule_ids": [],
+                },
                 "timing": [],
             },
             "invalid_structure": {
@@ -1086,6 +1093,12 @@ raise SystemExit(__EXIT_CODE__)
                     "audited": True,
                     "status": "pass",
                     "rule_ids": valid_loop_rules,
+                    "finding_rule_ids": [],
+                },
+                "oled_i2c": {
+                    "audited": False,
+                    "status": "not_applicable",
+                    "rule_ids": valid_oled_rules,
                     "finding_rule_ids": [],
                 },
                 "timing": [],
@@ -1126,6 +1139,12 @@ raise SystemExit(__EXIT_CODE__)
                 "audited": True,
                 "status": "pass",
                 "rule_ids": ["HK-SYN-012", "HK-WDT-001", "HK-WDT-002"],
+                "finding_rule_ids": [],
+            },
+            "oled_i2c": {
+                "audited": False,
+                "status": "not_applicable",
+                "rule_ids": ["HK-I2C-005", "HK-I2C-006", "HK-OLED-005"],
                 "finding_rule_ids": [],
             },
             "timing": [],
@@ -1524,7 +1543,7 @@ raise SystemExit(__EXIT_CODE__)
         evidence = json.loads((run_dir / "evidence.json").read_text(encoding="utf-8"))
         audits = evidence["gates"]["static"]["semantic_audits"]
         self.assertEqual(
-            set(audits), {"gpio_contract", "loop_semantics", "timing"}
+            set(audits), {"gpio_contract", "loop_semantics", "oled_i2c", "timing"}
         )
         self.assertEqual(audits["gpio_contract"]["status"], "pass")
         self.assertTrue(audits["gpio_contract"]["audited"])
@@ -1535,6 +1554,12 @@ raise SystemExit(__EXIT_CODE__)
         self.assertEqual(
             set(audits["loop_semantics"]["rule_ids"]),
             {"HK-SYN-012", "HK-WDT-001", "HK-WDT-002"},
+        )
+        self.assertEqual(audits["oled_i2c"]["status"], "not_applicable")
+        self.assertFalse(audits["oled_i2c"]["audited"])
+        self.assertEqual(
+            set(audits["oled_i2c"]["rule_ids"]),
+            {"HK-I2C-005", "HK-I2C-006", "HK-OLED-005"},
         )
         self.assertEqual(len(audits["timing"]), 1)
         self.assertEqual(audits["timing"][0]["status"], "pass")

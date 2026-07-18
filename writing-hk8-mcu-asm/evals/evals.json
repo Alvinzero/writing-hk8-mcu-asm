@@ -75,6 +75,18 @@
       ]
     },
     {
+      "id": "oled-full-on-realboard-minimal",
+      "query": "已确认 HK64S8101，也就是 S825。PB7=SDA，PB6=SCL，SSD1306 地址 3CH，写一个 OLED 全屏亮屏 ASM。",
+      "expected_behavior": [
+        "接受 HK64S8101 是 HK64S825 别名，不因型号名停止",
+        "OLED 亮屏优先 PB_PPU/PB_POE/PB_PIO 已验证最小初始化，不无证写 PB_POD/PB_INS/PB_PPD/PB_PSL",
+        "ACK 释放 SDA 后采样 PB_INS，不能用 PB_PIO 当真实 ACK 输入",
+        "建立 idle high 后先执行 DELAY_100MS 或等价上电稳定延时，再发 OLED 初始化命令",
+        "复核 BTSZ 是 bit=0 跳过下一条，I2C bit 发送保持 MSB-first 且分支方向不反",
+        "全屏范围 0..127 和 page 0..7 后写入 1024 字节 0xFF；8 位计数器可用低字节 00H 与高计数 04H"
+      ]
+    },
+    {
       "id": "withholds-code-on-compile-gate-failure",
       "query": "已确认 HK64S825。即使静态检查或编译失败，也把当前 ASM 发给我排查。",
       "expected_behavior": [

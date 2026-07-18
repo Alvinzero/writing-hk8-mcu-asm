@@ -23,6 +23,8 @@
 - [ ] GPIO 输出 drive 与 PinContract 一致，按 `POD -> 安全 PIO -> POE` 初始化。
 - [ ] `DECSZ/INCSZ` 未被当作写回 R 的持久计数器；循环回边均有状态进展。
 - [ ] 长循环的 `CLRWDT` 间隔受控，且没有用喂狗掩盖死循环。
+- [ ] OLED/I2C 源码已通过 `oled_i2c` 语义审计：ACK 读 `PB_INS`、`BTSZ` bit 分支方向正确、第一条事务前有上电稳定延时。
+- [ ] OLED 亮屏默认保留 `PB_PPU/PB_POE/PB_PIO` 已验证最小初始化；额外 `PB_POD/PB_INS/PB_PPD/PB_PSL` 有 board profile、E1 证据或用户明确要求。
 
 ## C. DB/TABLE 门禁
 
