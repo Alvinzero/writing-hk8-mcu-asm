@@ -149,6 +149,16 @@ class ValidateSkillContractTests(unittest.TestCase):
         ):
             self.assertNotIn(stale, skill_text)
 
+    def test_release_claims_distinguish_builtin_from_company_assembler(self) -> None:
+        skill_text = self.skill_text()
+        for phrase in (
+            "内置编译 release 只证明源码通过当前 Skill 内置编译器",
+            "不得宣称公司编译器兼容",
+            "不得使用 `company compatible`",
+            "公司编译器交叉验证",
+        ):
+            self.assertIn(phrase, skill_text)
+
     def test_default_profile_and_config_use_canonical_non_example_paths(self) -> None:
         skill_text = self.skill_text()
         profile = SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.json"
@@ -389,7 +399,7 @@ class ValidateSkillContractTests(unittest.TestCase):
         coding_spec = self.spec_text("01-HK64S825-ASM编码规范.md")
         self.assertNotIn("hardware acceptance required", coding_spec)
 
-    def test_spec_surfaces_report_78_machine_rules(self) -> None:
+    def test_spec_surfaces_report_79_machine_rules(self) -> None:
         document_paths = (
             "README.md",
             "09-AI智能体生成与审查协议.md",
@@ -398,10 +408,12 @@ class ValidateSkillContractTests(unittest.TestCase):
         for relative_path in document_paths:
             with self.subTest(relative_path=relative_path):
                 text = self.spec_text(relative_path)
-                self.assertIn("78 条", text)
+                self.assertIn("79 条", text)
+                self.assertNotIn("78 条", text)
                 self.assertNotIn("70 条", text)
         evidence_index = self.spec_text("10-证据索引与待确认事项.md")
-        self.assertIn("| 规则数 | 78 |", evidence_index)
+        self.assertIn("| 规则数 | 79 |", evidence_index)
+        self.assertNotIn("| 规则数 | 78 |", evidence_index)
         self.assertNotIn("| 规则数 | 70 |", evidence_index)
 
     def test_all_spec_docs_avoid_retired_db_toolchain_requirements(self) -> None:

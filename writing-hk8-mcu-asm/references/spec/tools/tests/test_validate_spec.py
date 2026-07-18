@@ -128,7 +128,7 @@ class ValidateSpecCliTests(unittest.TestCase):
         completed, payload = self.run_validator(SPEC)
         self.assertEqual(completed.returncode, 0, payload)
         self.assertEqual(payload["summary"]["errors"], 0)
-        self.assertEqual(payload["checks"]["rule_count"], 78)
+        self.assertEqual(payload["checks"]["rule_count"], 79)
         self.assertEqual(payload["checks"]["instruction_variant_count"], 65)
         self.assertEqual(payload["checks"]["instruction_metadata_count"], 65)
         self.assertEqual(payload["checks"]["register_reference_count"], 96)

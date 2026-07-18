@@ -275,7 +275,8 @@ class AsmStaticCheckCliTests(unittest.TestCase):
             asm_paths: list[Path] = []
             for name, text in sources:
                 asm = root / name
-                asm.write_text(text, encoding="utf-8", newline="\n")
+                with asm.open("w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(text)
                 asm_paths.append(asm)
             command = [
                 sys.executable,
@@ -286,7 +287,8 @@ class AsmStaticCheckCliTests(unittest.TestCase):
             ]
             if map_text is not None:
                 map_path = root / "main.map"
-                map_path.write_text(map_text, encoding="utf-8", newline="\n")
+                with map_path.open("w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(map_text)
                 command.extend(["--map", str(map_path)])
             if request is not None:
                 request_path = root / "request.json"
@@ -340,6 +342,24 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertTrue(findings, payload["findings"])
         self.assertTrue(all(finding["severity"] == "ERROR" for finding in findings))
         return findings
+
+    def test_rejects_status_bit_tests_not_portable_to_company_assembler(self):
+        for instruction in ("BTSZ STATUS,0", "BTSNZ STATUS,0"):
+            with self.subTest(instruction=instruction):
+                completed, payload = self.run_checker(
+                    f"ORG 0000H\n  {instruction}\n  NOP\nEND\n",
+                    "--toolchain",
+                    "builtin_compiler",
+                )
+                self.assertEqual(completed.returncode, 2)
+                findings = [
+                    finding
+                    for finding in payload["findings"]
+                    if finding["rule_id"] == "HK-SYN-014"
+                ]
+                self.assertEqual(1, len(findings), payload["findings"])
+                self.assertEqual("BLOCKER", findings[0]["severity"])
+                self.assertIn("STATUS", findings[0]["evidence"])
 
     def test_reports_loaded_request_and_profile_context(self):
         completed, payload = self.run_checker(
@@ -403,7 +423,8 @@ class AsmStaticCheckCliTests(unittest.TestCase):
             root = Path(tmp)
             asm = root / "main.asm"
             request_path = root / "request.json"
-            asm.write_text("ORG 0x0000\n  NOP\nEND\n", encoding="utf-8", newline="\n")
+            with asm.open("w", encoding="utf-8", newline="\n") as handle:
+                handle.write("ORG 0x0000\n  NOP\nEND\n")
             request_path.write_text("{not-json", encoding="utf-8")
             completed = subprocess.run(
                 [

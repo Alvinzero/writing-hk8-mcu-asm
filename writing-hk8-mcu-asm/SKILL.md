@@ -106,6 +106,8 @@ python scripts/hk8asm.py release --run-dir .hk8asm/run-id --output verified.asm
 - 支持资料包中 65 条指令变体、标签、`ORG`、`EQU`、`DB`、`DW` 和 `END`。
 - 不支持或无法确定的语法必须 fail closed，不能伪装编译通过。
 - `asm_static_check.py` 只是静态检查器，不是替代编译器；`fake_adapter.py` 只能用于自动化测试，不能用于 release。
+- 内置编译 release 只证明源码通过当前 Skill 内置编译器，不证明公司 IDE/ASMC 的符号分类、头文件或工程环境兼容。未经公司编译器交叉验证，不得宣称公司编译器兼容，不得使用 `company compatible`、`官方编译通过` 或同义措辞命名文件或描述状态。
+- 已知兼容性反例：公司编译器可能把 `BTSZ STATUS,b` / `BTSNZ STATUS,b` 中的 `STATUS` 分类为常量 `K`，从而拒绝要求 `[R,b]` 的指令。可移植交付源码禁止该形式；应直接测试业务寄存器位，或使用已经过公司编译器交叉验证的等价序列。
 
 外部编译器说明：
 
@@ -119,6 +121,7 @@ python scripts/hk8asm.py release --run-dir .hk8asm/run-id --output verified.asm
 - Profile 提供 `spec_root` 和 `static_check` 时，静态检查必须使用内置规范检查器。
 - 编译 warning 一律视为失败，除非明确列入 `allowed_warnings`。
 - 目标编译必须使用批准版本的内置编译模块或用户明确配置的外部 ASMC；源码、产物和 evidence 必须通过 hash 绑定。
+- 只有 evidence 明确记录公司编译器交叉验证成功时，才可声明公司编译器兼容；只有内置编译 evidence 时，状态必须写成“内置编译 release”。
 - 最终 release 的 ASM 中，说明性注释必须使用中文。寄存器名、指令名、标号、宏名、文件名和英文专有名词可以原样保留，但不得使用英文句子作为 ASM 注释。
 - 烧录、回读、逻辑分析仪或其他实板验证暂不作为输出 ASM 的前置条件；若用户后续要求执行，必须单独记录结果，且不得把仅编译通过描述为实板验证通过。
 - 默认禁止修改 fuse、lock、security bit、OPTION、保护位或其他非易失配置，除非另有批准流程。

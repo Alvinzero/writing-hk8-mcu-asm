@@ -499,6 +499,21 @@ def analyze_file(path: Path, toolchain: str) -> tuple[dict[str, Any], list[dict[
                 )
             )
 
+        if op in {"BTSZ", "BTSNZ"}:
+            operands = split_values(args)
+            if operands and operands[0].upper() == "STATUS":
+                findings.append(
+                    make_finding(
+                        "HK-SYN-014",
+                        "BLOCKER",
+                        path,
+                        line_number,
+                        f"company-assembler-incompatible status bit test: {rest}",
+                        "The built-in assembler accepts STATUS as an SFR, but a company assembler build classified it as K and rejected the required R,b operand form.",
+                        "Avoid STATUS bit tests in portable delivery source. Test the source register bit directly or use a company-assembler-verified sequence, then rebuild with both toolchains.",
+                    )
+                )
+
         if op in {"IDLE", "STOP"}:
             findings.append(
                 make_finding(

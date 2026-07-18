@@ -57,7 +57,7 @@ class InstallContractTests(unittest.TestCase):
         payload = self.payload(result)
         self.assertEqual("INSTALLED", payload["code"])
         destination = self.project / ".agents" / "skills" / "writing-hk8-mcu-asm"
-        self.assertEqual(str(destination), payload["destination"])
+        self.assertEqual(destination.resolve(), Path(payload["destination"]).resolve())
         self.assertTrue((destination / "SKILL.md").is_file())
         self.assertTrue((destination / "scripts" / "hk8asm.py").is_file())
         self.assertTrue((destination / "scripts" / "builtin_compiler.py").is_file())

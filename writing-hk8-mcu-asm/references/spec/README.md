@@ -53,7 +53,7 @@ AI 必须输出使用过的规则 ID、未确认输入、SRAM 分配、程序布
 | 路径 | 用途 |
 |---|---|
 | `00..10-*.md` | 人类可读的规范、专题和证据说明 |
-| `rules/asm-rules.json` | 78 条机器可读规则；AI/CI 的主入口 |
+| `rules/asm-rules.json` | 79 条机器可读规则；AI/CI 的主入口 |
 | `rules/asm-rules.schema.json` | 规则集 JSON Schema |
 | `rules/instruction-metadata.json` | 2026-07 公司 instruction metadata 原始结构化快照 |
 | `rules/instruction-reference.json` | 65 个指令变体的修正版参考与逐变体编译探针 |

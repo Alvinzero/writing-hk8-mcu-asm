@@ -2729,6 +2729,49 @@
         "ai",
         "static-check"
       ]
+    },
+    {
+      "rule_id": "HK-SYN-014",
+      "title": "STATUS 位测试必须兼容公司编译器",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "generation",
+        "static_check",
+        "toolchain"
+      ],
+      "requirement": "可移植交付源码不得使用 `BTSZ STATUS,b` 或 `BTSNZ STATUS,b`；应直接测试业务寄存器位，或使用已有公司编译器交叉验证证据的等价序列。",
+      "rationale": "内置编译器把 STATUS 识别为 SFR，但公司编译器曾把同一操作数分类为常量 K，并以指令要求 [R,b]、实际 [K,b] 拒绝构建。",
+      "bad_example": "`BTSZ STATUS,0`",
+      "good_example": "发送最高位时使用 `BTSZ 80H,7`，随后用已验证的写回移位指令更新 80H。",
+      "verification": [
+        "asm_static_check.py",
+        "company assembler cross-validation",
+        "automated regression test"
+      ],
+      "evidence": [
+        {
+          "level": "E2",
+          "source": "company assembler build diagnostic 2026-07-18",
+          "note": "BTSZ expected [R,b], got [K,b] for STATUS"
+        },
+        {
+          "level": "E4",
+          "source": "tools/tests/test_asm_static_check.py",
+          "note": "BTSZ/BTSNZ STATUS negative regressions"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "company_ide",
+        "builtin_compiler"
+      ],
+      "tags": [
+        "compatibility",
+        "static-check",
+        "toolchain"
+      ]
     }
   ]
 }

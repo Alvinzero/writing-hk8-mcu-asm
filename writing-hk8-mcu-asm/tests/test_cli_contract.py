@@ -350,7 +350,8 @@ raise SystemExit(__EXIT_CODE__)
 
     def new_bundled_run(self, source: str, name: str) -> Path:
         self._write_json(self.request_path, self.led_regression_request())
-        self.source_path.write_text(source, encoding="utf-8", newline="")
+        with self.source_path.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(source)
         run_dir = self.root / name
         result = self.run_cli(
             "new-run",
