@@ -1667,7 +1667,7 @@
       "evidence": [
         {
           "level": "E1",
-          "source": "HK64S8101/HK64S825 OLED 最小亮屏回归",
+          "source": "HK64S825 OLED 最小亮屏回归",
           "note": "ACK 读 PB_INS 后实板可亮，读 PB_PIO 存在 false NACK 风险"
         },
         {
@@ -1711,7 +1711,7 @@
       "evidence": [
         {
           "level": "E1",
-          "source": "HK64S8101/HK64S825 OLED 最小亮屏回归",
+          "source": "HK64S825 OLED 最小亮屏回归",
           "note": "BTSZ 正确分支布局实板可亮"
         },
         {
@@ -1755,7 +1755,7 @@
       "evidence": [
         {
           "level": "E1",
-          "source": "HK64S8101/HK64S825 OLED 最小亮屏回归",
+          "source": "HK64S825 OLED 最小亮屏回归",
           "note": "加入 DELAY_100MS 后实板可亮"
         },
         {

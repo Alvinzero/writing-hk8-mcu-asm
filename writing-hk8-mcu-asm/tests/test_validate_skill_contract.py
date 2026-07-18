@@ -79,8 +79,8 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("内置编译模块", openai_text)
         self.assertNotIn("Generate HK8 ASM", openai_text)
 
-    def test_public_skill_surfaces_accept_hk64s8101_as_hk64s825_alias(self) -> None:
-        retired_names = ["HK64S8" + suffix for suffix in ("X", "x")]
+    def test_public_skill_surfaces_name_only_hk64s825(self) -> None:
+        retired_names = ["HK64S8" + suffix for suffix in ("X", "x", "101")]
         public_paths = [
             SKILL_ROOT / "SKILL.md",
             SKILL_ROOT / "agents" / "openai.yaml",
@@ -93,14 +93,29 @@ class ValidateSkillContractTests(unittest.TestCase):
             self.assertIn("HK64S825", text)
             for retired_name in retired_names:
                 self.assertNotIn(retired_name, text)
-        for path in (
-            SKILL_ROOT / "SKILL.md",
-            SKILL_ROOT / "agents" / "openai.yaml",
+        for profile_path in (
             SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.json",
             SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.example.json",
         ):
+            with self.subTest(profile=profile_path.name):
+                profile = json.loads(profile_path.read_text(encoding="utf-8"))
+                self.assertEqual([], profile["aliases"])
+
+    def test_packaged_text_uses_no_retired_hk64s8101_name(self) -> None:
+        retired_chip = "HK64S8" + "101"
+        retired_short = "S" + "8101"
+        duplicate_name = "HK64S825/" + "HK64S825"
+        for path in SKILL_ROOT.rglob("*"):
+            if not path.is_file() or ".git" in path.parts or "__pycache__" in path.parts:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
             with self.subTest(path=path.relative_to(SKILL_ROOT).as_posix()):
-                self.assertIn("HK64S8101", path.read_text(encoding="utf-8"))
+                self.assertNotIn(retired_chip, text)
+                self.assertNotIn(retired_short, text)
+                self.assertNotIn(duplicate_name, text)
 
     def test_validator_json_remains_utf8_under_windows_locale(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -210,6 +225,28 @@ class ValidateSkillContractTests(unittest.TestCase):
         for phrase in ("烧录器序列号", "逻辑分析仪", "供电电压"):
             self.assertNotIn(phrase, required_section)
 
+    def test_explicit_hk64s825_requests_skip_confirmation_only_reply(self) -> None:
+        skill_text = self.skill_text()
+        first_reply_section = skill_text.split("## 第一条回复", 1)[1].split("## 必需输入", 1)[0]
+        openai_text = (SKILL_ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        evals = json.loads((SKILL_ROOT / "evals" / "evals.json").read_text(encoding="utf-8"))
+        cases = {case["id"]: case for case in evals["cases"]}
+
+        for phrase in (
+            "若用户请求已经明确包含 `HK64S825`",
+            "不得再要求用户回复“是/否”或重复确认型号",
+            "直接进入需求解析、规则读取、候选生成、静态检查、编译和 release",
+        ):
+            self.assertIn(phrase, first_reply_section)
+        self.assertNotIn("每次调用本 Skill 后，第一条回复必须先询问", first_reply_section)
+        self.assertNotIn("第一条回复先确认芯片型号", openai_text)
+
+        case = cases["explicit-hk64s825-oled-direct-run"]
+        self.assertIn("HK64S825 ASM 闭环 写一个 OLED 亮屏代码", case["query"])
+        behavior = "\n".join(case["expected_behavior"])
+        self.assertIn("不要求用户回复是/否", behavior)
+        self.assertIn("直接进入 OLED 亮屏生成、静态检查、编译和 release", behavior)
+
     def test_generation_rules_prevent_copying_examples_and_heavy_led_init(self) -> None:
         skill_text = self.skill_text()
         for phrase in (
@@ -295,7 +332,7 @@ class ValidateSkillContractTests(unittest.TestCase):
                 "不把它们作为交付前置条件",
             ),
             "oled-full-on-realboard-minimal": (
-                "HK64S8101",
+                "HK64S825",
                 "PB_INS",
                 "PB_PPU/PB_POE/PB_PIO",
                 "DELAY_100MS",

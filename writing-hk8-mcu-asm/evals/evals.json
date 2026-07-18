@@ -3,12 +3,21 @@
   "skill": "writing-hk8-mcu-asm",
   "cases": [
     {
-      "id": "asks-chip-model-first",
+      "id": "asks-chip-model-when-missing",
       "query": "帮我写一个 8 位 MCU 的 LED 闪烁程序。",
       "expected_behavior": [
-        "第一条回复只要求用户确认芯片型号",
+        "型号缺失时只要求用户确认芯片型号",
         "列出当前支持的 HK64S825",
         "不输出任何 ASM"
+      ]
+    },
+    {
+      "id": "explicit-hk64s825-oled-direct-run",
+      "query": "HK64S825 ASM 闭环 写一个 OLED 亮屏代码。",
+      "expected_behavior": [
+        "识别用户已经明确 HK64S825",
+        "不要求用户回复是/否",
+        "直接进入 OLED 亮屏生成、静态检查、编译和 release"
       ]
     },
     {
@@ -76,9 +85,9 @@
     },
     {
       "id": "oled-full-on-realboard-minimal",
-      "query": "已确认 HK64S8101，也就是 S825。PB7=SDA，PB6=SCL，SSD1306 地址 3CH，写一个 OLED 全屏亮屏 ASM。",
+      "query": "已确认 HK64S825。PB7=SDA，PB6=SCL，SSD1306 地址 3CH，写一个 OLED 全屏亮屏 ASM。",
       "expected_behavior": [
-        "接受 HK64S8101 是 HK64S825 别名，不因型号名停止",
+        "识别用户已经明确 HK64S825，不因型号确认停顿",
         "OLED 亮屏优先 PB_PPU/PB_POE/PB_PIO 已验证最小初始化，不无证写 PB_POD/PB_INS/PB_PPD/PB_PSL",
         "ACK 释放 SDA 后采样 PB_INS，不能用 PB_PIO 当真实 ACK 输入",
         "建立 idle high 后先执行 DELAY_100MS 或等价上电稳定延时，再发 OLED 初始化命令",

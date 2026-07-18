@@ -39,7 +39,7 @@ GPIO_OUTPUT_DEPENDENCY_RE = re.compile(
 )
 APPROVED_TECHNICAL_TOKENS = {
     "A", "ACK", "ASM", "ASSEMBLER", "BIN", "BUILTIN", "CHIP", "CLOBBERS",
-    "COMPILER", "CRC", "GPIO", "HEX", "HK64S825", "HK64S8101", "HZ", "I2C", "IN", "KHZ",
+    "COMPILER", "CRC", "GPIO", "HEX", "HK64S825", "HZ", "I2C", "IN", "KHZ",
     "LED", "MCU", "MHZ", "MS", "MV", "NACK", "NS", "OLED", "OSC", "OUT", "PA",
     "PB", "RAM", "REENTRANT", "ROM", "RULE", "RULES", "SCK_PS", "SRAM", "TABLE_PAIR",
     "SSD1306", "TOOLCHAIN", "US", "V", "WDT",

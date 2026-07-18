@@ -76,7 +76,7 @@ def main() -> int:
                 "bin_file": str(bin_file),
                 "hex_file": str(hex_file),
                 "map_file": str(map_file),
-                "mcu_type": "HK64S8101",
+                "mcu_type": "HK64S825",
             },
             "artifacts": {
                 "bin_file": str(bin_file),

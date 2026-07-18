@@ -213,7 +213,7 @@ class ClosedLoopCliContractTests(unittest.TestCase):
             "--compiler-source-root",
             str(self.fake_compiler_source_root()),
             "--compiler-mcu-type",
-            "HK64S8101",
+            "HK64S825",
             "--tool-version",
             tool_version,
         ]

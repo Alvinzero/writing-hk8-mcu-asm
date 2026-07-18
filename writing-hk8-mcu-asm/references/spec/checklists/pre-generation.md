@@ -1,6 +1,6 @@
 # ASM 生成前检查清单
 
-> 适用：人工或 AI 新建/大改 HK64S825 ASM；HK64S8101 按已确认 HK64S825 别名处理。任一 BLOCKER 未确认时，输出状态保持 `draft`。
+> 适用：人工或 AI 新建/大改 HK64S825 ASM。任一 BLOCKER 未确认时，输出状态保持 `draft`。
 
 ## A. 任务与证据
 
@@ -14,7 +14,7 @@
 
 ## B. 芯片与工具链
 
-- [ ] 第一条回复已确认芯片型号为 `HK64S825`，或已确认别名 `HK64S8101` 并按 HK64S825 规则继续。
+- [ ] 第一条回复已确认芯片型号为 `HK64S825`，或已从用户请求中可靠解析为 HK64S825。
 - [ ] program capacity、SRAM range、vector 地址已确认。
 - [ ] 默认使用 Skill 内置编译器；只有用户明确要求时才选外部 ASMC。
 - [ ] 含 DB 时不得使用 `python_source_module_cli`；默认 `builtin_compiler` 支持 DB，可完成编译 release。
