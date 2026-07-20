@@ -1129,6 +1129,7 @@ def structured_output_contract_ports(request: dict[str, Any]) -> set[str] | None
             or pin.get("active_level") not in {"high", "low"}
             or pin.get("initial_state") not in {"on", "off"}
             or not isinstance(pin.get("preserve_unowned_bits"), bool)
+            or pin.get("configure_drive_mode", True) not in {True, False}
         ):
             return None
         ports.add(port.upper())
