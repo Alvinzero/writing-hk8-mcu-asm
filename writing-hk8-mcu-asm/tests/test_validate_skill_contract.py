@@ -247,6 +247,21 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("不要求用户回复是/否", behavior)
         self.assertIn("直接进入 OLED 亮屏生成、静态检查、编译和 release", behavior)
 
+    def test_oled_i2c_electrical_questions_are_resolved_before_generation(self) -> None:
+        skill_text = self.skill_text()
+        required_section = skill_text.split("## 必需输入", 1)[1].split(
+            "## 规则读取策略", 1
+        )[0]
+        for phrase in (
+            "创建候选源码前必须确认 SDA、SCL 各自是否配置 `POD`",
+            "候选源码前必须确认 I2C 上拉来源",
+            "PB7（SDA）是否设置 POD",
+            "PB6（SCL）是否设置 POD",
+            "I2C 上拉来源是什么",
+            "不得先生成候选、运行静态检查或编译后，再以 POD 或上拉缺口为由中止",
+        ):
+            self.assertIn(phrase, required_section)
+
     def test_generation_rules_prevent_copying_examples_and_heavy_led_init(self) -> None:
         skill_text = self.skill_text()
         for phrase in (

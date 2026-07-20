@@ -1222,6 +1222,10 @@ def audit_gpio_contract(
             contract_errors.append(
                 f"pins.{pin_name}.preserve_unowned_bits must be boolean"
             )
+        if pin.get("configure_drive_mode", True) not in {True, False}:
+            contract_errors.append(
+                f"pins.{pin_name}.configure_drive_mode must be boolean when present"
+            )
         if contract_errors:
             issues.append(
                 make_issue(
@@ -1304,6 +1308,7 @@ def audit_gpio_contract(
         port = contract["port"]
         owned_bits = contract["owned_bits"]
         drive = pin["drive"]
+        configure_drive_mode = pin.get("configure_drive_mode", True)
         active_level = pin["active_level"]
         initial_state = pin["initial_state"]
 
@@ -1356,11 +1361,11 @@ def audit_gpio_contract(
             final_mode_action = effect_action(mode_effect)
             final_data_action = effect_action(data_effect)
             state_errors: list[str] = []
-            if mode_effect is None:
+            if configure_drive_mode and mode_effect is None:
                 state_errors.append(
                     f"lacks {mode_register} {mode_action} before first {enable_register} set"
                 )
-            elif final_mode_action != mode_action:
+            elif configure_drive_mode and final_mode_action != mode_action:
                 state_errors.append(
                     f"final {mode_register} action before enable is "
                     f"{final_mode_action}@{mode_effect['line']}, required {mode_action}"
@@ -1396,7 +1401,7 @@ def audit_gpio_contract(
                 )
 
             control_boundaries: list[dict[str, Any]] = []
-            if mode_effect is not None and enable_effect is not None:
+            if configure_drive_mode and mode_effect is not None and enable_effect is not None:
                 control_boundaries = [
                     instruction
                     for index, instruction in enumerate(instructions)
@@ -1414,20 +1419,21 @@ def audit_gpio_contract(
                 )
 
             ordered = (
-                mode_effect is not None
-                and data_effect is not None
+                data_effect is not None
                 and enable_effect is not None
-                and final_mode_action == mode_action
+                and (not configure_drive_mode or final_mode_action == mode_action)
                 and final_data_action == data_action
-                and mode_effect["line"] < data_effect["line"] < enable_effect["line"]
+                and data_effect["line"] < enable_effect["line"]
+                and (not configure_drive_mode or mode_effect["line"] < data_effect["line"])
             )
             if not state_errors and ordered:
                 continue
 
             if not ordered:
                 state_errors.append(
-                    "required POD < PIO < POE using final POD/PIO state before the first "
-                    "POE set"
+                    "required PIO < POE using final PIO state before the first POE set"
+                    if not configure_drive_mode
+                    else "required POD < PIO < POE using final POD/PIO state before the first POE set"
                 )
             relevant = [
                 effect

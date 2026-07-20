@@ -1620,6 +1620,26 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         findings = self.assert_gpio_blocker(completed, payload)
         self.assertIn("PA_POD set_bits", findings[0]["evidence"])
 
+    def test_explicit_board_exception_skips_only_pod_requirement(self):
+        request = gpio_request(drive="open_drain")
+        request["pins"]["led_outputs"]["configure_drive_mode"] = False
+        completed, payload = self.run_checker(
+            "ORG 0x0000\n"
+            "START:\n"
+            "  BCLR PA_PIO,0\n"
+            "  BCLR PA_PIO,3\n"
+            "  BCLR PA_PIO,5\n"
+            "  BSET PA_POE,0\n"
+            "  BSET PA_POE,3\n"
+            "  BSET PA_POE,5\n"
+            "END\n",
+            "--toolchain",
+            "company_ide",
+            request=request,
+        )
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertNotIn("HK-GPIO-002", self.rule_ids(payload))
+
     def test_gpio_output_enable_must_follow_mode_and_safe_latch(self):
         completed, payload = self.run_checker(
             "ORG 0x0000\n"
