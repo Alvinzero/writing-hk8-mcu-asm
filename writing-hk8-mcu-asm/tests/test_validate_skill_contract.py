@@ -101,7 +101,7 @@ class ValidateSkillContractTests(unittest.TestCase):
                 profile = json.loads(profile_path.read_text(encoding="utf-8"))
                 self.assertEqual([], profile["aliases"])
 
-    def test_packaged_text_uses_no_retired_hk64s8101_name(self) -> None:
+    def test_packaged_text_uses_only_hk64s825_model_name(self) -> None:
         retired_chip = "HK64S8" + "101"
         retired_short = "S" + "8101"
         duplicate_name = "HK64S825/" + "HK64S825"
