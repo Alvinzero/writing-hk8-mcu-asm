@@ -15,6 +15,8 @@
 
 缺少会影响电气安全或通信行为的字段时，AI 输出状态只能是 `draft`，不得宣称可烧录。
 
+OLED 查表任务在候选生成前必须解析芯片型号、主频、MTP 容量、OLED 分辨率、I2C 地址、SDA/SCL 引脚、上拉/开漏方式、显示方向和是否反色。当前 profile、规范或用户请求已经明确的参数直接采用，不得重复询问；无法从资料库和请求确定的参数必须先按选择题确认，不得猜测。
+
 ### OLED/I2C 电气问题必须前置
 
 即使 SDA/SCL 引脚映射已由当前 profile 确定，创建候选源码前仍必须逐引脚确认 PB7/SDA、PB6/SCL 是否设置 `POD`，并确认上拉来自外部电阻、内部 `PB_PPU` 或两者。用户已明确给出某一项时不得重复询问；未明确时使用 Skill 规定的 A/B/C/D 选择题。禁止先写源码或运行门禁，再因 `POD`、上拉来源不明而中止。
@@ -41,6 +43,15 @@ PinContract 必须把 PB7 和 PB6 拆开记录。需要 `POD` 的引脚设为开
   }
 }
 ```
+
+当前已验证显示基线：
+
+- SSD1306 128x64。
+- 7-bit 地址 `3CH`，写地址 `78H`。
+- `PB7=SDA`，`PB6=SCL`。
+- 命令模式控制字节 `00H`。
+- 数据模式控制字节 `40H`。
+- 正常显示命令 `A6H`。
 
 适用规则：`HK-GPIO-001`、`HK-I2C-001..006`、`HK-OLED-001..005`。
 
@@ -287,6 +298,8 @@ bit0 = top pixel within current page
 bit7 = bottom pixel within current page
 ```
 
+也就是 bit0 是该 page 顶部像素，bit7 是该 page 底部像素。在 `A6H` 正常显示模式下，通常 bit=1 为亮点、bit=0 为黑点。禁止把字模按普通横向行扫描直接发送；ASCII、16x16 汉字、Logo、头像和其他位图都必须先转换成 page 格式。
+
 窗口发送量：
 
 ```text
@@ -295,6 +308,26 @@ bytes = (column_end - column_start + 1)
 ```
 
 例如 64×64 区域：64 columns × 8 pages = 512 bytes。若发送 512 bytes 但窗口是 48×2 pages，显示必然 wrap/错位。
+
+### 多字符、汉字和图片块的统一发送顺序
+
+设置窗口后使用水平寻址模式，遍历顺序必须是：
+
+```text
+for page in pages:
+  for glyph_or_image_block in row:
+    for col in width:
+      send one page-format byte
+```
+
+例如显示两个 16x16 汉字，窗口宽 32 列、高 2 页，必须：
+
+1. 先发送 page0 的第 1 个字 16 列。
+2. 再发送 page0 的第 2 个字 16 列。
+3. 再发送 page1 的第 1 个字 16 列。
+4. 再发送 page1 的第 2 个字 16 列。
+
+禁止先发送第 1 个汉字的两个 page，再发送第 2 个汉字的两个 page；该顺序与 SSD1306 水平寻址窗口的列/page 自动递增不一致，会造成字形错位或重排。
 
 ## 12. 图片/字库转换要求
 
@@ -351,6 +384,7 @@ DB 源码按上述逻辑原始 byte sequence 写入，不得根据 BIN 物理排
 - [ ] 全屏 1024 字节填充循环已确认低字节 `00H` 配合高计数 `04H` 或等价 1024 次结构。
 - [ ] 全亮路径会真正写入 GDDRAM，而不是只发送 `A5H/AFH`。
 - [ ] 资产为 SSD1306 page format，bit0 top。
+- [ ] 多字符/汉字/图片块按 page → 字块/图片块 → 列发送；两个 16x16 汉字的 64 字节顺序为 page0 字1、page0 字2、page1 字1、page1 字2。
 - [ ] DB 原始顺序、`builtin_compiler` 构建、MAP 同页审计完成。
 - [ ] 静态检查和目标编译 0 error / 0 warning，`release` 返回 `RELEASED`。
 

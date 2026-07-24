@@ -308,6 +308,30 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("MOV A,PB_INS", pitfall_spec)
         self.assertNotIn("MOV A,PB_PIO\nAND A,#80H", pitfall_spec)
 
+    def test_oled_page_table_order_is_an_explicit_hard_gate(self) -> None:
+        skill_text = self.skill_text()
+        oled_spec = self.spec_text("05-GPIO-I2C-OLED驱动规范.md")
+        combined = "\n".join((skill_text, oled_spec))
+        for phrase in (
+            "SSD1306 128x64",
+            "7-bit 地址 `3CH`",
+            "写地址 `78H`",
+            "命令模式控制字节 `00H`",
+            "数据模式控制字节 `40H`",
+            "正常显示命令 `A6H`",
+            "bit0 是该 page 顶部像素",
+            "bit7 是该 page 底部像素",
+            "禁止把字模按普通横向行扫描直接发送",
+            "先发送 page0 的第 1 个字 16 列",
+            "再发送 page0 的第 2 个字 16 列",
+            "再发送 page1 的第 1 个字 16 列",
+            "再发送 page1 的第 2 个字 16 列",
+            "for page in pages",
+            "for glyph_or_image_block in row",
+            "for col in width",
+        ):
+            self.assertIn(phrase, combined)
+
     def test_oled_machine_rules_cover_realboard_regressions(self) -> None:
         rules = json.loads(
             (SPEC_ROOT / "rules" / "asm-rules.json").read_text(encoding="utf-8")
