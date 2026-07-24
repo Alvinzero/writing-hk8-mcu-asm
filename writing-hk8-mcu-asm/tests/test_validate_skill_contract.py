@@ -332,15 +332,20 @@ class ValidateSkillContractTests(unittest.TestCase):
         ):
             self.assertIn(phrase, combined)
 
-    def test_current_oled_board_rejects_global_flip_for_single_glyph_mirror(self) -> None:
+    def test_oled_direction_diagnosis_separates_independent_axes(self) -> None:
         skill_text = self.skill_text()
         oled_spec = self.spec_text("05-GPIO-I2C-OLED驱动规范.md")
         combined = "\n".join((skill_text, oled_spec))
-        self.assertIn("`A0H + C0H` 只交换两个汉字的位置", combined)
-        self.assertIn("`A1H + C0H` 配合单字列逆序仍会造成单字镜像", combined)
-        self.assertIn("`A1H + C0H` 配合原始 page 列顺序", combined)
-        self.assertIn("实板复验前只能标为候选", combined)
+        self.assertIn("控制器整屏映射", combined)
+        self.assertIn("字块排列", combined)
+        self.assertIn("单块列方向", combined)
+        self.assertIn("每次只改变一个变量", combined)
+        self.assertIn("不得交换字块顺序", combined)
+        self.assertIn("未经当前板实验证据不得同时叠加", combined)
+        self.assertIn("恢复资产原始 page 列顺序", combined)
+        self.assertIn("未烧录复验的方向组合只能标为候选", combined)
         self.assertIn("换板时必须重新确认显示方向", combined)
+        self.assertNotIn("OLED_你好_HK64S825_original_columns_verified.asm", combined)
 
     def test_oled_machine_rules_cover_realboard_regressions(self) -> None:
         rules = json.loads(
