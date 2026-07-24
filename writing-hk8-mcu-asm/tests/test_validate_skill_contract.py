@@ -332,6 +332,14 @@ class ValidateSkillContractTests(unittest.TestCase):
         ):
             self.assertIn(phrase, combined)
 
+    def test_current_oled_board_uses_realboard_corrected_orientation(self) -> None:
+        skill_text = self.skill_text()
+        oled_spec = self.spec_text("05-GPIO-I2C-OLED驱动规范.md")
+        combined = "\n".join((skill_text, oled_spec))
+        self.assertIn("当前板验证方向为 `A0H + C0H`", combined)
+        self.assertIn("修正上下左右镜像", combined)
+        self.assertIn("换板时必须重新确认显示方向", combined)
+
     def test_oled_machine_rules_cover_realboard_regressions(self) -> None:
         rules = json.loads(
             (SPEC_ROOT / "rules" / "asm-rules.json").read_text(encoding="utf-8")
