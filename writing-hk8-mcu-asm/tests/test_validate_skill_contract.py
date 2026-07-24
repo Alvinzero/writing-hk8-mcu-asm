@@ -337,8 +337,8 @@ class ValidateSkillContractTests(unittest.TestCase):
         oled_spec = self.spec_text("05-GPIO-I2C-OLED驱动规范.md")
         combined = "\n".join((skill_text, oled_spec))
         self.assertIn("`A0H + C0H` 只交换两个汉字的位置", combined)
-        self.assertIn("每个 16 列字模块内单独逆序", combined)
-        self.assertIn("`A1H + C0H`", combined)
+        self.assertIn("`A1H + C0H` 配合单字列逆序仍会造成单字镜像", combined)
+        self.assertIn("`A1H + C0H` 配合原始 page 列顺序", combined)
         self.assertIn("实板复验前只能标为候选", combined)
         self.assertIn("换板时必须重新确认显示方向", combined)
 
