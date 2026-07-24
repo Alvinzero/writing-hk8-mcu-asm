@@ -17,6 +17,7 @@ PORTABLE_RUNTIME_SCRIPTS = [
     SKILL_ROOT / "scripts" / "hk8asm.py",
     SKILL_ROOT / "scripts" / "builtin_compiler.py",
     SKILL_ROOT / "scripts" / "compiler_adapter.py",
+    SKILL_ROOT / "scripts" / "ssd1306_page_bitmap.py",
     SKILL_ROOT / "scripts" / "install.py",
     SKILL_ROOT / "scripts" / "validate_skill.py",
     SPEC_ROOT / "tools" / "asm_static_check.py",
@@ -342,7 +343,12 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("每次只改变一个变量", combined)
         self.assertIn("不得交换字块顺序", combined)
         self.assertIn("未经当前板实验证据不得同时叠加", combined)
-        self.assertIn("恢复资产原始 page 列顺序", combined)
+        self.assertIn("不能跨字库生成器套用", combined)
+        self.assertIn("mirror_x_within_glyphs", combined)
+        self.assertIn("mirror_y", combined)
+        self.assertIn("交换 page 顺序并反转每个 byte 的 bit 顺序", combined)
+        self.assertIn("scripts/ssd1306_page_bitmap.py", combined)
+        self.assertIn("display.asset", combined)
         self.assertIn("未烧录复验的方向组合只能标为候选", combined)
         self.assertIn("换板时必须重新确认显示方向", combined)
         self.assertNotIn("OLED_你好_HK64S825_original_columns_verified.asm", combined)
@@ -352,13 +358,15 @@ class ValidateSkillContractTests(unittest.TestCase):
             (SPEC_ROOT / "rules" / "asm-rules.json").read_text(encoding="utf-8")
         )
         by_id = {item["rule_id"]: item for item in rules["rules"]}
-        for rule_id in ("HK-I2C-005", "HK-I2C-006", "HK-OLED-005"):
+        for rule_id in ("HK-I2C-005", "HK-I2C-006", "HK-OLED-005", "HK-OLED-006"):
             self.assertIn(rule_id, by_id)
             self.assertEqual("BLOCKER", by_id[rule_id]["severity"])
         self.assertIn("PB_INS", by_id["HK-I2C-002"]["good_example"])
         self.assertIn("PB_PIO", by_id["HK-I2C-005"]["bad_example"])
         self.assertIn("BTSZ", by_id["HK-I2C-006"]["requirement"])
         self.assertIn("上电稳定延时", by_id["HK-OLED-005"]["requirement"])
+        self.assertIn("ssd1306_page_bitmap.py", by_id["HK-OLED-006"]["requirement"])
+        self.assertIn("ASM 指定例程或 DB 表", by_id["HK-OLED-006"]["requirement"])
 
     def test_simple_tasks_use_targeted_reference_lookup_without_extra_artifacts(self) -> None:
         skill_text = self.skill_text()
@@ -393,6 +401,15 @@ class ValidateSkillContractTests(unittest.TestCase):
                 "BTSZ",
                 "1024",
             ),
+            "oled-multipage-glyph-orientation-contract": (
+                "A1H+C0H",
+                "5x7",
+                "ssd1306_page_bitmap.py",
+                "字符块内部列",
+                "交换两个 page",
+                "source_label",
+                "released",
+            ),
         }
         for case_id, expected_phrases in expected_by_case.items():
             with self.subTest(case_id=case_id):
@@ -413,6 +430,18 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("DECSZ", case["failure_reason"])
         self.assertIn("SCK_PS", case["failure_reason"])
         self.assertNotIn("source", case)
+
+    def test_baseline_records_multipage_oled_orientation_regression(self) -> None:
+        baseline = json.loads(
+            (SKILL_ROOT / "evals" / "baseline.json").read_text(encoding="utf-8")
+        )
+        cases = {case["id"]: case for case in baseline["cases"]}
+        case = cases["oled-multipage-glyph-orientation-regression"]
+        self.assertTrue(case["failure_observed"])
+        self.assertIn("文本顺序正确", case["observed_behavior"])
+        self.assertIn("上下和左右镜像", case["observed_behavior"])
+        self.assertIn("交换上下 page", case["failure_reason"])
+        self.assertIn("字符块内部", case["failure_reason"])
 
     def test_reference_workflow_keeps_builtin_compile_release_self_contained(self) -> None:
         paths = (
@@ -547,7 +576,7 @@ class ValidateSkillContractTests(unittest.TestCase):
         coding_spec = self.spec_text("01-HK64S825-ASM编码规范.md")
         self.assertNotIn("hardware acceptance required", coding_spec)
 
-    def test_spec_surfaces_report_82_machine_rules(self) -> None:
+    def test_spec_surfaces_report_83_machine_rules(self) -> None:
         document_paths = (
             "README.md",
             "09-AI智能体生成与审查协议.md",
@@ -556,12 +585,12 @@ class ValidateSkillContractTests(unittest.TestCase):
         for relative_path in document_paths:
             with self.subTest(relative_path=relative_path):
                 text = self.spec_text(relative_path)
-                self.assertIn("82 条", text)
+                self.assertIn("83 条", text)
                 self.assertNotIn("79 条", text)
                 self.assertNotIn("78 条", text)
                 self.assertNotIn("70 条", text)
         evidence_index = self.spec_text("10-证据索引与待确认事项.md")
-        self.assertIn("| 规则数 | 82 |", evidence_index)
+        self.assertIn("| 规则数 | 83 |", evidence_index)
         self.assertNotIn("| 规则数 | 79 |", evidence_index)
         self.assertNotIn("| 规则数 | 78 |", evidence_index)
         self.assertNotIn("| 规则数 | 70 |", evidence_index)

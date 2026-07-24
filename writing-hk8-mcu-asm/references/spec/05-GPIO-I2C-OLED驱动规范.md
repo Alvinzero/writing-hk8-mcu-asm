@@ -52,7 +52,7 @@ PinContract 必须把 PB7 和 PB6 拆开记录。需要 `POD` 的引脚设为开
 - 命令模式控制字节 `00H`。
 - 数据模式控制字节 `40H`。
 - 正常显示命令 `A6H`。
-- 当前 board profile 使用 `A1H + C0H` 配合字模生成器输出的原始 page 列顺序。
+- 当前 board profile 固定使用 `A1H + C0H`。某一字模生成器的“原始 page 列顺序”只有在该生成器、转换参数和实板结果都相同的情况下才能复用，不能视为所有字库格式的通用方向。
 - 当前板 5x7 ASCII 数字/斜杠已用 `2026/7/24` 实板验证：文本字符顺序不变，每个字符采用标准 5 列加 1 空列的原始列顺序；标准 5x7 列字节需先做 bit 顺序反转，再作为 SSD1306 page byte 发送。
 - 换板时必须重新确认显示方向，不得把当前板方向无条件用于其他模组。
 
@@ -62,11 +62,39 @@ PinContract 必须把 PB7 和 PB6 拆开记录。需要 `POD` 的引脚设为开
 2. 字块排列：多个字符或图片块在同一 page 内的发送先后决定它们的左右位置。
 3. 单块列方向：一个字模或图片块内部各列的发送次序决定该块是否左右镜像。
 
-使用左右、上下均不对称的测试图做最小变量实验，每轮只改变上述一个维度并记录命令、资产列序和实板结果。字块位置正确但每个字块左右镜像时，不得交换字块顺序；上下正确时，不得改 COM scan direction。segment remap 与软件逐块列逆序都会改变水平方向，未经当前板实验证据不得同时叠加。若两者叠加后仍为单块镜像，应撤销软件列逆序，恢复资产原始 page 列顺序后复验。任何未烧录复验的方向组合只能标为候选，不得宣称已验证。
+使用左右、上下均不对称的测试图做最小变量实验，每轮只改变上述一个维度并记录命令、资产列序和实板结果。字块位置正确但每个字块左右镜像时，不得交换字块顺序；上下正确时，不得改 COM scan direction。segment remap 与软件逐块列逆序都会改变水平方向，未经当前板实验证据不得同时叠加。资产是否保留原始列序必须由同一生成器的 manifest、点阵预览和实板结果裁决，不能从另一种字库格式类推。任何未烧录复验的方向组合只能标为候选，不得宣称已验证。
 
-当前板 5x7 ASCII 排错结论：若文本顺序正确但单个数字上下或左右异常，先按 SSD1306 page 格式核对源字模转换。标准 5x7 ASCII 常量常以另一种垂直 bit 方向存放，直接发送会让单字上下翻转；在当前板上正确修复是仅反转每列字节的 bit 顺序，保持字符顺序、窗口和单字列序不变。只有 bit 顺序修正后仍左右镜像时，才单独调整单字内部列序；不得同时更改 `A1H/C0H`、整串字符顺序和字模列序。
+当前板 5x7 ASCII 排错结论：若文本顺序正确但单个数字上下或左右异常，先按 SSD1306 page 格式核对源字模转换。标准 5x7 ASCII 常量常以另一种垂直 bit 方向存放，直接发送会让单字上下翻转；在当前板上正确修复是仅反转每列字节的 bit 顺序，保持字符顺序、窗口和单字列序不变。该结论只覆盖单 page 标准 5x7 常量；8x16、16x16、汉字、Logo 或其他多 page 资产必须按下面的多页算法独立转换。
 
-适用规则：`HK-GPIO-001`、`HK-I2C-001..006`、`HK-OLED-001..005`。
+### 多页及混合宽度字模的方向算法
+
+多页字模必须先展开为以左上角为原点的二维像素矩阵，再做方向变换，最后重新打包为 page 格式。禁止直接凭十六进制外观手工交换字节。
+
+- `mirror_x_within_glyphs=false`：各字符块保持 manifest 中的原始列序。
+- `mirror_x_within_glyphs=true`：只反转每个字符块内部的列，字符块先后顺序不变。混合宽度文本必须记录每块宽度，例如 `8,8,8,8,16,8,16,8,16`。
+- `mirror_y=false`：像素行保持从上到下。
+- `mirror_y=true`：反转整个资产的像素行。对 16 像素高字模，输出上 page 来自输入下 page 的逐 byte bit 反转，输出下 page 来自输入上 page 的逐 byte bit 反转。
+
+当实板现象是“文本顺序正确，但每个字符同时上下和左右镜像”时，保持 `A1H + C0H`、窗口和文本块顺序不变，资产层设置：
+
+```json
+{
+  "transform": {
+    "mirror_x_within_glyphs": true,
+    "mirror_y": true
+  }
+}
+```
+
+使用 Skill 内置工具执行并审计：
+
+```text
+python scripts/ssd1306_page_bitmap.py asset-manifest.json
+```
+
+工具必须输出源/目标 byte count、SHA256、文本块顺序和带块边界的点阵预览。未经过新一轮烧录复验的输出仍是 release 候选，不得写成实板已验证。
+
+适用规则：`HK-GPIO-001`、`HK-I2C-001..006`、`HK-OLED-001..006`。
 
 ## 2. GPIO 初始化顺序
 
@@ -354,6 +382,16 @@ for page in pages:
 - byte sequence 与窗口遍历顺序。
 - 输出 byte count/hash。
 
+自定义、多 page 或混合字符宽度资产必须使用 `scripts/ssd1306_page_bitmap.py` 和 JSON manifest，不得手工修改最终 page byte。manifest 至少包含：
+
+- `width`、`height`；其中 height 必须为 8 的整数倍。
+- 按显示文本顺序列出的 `layout[].label` 和 `layout[].width`，宽度之和等于窗口列数。
+- `source.format=ssd1306-page-lsb-top` 和完整源字节。
+- `transform.mirror_x_within_glyphs`、`transform.mirror_y`。
+- `expected_source_sha256`、`expected_output_sha256`。
+
+请求中的 `display.asset` 还必须声明 manifest 相对路径、ASM 中实际数据的 `source_encoding` 与 `source_label`、byte count 和两项 SHA256。`new-run` 从该例程的 `MOV A,#byte`/`CALL I2C_SEND` 对或指定 DB 表重新提取实际字节并核对输出 SHA256；manifest 复制到 run 的 `assets/display-asset.json`，参与 evidence 快照和 release 失效检查。
+
 DB 源码按上述逻辑原始 byte sequence 写入，不得根据 BIN 物理排列做 nibble/word 补偿。分页查表见 [04-程序布局-ORG-查表规范.md](04-程序布局-ORG-查表规范.md)。
 
 ## 13. OLED 验证阶梯（仅后续硬件阶段）
@@ -397,6 +435,9 @@ DB 源码按上述逻辑原始 byte sequence 写入，不得根据 BIN 物理排
 - [ ] 全屏 1024 字节填充循环已确认低字节 `00H` 配合高计数 `04H` 或等价 1024 次结构。
 - [ ] 全亮路径会真正写入 GDDRAM，而不是只发送 `A5H/AFH`。
 - [ ] 资产为 SSD1306 page format，bit0 top。
+- [ ] 5x7 的单 page bit 反转结论没有直接套用到 8x16、16x16 或其他多 page 资产。
+- [ ] 自定义/多 page/混合宽度字模已通过 `ssd1306_page_bitmap.py`；manifest、点阵预览、byte count、源/输出 SHA256 和 ASM 实际发送字节一致。
+- [ ] 水平镜像只在各字符块内部反转列；垂直镜像按全部像素行处理，多 page 时同时完成 page 交换和 byte bit 反转。
 - [ ] 多字符/汉字/图片块按 page → 字块/图片块 → 列发送；两个 16x16 汉字的 64 字节顺序为 page0 字1、page0 字2、page1 字1、page1 字2。
 - [ ] DB 原始顺序、`builtin_compiler` 构建、MAP 同页审计完成。
 - [ ] 静态检查和目标编译 0 error / 0 warning，`release` 返回 `RELEASED`。

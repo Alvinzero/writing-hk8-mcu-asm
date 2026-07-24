@@ -36,6 +36,8 @@
 
 - 禁止用已退休的 `python_source_module_cli` 构建含 `DB` 的工件；`builtin_compiler` 支持 `DB` 并可完成编译 release。
 - 禁止对 OLED/字库 `DB` 做 nibble swap、word swap 或依据 BIN 的补偿。
+- 禁止把当前板 5x7 ASCII 的单 page bit 反转结论直接套用到 8x16、16x16、汉字或其他多 page 资产；多页垂直镜像必须同时处理 page 顺序和 byte bit 顺序。
+- 禁止以整行逆序修复“文本顺序正确、每个字符左右镜像”；水平修正必须限制在 manifest 声明的各字符块内部。
 - 禁止让一个跨页通用 `TABL/TABH` 函数读取多个 256-word 页。
 - 禁止 `JMP/CALL` 直接使用数字字面量；使用标签或 `EQU` 符号。
 - 禁止接受任何地址覆盖、跳转截断或未知指令 warning。
@@ -119,6 +121,7 @@
 - 判定文件角色：`verified`、`probe`、`example`、`production`。
 - 对 `verified` 文件优先复制为新实验文件，不在原文件试错。
 - 对 DB、ORG、ACK 序列、COM 映射的修改必须给出 before/after、规则 ID、影响地址和回归步骤。
+- 对自定义或多 page OLED 字模的修改必须保存 `ssd1306_page_bitmap.py` manifest、源/输出 SHA256、字符块宽度和点阵预览；`new-run` 必须从 ASM 指定例程或 DB 重新提取字节并与输出 SHA256 绑定。
 - 不得顺手格式化或重排大表，除非任务明确要求且 hash/byte count 回归通过。
 
 ## 7. 审查输出格式
@@ -161,6 +164,7 @@ AI 最终输出至少包含：
 - “全亮”链路测试必须真正向 GDDRAM 写 1024 个 `FFH`；`A5H/AFH` 不是唯一证据。
 - 1024 字节填充循环必须证明 exact count；8 位低计数器常用低字节 `00H` 配合高计数 `04H` 实现 4×256。
 - SSD1306 数据为 8 pages × 128 columns；每 byte 纵向 8 pixels，LSB 在页顶部。
+- 多 page 或混合宽度字模必须通过 `scripts/ssd1306_page_bitmap.py` 转换和审计。文本块顺序正确但每个字符同时上下/左右镜像时，保持控制器命令和文本顺序，使用逐字符水平镜像与全像素行垂直镜像。
 
 ### 当前四位数码管板
 

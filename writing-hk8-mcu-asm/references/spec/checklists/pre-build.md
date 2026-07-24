@@ -25,6 +25,7 @@
 - [ ] 长循环的 `CLRWDT` 间隔受控，且没有用喂狗掩盖死循环。
 - [ ] OLED/I2C 源码已通过 `oled_i2c` 语义审计：ACK 读 `PB_INS`、`BTSZ` bit 分支方向正确、第一条事务前有上电稳定延时。
 - [ ] OLED 亮屏默认保留 `PB_PPU/PB_POE/PB_PIO` 已验证最小初始化；额外 `PB_POD/PB_INS/PB_PPD/PB_PSL` 有 board profile、E1 证据或用户明确要求。
+- [ ] 多 page OLED 字模已通过显示资产门禁：manifest 被快照，字符块顺序、窗口尺寸、byte count、转换输出 SHA256 与 ASM 实际字节一致。
 
 ## C. DB/TABLE 门禁
 

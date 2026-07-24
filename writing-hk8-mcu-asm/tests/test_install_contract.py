@@ -61,6 +61,7 @@ class InstallContractTests(unittest.TestCase):
         self.assertTrue((destination / "SKILL.md").is_file())
         self.assertTrue((destination / "scripts" / "hk8asm.py").is_file())
         self.assertTrue((destination / "scripts" / "builtin_compiler.py").is_file())
+        self.assertTrue((destination / "scripts" / "ssd1306_page_bitmap.py").is_file())
         self.assertTrue((destination / "references" / "profiles" / "HK64S825.profile.json").is_file())
         self.assertTrue((destination / "references" / "configs" / "builtin-config.json").is_file())
         self.assertTrue((destination / "references").is_dir())

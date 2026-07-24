@@ -370,6 +370,70 @@ raise SystemExit(__EXIT_CODE__)
         self.assertEqual("RUN_CREATED", self.payload(result)["code"])
         return run_dir
 
+    def configure_multi_page_display_asset(self) -> tuple[Path, list[int]]:
+        source_bytes = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80]
+        output_bytes = [0x04, 0x08, 0x01, 0x02, 0x40, 0x80, 0x10, 0x20]
+        source_hash = hashlib.sha256(bytes(source_bytes)).hexdigest()
+        output_hash = hashlib.sha256(bytes(output_bytes)).hexdigest()
+        manifest_path = self.root / "display-asset.json"
+        self._write_json(
+            manifest_path,
+            {
+                "schema_version": 1,
+                "width": 4,
+                "height": 16,
+                "layout": [
+                    {"label": "左", "width": 2},
+                    {"label": "右", "width": 2},
+                ],
+                "source": {
+                    "format": "ssd1306-page-lsb-top",
+                    "bytes": ["{:02X}H".format(value) for value in source_bytes],
+                },
+                "transform": {
+                    "mirror_x_within_glyphs": True,
+                    "mirror_y": True,
+                },
+                "expected_source_sha256": source_hash,
+                "expected_output_sha256": output_hash,
+            },
+        )
+        request = self.minimal_non_gpio_request()
+        request["display"] = {
+            "text": "左右",
+            "window": {
+                "column_start": "00H",
+                "column_end": "03H",
+                "page_start": "00H",
+                "page_end": "01H",
+            },
+            "byte_count": 8,
+            "format": "SSD1306 page format, bit0 top",
+            "asset": {
+                "manifest": manifest_path.name,
+                "source_encoding": "inline_i2c_send",
+                "source_label": "OLED_SHOW_BITMAP",
+                "byte_count": 8,
+                "source_sha256": source_hash,
+                "output_sha256": output_hash,
+            },
+        }
+        self._write_json(self.request_path, request)
+        lines = [
+            "; CHIP: HK64S825",
+            "; 用途：多页字模资产闭环测试",
+            "ORG 0x0000",
+            "START:",
+            "    CALL OLED_SHOW_BITMAP",
+            "    SJMP START",
+            "OLED_SHOW_BITMAP:",
+        ]
+        for value in output_bytes:
+            lines.extend(("    MOV A,#{:02X}H".format(value), "    CALL I2C_SEND"))
+        lines.extend(("    RET", "I2C_SEND:", "    RET", "END"))
+        self.source_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return manifest_path, output_bytes
+
     def test_doctor_fails_closed_when_profile_is_not_ready(self) -> None:
         self._write_json(self.profile_path, self.profile(status="requires-vendor-materials"))
         result = self.run_cli(
@@ -458,6 +522,143 @@ raise SystemExit(__EXIT_CODE__)
         self._write_json(self.request_path, self.minimal_non_gpio_request())
 
         run_dir = self.root / "minimal-non-gpio"
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+        self.assertEqual("RUN_CREATED", self.payload(result)["code"])
+
+    def test_multi_page_display_requires_asset_contract(self) -> None:
+        request = self.minimal_non_gpio_request()
+        request["display"] = {
+            "text": "左右",
+            "window": {
+                "column_start": 0,
+                "column_end": 3,
+                "page_start": 0,
+                "page_end": 1,
+            },
+            "byte_count": 8,
+        }
+        self._write_json(self.request_path, request)
+        run_dir = self.root / "missing-display-asset"
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("INVALID_REQUEST", self.payload(result)["code"])
+        self.assertIn("display.asset", self.payload(result)["message"])
+        self.assertFalse(run_dir.exists())
+
+    def test_multi_page_asset_is_audited_and_bound_to_evidence(self) -> None:
+        manifest_path, _output_bytes = self.configure_multi_page_display_asset()
+        run_dir = self.root / "display-asset-pass"
+
+        created = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+        self.assertEqual(0, created.returncode, created.stderr or created.stdout)
+        self.assertTrue((run_dir / "assets" / "display-asset.json").is_file())
+
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        evidence = json.loads((run_dir / "evidence.json").read_text(encoding="utf-8"))
+        audit = evidence["gates"]["static"]["display_asset_audit"]
+        self.assertEqual("pass", audit["status"])
+        self.assertEqual(8, audit["output_byte_count"])
+        self.assertEqual(["左", "右"], audit["text_order"])
+        self.assertIn("display_asset_sha256", evidence["snapshots"])
+
+        snapshot = run_dir / "assets" / "display-asset.json"
+        snapshot.write_text(manifest_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        release = self.run_cli(
+            "release",
+            "--run-dir",
+            str(run_dir),
+            "--output",
+            str(self.root / "display-asset-released.asm"),
+        )
+        self.assertNotEqual(0, release.returncode)
+        self.assertEqual("RELEASE_BLOCKED", self.payload(release)["code"])
+
+    def test_multi_page_asset_rejects_asm_byte_drift_before_run_creation(self) -> None:
+        _manifest_path, _output_bytes = self.configure_multi_page_display_asset()
+        source = self.source_path.read_text(encoding="utf-8")
+        self.source_path.write_text(source.replace("MOV A,#04H", "MOV A,#05H", 1), encoding="utf-8")
+        run_dir = self.root / "display-asset-byte-drift"
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("DISPLAY_ASSET_MISMATCH", self.payload(result)["code"])
+        self.assertIn("SHA256", self.payload(result)["message"])
+        self.assertFalse(run_dir.exists())
+
+    def test_multi_page_asset_can_bind_a_db_table(self) -> None:
+        _manifest_path, output_bytes = self.configure_multi_page_display_asset()
+        request = json.loads(self.request_path.read_text(encoding="utf-8"))
+        request["display"]["asset"]["source_encoding"] = "db"
+        request["display"]["asset"]["source_label"] = "DISPLAY_DATA"
+        self._write_json(self.request_path, request)
+        literals = ["{:02X}H".format(value) for value in output_bytes]
+        self.source_path.write_text(
+            "; CHIP: HK64S825\n"
+            "; 用途：多页字模数据表闭环测试\n"
+            "ORG 0x0000\n"
+            "START:\n"
+            "    SJMP START\n"
+            "DISPLAY_DATA:\n"
+            "    DB " + ",".join(literals) + "\n"
+            "END\n",
+            encoding="utf-8",
+        )
+        run_dir = self.root / "display-asset-db"
+
         result = self.run_cli(
             "new-run",
             "--profile",

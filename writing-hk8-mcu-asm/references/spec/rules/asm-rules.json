@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0.0",
   "rule_set_id": "HK64S825-ASM-CORPORATE",
-  "rule_set_version": "1.2.0",
-  "generated_at": "2026-07-18T00:00:00+08:00",
+  "rule_set_version": "1.2.1",
+  "generated_at": "2026-07-24T00:00:00+08:00",
   "language": "zh-CN",
   "chip_family": "HK64S825",
   "validated_chip_model": "HK64S825",
@@ -1908,6 +1908,51 @@
       ],
       "tags": [
         "oled"
+      ]
+    },
+    {
+      "rule_id": "HK-OLED-006",
+      "title": "多页字模必须由资产清单生成并绑定实际字节",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "oled",
+        "asset",
+        "static_check"
+      ],
+      "requirement": "跨两个及以上 page 的自定义字模必须使用 ssd1306_page_bitmap.py manifest 固定字符块顺序和宽度、逐字符水平镜像、全像素行垂直镜像、byte count 与源/输出 SHA256；new-run 必须从 ASM 指定例程或 DB 表重新提取实际字节并与转换输出 SHA256 一致。",
+      "rationale": "5x7 单 page 的 bit 反转不能推广到 8x16、16x16 或混合宽度资产；多页垂直镜像需要同时交换 page 和反转 byte bit，整行水平逆序还会破坏原本正确的文本顺序。",
+      "bad_example": "把 5x7 数字规则直接套到 16 像素高日期字模，并手工翻转整行十六进制字节。",
+      "good_example": "manifest 声明 8,8,8,8,16,8,16,8,16 字符块宽度；mirror_x_within_glyphs=true、mirror_y=true；ASM 实际 192 字节 SHA256 与转换输出一致。",
+      "verification": [
+        "ssd1306_page_bitmap.py 校验 manifest、byte count、SHA256 和点阵预览",
+        "hk8asm.py new-run 从 source_label 提取实际字节并比对输出 SHA256",
+        "evidence snapshots 包含 display_asset_sha256"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "2026年8月1号 OLED 实板方向回归",
+          "note": "文本顺序正确但各字符上下和左右均镜像，证明 5x7 结论不能跨格式复用"
+        },
+        {
+          "level": "E4",
+          "source": "tests/test_ssd1306_page_bitmap.py 与 tests/test_cli_contract.py",
+          "note": "逐字符水平镜像、多页垂直镜像、ASM 字节漂移和 manifest 快照失效回归"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "builtin_compiler",
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "oled",
+        "asset",
+        "orientation",
+        "static-check"
       ]
     },
     {

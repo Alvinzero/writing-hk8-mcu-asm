@@ -18,6 +18,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ssd1306_page_bitmap import AssetError as DisplayAssetError
+from ssd1306_page_bitmap import build_result as build_display_asset_result
+
 
 MANDATORY_ROLES = ("compiler",)
 OPTIONAL_HARDWARE_ROLES = ("programmer", "verifier")
@@ -37,6 +40,9 @@ GPIO_DEPENDENCY_RE = re.compile(
 GPIO_OUTPUT_DEPENDENCY_RE = re.compile(
     r"(?i)(?<![a-z0-9])(?:led|oled|i2c|ssd1306|seven[-_ ]?segment|7[-_ ]?segment)(?![a-z0-9])"
 )
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+ASM_LABEL_RE = re.compile(r"^[A-Za-z_.$?][A-Za-z0-9_.$?]*$")
+DISPLAY_ASSET_SNAPSHOT = Path("assets") / "display-asset.json"
 APPROVED_TECHNICAL_TOKENS = {
     "A", "ACK", "ASM", "ASSEMBLER", "BIN", "BUILTIN", "CHIP", "CLOBBERS",
     "COMPILER", "CRC", "GPIO", "HEX", "HK64S825", "HZ", "I2C", "IN", "KHZ",
@@ -698,6 +704,271 @@ def normalize_profile_paths(profile: dict[str, Any], base_dir: Path) -> dict[str
     return normalized
 
 
+def parse_display_coordinate(value: Any, field: str) -> int:
+    require(
+        (isinstance(value, int) and not isinstance(value, bool)) or isinstance(value, str),
+        "INVALID_REQUEST",
+        f"{field} must be an integer or hexadecimal string",
+    )
+    if isinstance(value, int):
+        number = value
+    else:
+        token = value.strip()
+        try:
+            if re.fullmatch(r"[0-9A-Fa-f]+H", token):
+                number = int(token[:-1], 16)
+            elif re.fullmatch(r"0x[0-9A-Fa-f]+", token):
+                number = int(token[2:], 16)
+            else:
+                number = int(token, 10)
+        except ValueError as exc:
+            raise GateError("INVALID_REQUEST", f"{field} is not numeric") from exc
+    require(0 <= number <= 0xFF, "INVALID_REQUEST", f"{field} must fit in one byte")
+    return number
+
+
+def display_geometry(display: dict[str, Any]) -> tuple[int, int, int]:
+    window = display.get("window")
+    require(isinstance(window, dict), "INVALID_REQUEST", "display.window must be an object")
+    column_start = parse_display_coordinate(
+        window.get("column_start"), "display.window.column_start"
+    )
+    column_end = parse_display_coordinate(
+        window.get("column_end"), "display.window.column_end"
+    )
+    page_start = parse_display_coordinate(window.get("page_start"), "display.window.page_start")
+    page_end = parse_display_coordinate(window.get("page_end"), "display.window.page_end")
+    require(column_start <= column_end, "INVALID_REQUEST", "display column range is reversed")
+    require(page_start <= page_end, "INVALID_REQUEST", "display page range is reversed")
+    width = column_end - column_start + 1
+    pages = page_end - page_start + 1
+    return width, pages, width * pages
+
+
+def validate_display_contract(request: dict[str, Any]) -> None:
+    display = request.get("display")
+    if display is None:
+        return
+    require(isinstance(display, dict), "INVALID_REQUEST", "display must be an object")
+    require(not contains_unresolved(display), "INVALID_REQUEST", "display contains unresolved values")
+    text = display.get("text")
+    require(
+        text is None or (isinstance(text, str) and bool(text)),
+        "INVALID_REQUEST",
+        "display.text must be a non-empty string when provided",
+    )
+    _width, pages, expected_byte_count = display_geometry(display)
+    byte_count = display.get("byte_count")
+    require(
+        isinstance(byte_count, int) and not isinstance(byte_count, bool) and byte_count > 0,
+        "INVALID_REQUEST",
+        "display.byte_count must be a positive integer",
+    )
+    require(
+        byte_count == expected_byte_count,
+        "INVALID_REQUEST",
+        "display.byte_count does not match the address window",
+    )
+    asset = display.get("asset")
+    if pages > 1:
+        require(
+            isinstance(asset, dict),
+            "INVALID_REQUEST",
+            "multi-page display assets require display.asset",
+        )
+    if asset is None:
+        return
+    require(isinstance(asset, dict), "INVALID_REQUEST", "display.asset must be an object")
+    manifest = asset.get("manifest")
+    require(
+        isinstance(manifest, str) and bool(manifest.strip()),
+        "INVALID_REQUEST",
+        "display.asset.manifest is required",
+    )
+    manifest_path = Path(manifest)
+    require(
+        not manifest_path.is_absolute() and ".." not in manifest_path.parts,
+        "INVALID_REQUEST",
+        "display.asset.manifest must be a safe relative path",
+    )
+    require(
+        manifest_path.suffix.lower() == ".json",
+        "INVALID_REQUEST",
+        "display.asset.manifest must be a JSON file",
+    )
+    require(
+        asset.get("source_encoding") in {"inline_i2c_send", "db"},
+        "INVALID_REQUEST",
+        "display.asset.source_encoding must be inline_i2c_send or db",
+    )
+    source_label = asset.get("source_label")
+    require(
+        isinstance(source_label, str) and ASM_LABEL_RE.fullmatch(source_label) is not None,
+        "INVALID_REQUEST",
+        "display.asset.source_label must be an ASM label",
+    )
+    for key in ("source_sha256", "output_sha256"):
+        value = asset.get(key)
+        require(
+            isinstance(value, str) and SHA256_RE.fullmatch(value) is not None,
+            "INVALID_REQUEST",
+            f"display.asset.{key} must be a lowercase SHA256",
+        )
+    require(
+        asset.get("byte_count") == byte_count,
+        "INVALID_REQUEST",
+        "display.asset.byte_count must equal display.byte_count",
+    )
+
+
+def parse_asm_byte_token(token: str) -> int:
+    normalized = token.strip()
+    if re.fullmatch(r"[0-9A-Fa-f]+H", normalized):
+        number = int(normalized[:-1], 16)
+    elif re.fullmatch(r"0x[0-9A-Fa-f]+", normalized):
+        number = int(normalized[2:], 16)
+    elif re.fullmatch(r"[0-9]+", normalized):
+        number = int(normalized, 10)
+    else:
+        raise GateError("DISPLAY_ASSET_MISMATCH", f"Invalid ASM byte literal: {token}")
+    require(0 <= number <= 0xFF, "DISPLAY_ASSET_MISMATCH", "ASM asset byte is out of range")
+    return number
+
+
+def source_region_after_label(source_text: str, label: str) -> str:
+    label_match = re.search(
+        r"(?mi)^[ \t]*" + re.escape(label) + r":[ \t]*(?:;.*)?$",
+        source_text,
+    )
+    require(
+        label_match is not None,
+        "DISPLAY_ASSET_MISMATCH",
+        f"Display asset source label was not found: {label}",
+    )
+    return source_text[label_match.end() :]
+
+
+def extract_inline_i2c_asset_bytes(source_text: str, label: str) -> list[int]:
+    region = source_region_after_label(source_text, label)
+    end = re.search(r"(?mi)^[ \t]*RET[ \t]*(?:;.*)?$", region)
+    require(
+        end is not None,
+        "DISPLAY_ASSET_MISMATCH",
+        f"Display asset routine has no RET: {label}",
+    )
+    routine = region[: end.start()]
+    pair_re = re.compile(
+        r"(?mi)^[ \t]*MOV[ \t]+A[ \t]*,[ \t]*#"
+        r"(0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|[0-9]+)"
+        r"[ \t]*(?:;.*)?\r?\n[ \t]*CALL[ \t]+I2C_SEND\b"
+    )
+    return [parse_asm_byte_token(match.group(1)) for match in pair_re.finditer(routine)]
+
+
+def extract_db_asset_bytes(source_text: str, label: str) -> list[int]:
+    region = source_region_after_label(source_text, label)
+    end = re.search(
+        r"(?mi)^(?:[ \t]*[A-Za-z_.$?][A-Za-z0-9_.$?]*:[ \t]*(?:;.*)?|[ \t]*END\b)",
+        region,
+    )
+    table = region[: end.start()] if end is not None else region
+    output: list[int] = []
+    for match in re.finditer(r"(?mi)^[ \t]*DB[ \t]+([^;\r\n]+)", table):
+        for token in match.group(1).split(","):
+            output.append(parse_asm_byte_token(token))
+    return output
+
+
+def audit_display_asset(
+    request: dict[str, Any], source: Path, manifest_path: Path
+) -> dict[str, Any] | None:
+    display = request.get("display")
+    if not isinstance(display, dict) or not isinstance(display.get("asset"), dict):
+        return None
+    asset = display["asset"]
+    require(
+        manifest_path.is_file(),
+        "DISPLAY_ASSET_MISSING",
+        f"Display asset manifest does not exist: {manifest_path}",
+    )
+    manifest = read_json(manifest_path, "DISPLAY_ASSET_INVALID")
+    require(
+        manifest.get("expected_source_sha256") == asset["source_sha256"],
+        "DISPLAY_ASSET_MISMATCH",
+        "Manifest source SHA256 does not match request",
+    )
+    require(
+        manifest.get("expected_output_sha256") == asset["output_sha256"],
+        "DISPLAY_ASSET_MISMATCH",
+        "Manifest output SHA256 does not match request",
+    )
+    try:
+        result = build_display_asset_result(manifest)
+    except DisplayAssetError as exc:
+        raise GateError("DISPLAY_ASSET_INVALID", str(exc)) from exc
+
+    width, pages, expected_byte_count = display_geometry(display)
+    expected_text_order = "".join(result["text_order"])
+    require(result["width"] == width, "DISPLAY_ASSET_MISMATCH", "Asset width does not match window")
+    require(
+        result["height"] == pages * 8,
+        "DISPLAY_ASSET_MISMATCH",
+        "Asset height does not match page range",
+    )
+    require(
+        result["output_byte_count"] == expected_byte_count == asset["byte_count"],
+        "DISPLAY_ASSET_MISMATCH",
+        "Asset byte count does not match display contract",
+    )
+    if isinstance(display.get("text"), str):
+        require(
+            expected_text_order == display["text"],
+            "DISPLAY_ASSET_MISMATCH",
+            "Asset layout labels do not preserve display text order",
+        )
+    require(
+        result["source_sha256"] == asset["source_sha256"],
+        "DISPLAY_ASSET_MISMATCH",
+        "Asset source SHA256 does not match request",
+    )
+    require(
+        result["output_sha256"] == asset["output_sha256"],
+        "DISPLAY_ASSET_MISMATCH",
+        "Asset output SHA256 does not match request",
+    )
+
+    try:
+        source_text = source.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError) as exc:
+        raise GateError("DISPLAY_ASSET_MISMATCH", f"Cannot read ASM display source: {exc}") from exc
+    if asset["source_encoding"] == "inline_i2c_send":
+        source_bytes = extract_inline_i2c_asset_bytes(source_text, asset["source_label"])
+    else:
+        source_bytes = extract_db_asset_bytes(source_text, asset["source_label"])
+    require(
+        len(source_bytes) == result["output_byte_count"],
+        "DISPLAY_ASSET_MISMATCH",
+        "ASM display byte count does not match transformed asset",
+    )
+    source_output_hash = hashlib.sha256(bytes(bytearray(source_bytes))).hexdigest()
+    require(
+        source_output_hash == result["output_sha256"],
+        "DISPLAY_ASSET_MISMATCH",
+        "ASM display bytes do not match transformed asset SHA256",
+    )
+    return {
+        "status": "pass",
+        "rule_ids": ["HK-OLED-003", "HK-OLED-004", "HK-OLED-006"],
+        "manifest_sha256": sha256_file(manifest_path),
+        "source_byte_count": result["source_byte_count"],
+        "source_sha256": result["source_sha256"],
+        "output_byte_count": result["output_byte_count"],
+        "output_sha256": result["output_sha256"],
+        "text_order": result["text_order"],
+        "transform": result["transform"],
+    }
+
+
 def validate_request(request: dict[str, Any], profile: dict[str, Any], config: dict[str, Any]) -> None:
     require(request.get("schema_version") == 1, "INVALID_REQUEST", "Unsupported request schema")
     supported = {profile["chip"], *profile.get("aliases", [])}
@@ -760,6 +1031,7 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
         )
         if isinstance(item, dict):
             require(is_non_empty_string(item.get("name")), "INVALID_REQUEST", "Peripheral name is required")
+    validate_display_contract(request)
     if timing is not None:
         require(isinstance(timing, dict), "INVALID_REQUEST", "timing must be an object")
         require(not contains_unresolved(timing), "INVALID_REQUEST", "timing contains unresolved values")
@@ -1018,11 +1290,15 @@ def write_evidence(run_dir: Path, payload: dict[str, Any]) -> str:
 
 
 def snapshot_hashes(run_dir: Path) -> dict[str, str]:
-    return {
+    snapshots = {
         "request_sha256": sha256_file(run_dir / "request.json"),
         "profile_sha256": sha256_file(run_dir / "profile.json"),
         "config_sha256": sha256_file(run_dir / "config.json"),
     }
+    display_asset = run_dir / DISPLAY_ASSET_SNAPSHOT
+    if display_asset.is_file():
+        snapshots["display_asset_sha256"] = sha256_file(display_asset)
+    return snapshots
 
 
 def require_snapshot_hashes(run_dir: Path, evidence: dict[str, Any]) -> None:
@@ -1033,6 +1309,11 @@ def require_snapshot_hashes(run_dir: Path, evidence: dict[str, Any]) -> None:
         "Compile evidence snapshot hashes are missing",
     )
     current = snapshot_hashes(run_dir)
+    require(
+        set(expected) == set(current),
+        "RELEASE_BLOCKED",
+        "Run snapshot file set changed after build",
+    )
     for key, value in current.items():
         require(
             expected.get(key) == value,
@@ -1096,6 +1377,10 @@ def save_failure(run_dir: Path, run: dict[str, Any], stage: str, code: str, mess
 
 def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     comment_language = validate_chinese_explanatory_comments(source)
+    request = read_json(run_dir / "request.json", "RUN_INVALID")
+    display_asset_audit = audit_display_asset(
+        request, source, run_dir / DISPLAY_ASSET_SNAPSHOT
+    )
     static_config = profile.get("static_check", {})
     spec_root_value = profile.get("spec_root")
     if static_config and spec_root_value:
@@ -1261,6 +1546,8 @@ def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[s
             and all(audit_sections_valid.values())
         ):
             static_result["semantic_audits"] = checker_audits
+        if display_asset_audit is not None:
+            static_result["display_asset_audit"] = display_asset_audit
         return static_result
 
     text = source.read_text(encoding="utf-8-sig")
@@ -1278,11 +1565,14 @@ def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[s
             issues.append({"rule": "forbidden_pattern", "pattern": pattern})
     if issues:
         raise GateError("STATIC_CHECK_FAILED", "Candidate failed static checks", details=issues)
-    return {
+    static_result = {
         "status": "pass",
         "checks": 1 + len(rules["required_patterns"]) + len(rules["forbidden_patterns"]),
         "comment_language": comment_language,
     }
+    if display_asset_audit is not None:
+        static_result["display_asset_audit"] = display_asset_audit
+    return static_result
 
 
 def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
@@ -1298,6 +1588,13 @@ def command_new_run(args: argparse.Namespace) -> dict[str, Any]:
     run_doctor(profile, config)
     validate_request(request, profile, config)
     require(args.source.is_file(), "SOURCE_NOT_FOUND", f"Candidate source does not exist: {args.source}")
+    display = request.get("display")
+    asset = display.get("asset") if isinstance(display, dict) else None
+    display_asset_source: Path | None = None
+    display_asset_audit = None
+    if isinstance(asset, dict):
+        display_asset_source = (args.request.resolve().parent / asset["manifest"]).resolve()
+        display_asset_audit = audit_display_asset(request, args.source, display_asset_source)
     require(not args.run_dir.exists(), "RUN_EXISTS", f"Run directory already exists: {args.run_dir}")
     args.run_dir.mkdir(parents=True)
     source_copy = args.run_dir / "src" / "candidate.asm"
@@ -1306,6 +1603,10 @@ def command_new_run(args: argparse.Namespace) -> dict[str, Any]:
     shutil.copy2(args.config, args.run_dir / "config.json")
     shutil.copy2(args.request, args.run_dir / "request.json")
     shutil.copy2(args.source, source_copy)
+    if display_asset_source is not None:
+        display_asset_snapshot = args.run_dir / DISPLAY_ASSET_SNAPSHOT
+        display_asset_snapshot.parent.mkdir(parents=True)
+        shutil.copy2(display_asset_source, display_asset_snapshot)
     source_hash = sha256_file(source_copy)
     run = {
         "schema_version": RUN_SCHEMA_VERSION,
@@ -1321,6 +1622,8 @@ def command_new_run(args: argparse.Namespace) -> dict[str, Any]:
         "max_flash_attempts": profile.get("max_flash_attempts", 0),
         "history": [],
     }
+    if display_asset_audit is not None:
+        run["display_asset_sha256"] = display_asset_audit["manifest_sha256"]
     append_history(run, "CREATED")
     write_json(args.run_dir / "run.json", run)
     return {"code": "RUN_CREATED", "run_id": run["run_id"], "run_dir": str(args.run_dir)}

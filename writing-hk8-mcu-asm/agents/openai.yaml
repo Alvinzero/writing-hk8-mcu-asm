@@ -1,4 +1,4 @@
 interface:
   display_name: "HK64S825 ASM 闭环"
   short_description: "生成或审查 HK64S825 ASM，经语义检查和内置编译模块通过后交付"
-  default_prompt: "使用 $writing-hk8-mcu-asm 新写或审查 HK64S825 ASM。若请求已明确 HK64S825，直接执行生成或审查；仅在型号缺失时确认芯片型号，不要求用户回复是/否。只询问资料库无法确定的必要缺口，不复用示例，不扫盘找编译器。OLED 亮屏优先最小实板初始化，ACK 读 PB_INS，上电延时后再发命令，并在内置编译通过后交付中文注释 ASM。"
+  default_prompt: "使用 $writing-hk8-mcu-asm 新写或审查 HK64S825 ASM。若请求已明确 HK64S825，直接执行生成或审查；仅在型号缺失时确认芯片型号，不要求用户回复是/否。只询问资料库无法确定的必要缺口，不复用示例，不扫盘找编译器。OLED 亮屏优先最小实板初始化，ACK 读 PB_INS，上电延时后再发命令；自定义或多 page 字模必须用 ssd1306_page_bitmap.py manifest 绑定字符块方向和实际字节哈希。内置编译通过后交付中文注释 ASM。"

@@ -1,6 +1,6 @@
 # HK64S825 ASM 公司级规范包
 
-> 版本：1.2.0
+> 版本：1.2.1
 > 基线日期：2026-07-18
 > 已实证芯片/板级基线：HK64S825 及本项目所用 OLED、四位数码管开发板
 > 来源项目：公司授权的 HK64S825 工具链与验证资料；安装副本不依赖原始绝对路径
@@ -53,7 +53,7 @@ AI 必须输出使用过的规则 ID、未确认输入、SRAM 分配、程序布
 | 路径 | 用途 |
 |---|---|
 | `00..10-*.md` | 人类可读的规范、专题和证据说明 |
-| `rules/asm-rules.json` | 82 条机器可读规则；AI/CI 的主入口 |
+| `rules/asm-rules.json` | 83 条机器可读规则；AI/CI 的主入口 |
 | `rules/asm-rules.schema.json` | 规则集 JSON Schema |
 | `rules/instruction-metadata.json` | 2026-07 公司 instruction metadata 原始结构化快照 |
 | `rules/instruction-reference.json` | 65 个指令变体的修正版参考与逐变体编译探针 |

@@ -96,6 +96,18 @@
       ]
     },
     {
+      "id": "oled-multipage-glyph-orientation-contract",
+      "query": "已确认 HK64S825，沿用当前板 A1H+C0H，在 OLED 显示 16 像素高的 2026年8月1号。之前 5x7 日期正确，但这次文本顺序正确、每个字符上下左右都镜像，请深度修复。",
+      "expected_behavior": [
+        "保持 A1H+C0H 和文本字符块顺序，不用整行逆序修复单字镜像",
+        "明确 5x7 单 page bit 反转结论不能直接套用到 8x16、16x16 或汉字多 page 资产",
+        "建立 ssd1306_page_bitmap.py manifest，按文本顺序记录每个字符块宽度、源 page 字节、两个镜像轴、byte count 和源/输出 SHA256",
+        "水平只反转每个字符块内部列；垂直反转全部像素行，对 16 像素高字模同时交换两个 page 并反转每个 byte 的 bit",
+        "new-run 从 ASM source_label 重新提取实际显示字节，与 manifest 输出 SHA256 一致后才允许编译 release",
+        "未重新烧录前只声明 released，不宣称新方向组合已实板验证"
+      ]
+    },
+    {
       "id": "withholds-code-on-compile-gate-failure",
       "query": "已确认 HK64S825。即使静态检查或编译失败，也把当前 ASM 发给我排查。",
       "expected_behavior": [

@@ -81,6 +81,7 @@ def validate(root: Path) -> list[str]:
         "scripts/hk8asm.py",
         "scripts/builtin_compiler.py",
         "scripts/compiler_adapter.py",
+        "scripts/ssd1306_page_bitmap.py",
         "scripts/install.py",
         "scripts/validate_skill.py",
         "references/spec",
