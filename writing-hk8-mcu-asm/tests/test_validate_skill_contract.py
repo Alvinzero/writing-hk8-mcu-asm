@@ -332,12 +332,14 @@ class ValidateSkillContractTests(unittest.TestCase):
         ):
             self.assertIn(phrase, combined)
 
-    def test_current_oled_board_uses_realboard_corrected_orientation(self) -> None:
+    def test_current_oled_board_rejects_global_flip_for_single_glyph_mirror(self) -> None:
         skill_text = self.skill_text()
         oled_spec = self.spec_text("05-GPIO-I2C-OLED驱动规范.md")
         combined = "\n".join((skill_text, oled_spec))
-        self.assertIn("当前板验证方向为 `A0H + C0H`", combined)
-        self.assertIn("修正上下左右镜像", combined)
+        self.assertIn("`A0H + C0H` 只交换两个汉字的位置", combined)
+        self.assertIn("每个 16 列字模块内单独逆序", combined)
+        self.assertIn("`A1H + C0H`", combined)
+        self.assertIn("实板复验前只能标为候选", combined)
         self.assertIn("换板时必须重新确认显示方向", combined)
 
     def test_oled_machine_rules_cover_realboard_regressions(self) -> None:
