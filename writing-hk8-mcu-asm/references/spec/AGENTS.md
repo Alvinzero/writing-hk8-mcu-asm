@@ -170,16 +170,12 @@ AI 最终输出至少包含：
 - SSD1306 数据为 8 pages × 128 columns；每 byte 纵向 8 pixels，LSB 在页顶部。
 - 多 page 或混合宽度字模必须通过 `scripts/ssd1306_page_bitmap.py` 转换和审计。正式 DB 资产必须声明匹配当前 board 的 `orientation_profile`；`hk8asm.py` 必须校验 manifest 的源格式和两个镜像参数与 profile 一致。当前板已验证为不做逐字符水平镜像、只做全像素行垂直补偿。
 
-### 当前四位数码管板
+### 数码管板级门禁
 
-- 段：`PB7=A ... PB1=G, PB0=DP`。
-- COM：`PA2=COM0, PA3=COM1, PA5=COM2, PA6=COM3`。
-- COM0/1 共阳高有效；COM2/3 共阴低有效。
-- 左到右：`COM2, COM3, COM0, COM1`。
-- 全关：`PA_PIO=60H`。
-- 扫描：全关 → 写段码 → 开当前 COM → 延时 → 全关。
-
-以上只是当前板级 profile；换板必须重新确认。
+- `06-数码管动态扫描规范.md` 只提供通用算法，不提供默认 GPIO、极性、位序或时钟。
+- 未经用户明确选择 `board_profile_id`，不得读取 `references/boards/` 中任何已注册板资料。
+- 用户自定义接线时，以逐段、逐位 PinContract 和 `input_provenance` 为准，不得用相似开发板补齐缺口。
+- 扫描固定遵循：全关 → 写段码 → 只开当前位 → 延时 → 全关；各步骤的实际电平由已确认 board contract 计算。
 
 ## 9. 自检
 

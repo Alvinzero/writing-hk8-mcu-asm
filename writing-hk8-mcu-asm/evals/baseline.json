@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "captured_at": "2026-07-14",
+  "captured_at": "2026-07-25",
   "cases": [
     {
       "id": "oled-text-label-only-glyph-provenance-regression",

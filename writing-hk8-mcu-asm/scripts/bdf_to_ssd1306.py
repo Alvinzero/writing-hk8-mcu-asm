@@ -25,6 +25,7 @@ from ssd1306_page_bitmap import (
 
 GENERATOR_VERSION = "bdf-to-ssd1306-2"
 CANONICAL_FONT_ID = "wenquanyi-bitmap-song-16px-canonical-v1"
+CANONICAL_FONT_SHA256 = "7f4e5ee2d26faef12ccb90e77532346a0cfbd2a8335535907825b8f498629f65"
 
 
 class BdfError(ValueError):
@@ -347,6 +348,14 @@ def make_manifest(
 
 
 def build_manifest(args: argparse.Namespace) -> dict:
+    font_hash = hashlib.sha256(args.font.read_bytes()).hexdigest()
+    if args.font.resolve() == (Path(__file__).resolve().parents[1] / "references" / "fonts" / "wenquanyi_bitmap_song_16px_ascii_date_cn.bdf").resolve():
+        if font_hash != CANONICAL_FONT_SHA256:
+            raise BdfError(
+                "canonical font SHA256 mismatch: expected {}, got {}".format(
+                    CANONICAL_FONT_SHA256, font_hash
+                )
+            )
     properties, glyphs = parse_bdf(args.font)
     if args.base_manifest is not None:
         if args.text is not None or args.widths is not None:

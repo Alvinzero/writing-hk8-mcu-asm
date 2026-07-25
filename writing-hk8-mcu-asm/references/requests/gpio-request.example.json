@@ -41,6 +41,11 @@
   "board": {
     "id": "HK64S825-DEFAULT"
   },
+  "input_provenance": {
+    "board": "user_confirmed_profile",
+    "pins": "user_confirmed_profile",
+    "clock": "user_confirmed_profile"
+  },
   "acceptance": [],
   "allow_nonvolatile_changes": false
 }

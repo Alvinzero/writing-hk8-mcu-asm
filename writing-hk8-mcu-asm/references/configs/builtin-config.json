@@ -1,6 +1,5 @@
 {
   "schema_version": 1,
-  "board_id": "HK64S825-DEFAULT",
   "simulate": {},
   "adapters": {
     "compiler": {

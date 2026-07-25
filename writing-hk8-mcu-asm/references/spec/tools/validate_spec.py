@@ -56,7 +56,6 @@ EXPECTED_FILES = [
     "templates/gpio-driver.asm",
     "templates/i2c-bitbang.asm",
     "templates/ssd1306-table-paged.asm",
-    "templates/seven-segment-scan.asm",
     "templates/hkproj.example",
     "templates/board-profile.example.json",
     "templates/ai-task-request.example.json",
@@ -698,7 +697,6 @@ def check_templates(
         "minimal-main.asm",
         "gpio-driver.asm",
         "i2c-bitbang.asm",
-        "seven-segment-scan.asm",
     ):
         asm = root / "templates" / name
         if not asm.is_file():
@@ -763,12 +761,12 @@ def check_template_validation(
     if not isinstance(document, dict):
         return
     records = document.get("no_db_templates")
-    if not isinstance(records, list) or len(records) != 4:
+    if not isinstance(records, list) or len(records) != 3:
         add_finding(
             findings,
             "template-validation",
             evidence_path,
-            "no_db_templates must contain exactly four validated templates",
+            "no_db_templates must contain exactly three validated templates",
         )
         return
     checks["validated_no_db_templates"] = len(records)

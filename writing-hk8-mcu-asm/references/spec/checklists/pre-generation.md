@@ -25,7 +25,7 @@
 ## C. 条件式 PinContract
 
 - [ ] PinContract 只在任务使用 GPIO 时要求。
-- [ ] 已优先采用资料库中的当前板级 pin、极性和外设规则，没有重复询问。
+- [ ] `input_provenance.board/pins/clock` 已记录用户提供或用户明确选择的 profile；没有默认采用资料库中的板级参数。
 - [ ] 每个输出 pin 的 port/bit、方向、drive、默认态、有效电平已解析。
 - [ ] port 共享和 ownership 已定义。
 - [ ] 推挽清目标 `POD`、开漏置目标 `POD`，安全 `PIO` 先于 `POE`。
@@ -44,7 +44,7 @@
 - [ ] 已复核 `BTSZ R,b` 是 bit=0 跳过下一条，I2C bit 发送分支方向未反写。
 - [ ] 5x7 单 page 的 bit 反转结论没有套用到 8x16、16x16 或其他多 page 字模。
 - [ ] 自定义/多 page/混合宽度字模已有 `ssd1306_page_bitmap.py` manifest，字符块顺序和宽度、两个镜像轴、byte count、源/输出 SHA256 均已固定。
-- [ ] 当前默认板正式资产使用 `hk64s825-default-a1-c0-page-lsb-top-v1`：`A1H+C0H`、`mirror_x=false`、`mirror_y=true`；换板或换源格式已建立新的 E1 profile。
+- [ ] 只有用户明确选择 `HK64S825-DEFAULT` 时才使用 `hk64s825-default-a1-c0-page-lsb-top-v1`；其他板或源格式已建立各自的 E1 profile。
 - [ ] 汉字、ASCII 字母、Logo、头像、图片和多 page 字模已规划为 `DB + TABL/TABH`；请求包含 `source_encoding=db`、匹配 board 的 `orientation_profile`、`source_label`、`table_sender`，源码将声明精确 `TABLE_PAIR`。
 - [ ] GDDRAM 全屏填充为 1024 字节；8 位计数器实现时低字节 `00H` 配合高计数 `04H` 或等价计数已说明。
 - [ ] clock stretching、NACK/retry、bus recovery 策略已决定。

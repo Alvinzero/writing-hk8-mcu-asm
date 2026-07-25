@@ -252,6 +252,35 @@ class ValidateSkillContractTests(unittest.TestCase):
         for phrase in ("烧录器序列号", "逻辑分析仪", "供电电压"):
             self.assertNotIn(phrase, required_section)
 
+    def test_unknown_board_stops_before_candidate_generation(self) -> None:
+        skill_text = self.skill_text()
+        required_section = skill_text.split("## 必需输入", 1)[1].split(
+            "## 规则读取策略", 1
+        )[0]
+        for phrase in (
+            "芯片级事实",
+            "板级事实",
+            "不得默认采用任何开发板",
+            "用户明确选择已注册 board profile",
+            "BOARD_PROFILE_UNCONFIRMED",
+            "候选源码生成之前",
+            "不得代替用户填写",
+        ):
+            self.assertIn(phrase, required_section)
+
+        evals = json.loads((SKILL_ROOT / "evals" / "evals.json").read_text(encoding="utf-8"))
+        cases = {case["id"]: case for case in evals["cases"]}
+        self.assertIn("seven-segment-unknown-board-pauses", cases)
+        self.assertIn("seven-segment-confirmed-profile-runs", cases)
+        unknown = "\n".join(cases["seven-segment-unknown-board-pauses"]["expected_behavior"])
+        self.assertIn("不输出 ASM", unknown)
+        self.assertIn("开发板", unknown)
+        confirmed = "\n".join(
+            cases["seven-segment-confirmed-profile-runs"]["expected_behavior"]
+        )
+        self.assertIn("用户明确确认", confirmed)
+        self.assertIn("new-run", confirmed)
+
     def test_explicit_hk64s825_requests_skip_confirmation_only_reply(self) -> None:
         skill_text = self.skill_text()
         first_reply_section = skill_text.split("## 第一条回复", 1)[1].split("## 必需输入", 1)[0]
@@ -262,7 +291,8 @@ class ValidateSkillContractTests(unittest.TestCase):
         for phrase in (
             "若用户请求已经明确包含 `HK64S825`",
             "不得再要求用户回复“是/否”或重复确认型号",
-            "直接进入需求解析、规则读取、候选生成、静态检查、编译和 release",
+            "直接进入需求解析和缺口检查",
+            "芯片已确认不等于开发板已确认",
         ):
             self.assertIn(phrase, first_reply_section)
         self.assertNotIn("每次调用本 Skill 后，第一条回复必须先询问", first_reply_section)
@@ -272,7 +302,8 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("HK64S825 ASM 闭环 写一个 OLED 亮屏代码", case["query"])
         behavior = "\n".join(case["expected_behavior"])
         self.assertIn("不要求用户回复是/否", behavior)
-        self.assertIn("直接进入 OLED 亮屏生成、静态检查、编译和 release", behavior)
+        self.assertIn("确认开发板", behavior)
+        self.assertIn("不生成候选 ASM", behavior)
 
     def test_oled_i2c_electrical_questions_are_resolved_before_generation(self) -> None:
         skill_text = self.skill_text()
@@ -282,8 +313,8 @@ class ValidateSkillContractTests(unittest.TestCase):
         for phrase in (
             "创建候选源码前必须确认 SDA、SCL 各自是否配置 `POD`",
             "候选源码前必须确认 I2C 上拉来源",
-            "PB7（SDA）是否设置 POD",
-            "PB6（SCL）是否设置 POD",
+            "已确认的 SDA 引脚是否设置 POD",
+            "已确认的 SCL 引脚是否设置 POD",
             "I2C 上拉来源是什么",
             "不得先生成候选、运行静态检查或编译后，再以 POD 或上拉缺口为由中止",
         ):
@@ -293,7 +324,7 @@ class ValidateSkillContractTests(unittest.TestCase):
         skill_text = self.skill_text()
         for phrase in (
             "禁止复制 templates、example 或 sample ASM 作为候选源码",
-            "必须根据当前需求、规则、寄存器和时序重新撰写候选 ASM",
+            "必须根据已确认的当前需求、板级契约、芯片规则、寄存器和时序重新撰写候选 ASM",
             "简单 LED/GPIO 不得套用端口全量初始化模板",
             "最小初始化是最少但足以建立确定电气状态的操作",
             "推挽输出必须显式清除目标 `POD` 位",
@@ -639,15 +670,73 @@ class ValidateSkillContractTests(unittest.TestCase):
     def test_seven_segment_initialization_sets_drive_then_safe_latch_then_output_enable(self) -> None:
         text = self.spec_text("06-数码管动态扫描规范.md")
         initialization = text.split("## 2. 初始化", 1)[1].split("## 3.", 1)[0]
-        for port in ("PA", "PB"):
-            with self.subTest(port=port):
-                pod = initialization.index(f"{port}_POD")
-                pio = initialization.index(f"{port}_PIO")
-                poe = initialization.index(f"{port}_POE")
+        for role in ("SEG", "DIGIT"):
+            with self.subTest(role=role):
+                for suffix in ("POD", "PIO", "POE"):
+                    self.assertIn(f"{role}_{suffix}", initialization)
+                pod = initialization.index(f"{role}_POD")
+                pio = initialization.index(f"{role}_PIO")
+                poe = initialization.index(f"{role}_POE")
                 self.assertLess(pod, pio)
                 self.assertLess(pio, poe)
         self.assertIn("目标 `POD` -> 安全 `PIO` -> 最后开启 `POE`", initialization)
         self.assertIn("保留非本任务位", initialization)
+
+    def test_generic_seven_segment_spec_does_not_leak_registered_board_answer(self) -> None:
+        text = self.spec_text("06-数码管动态扫描规范.md")
+        for leaked_answer in (
+            "PB7=A",
+            "PA2=COM0",
+            "COM2, COM3, COM0, COM1",
+            "PA_PIO = 0x60",
+            "固定 `1234`",
+        ):
+            self.assertNotIn(leaked_answer, text)
+
+        board_profile = (
+            SKILL_ROOT
+            / "references"
+            / "boards"
+            / "HK64S825-DEFAULT"
+            / "seven-segment.md"
+        )
+        self.assertTrue(board_profile.is_file())
+        profile_text = board_profile.read_text(encoding="utf-8")
+        self.assertIn("只有用户明确确认", profile_text)
+        self.assertIn("PB7", profile_text)
+        self.assertIn("PA2", profile_text)
+
+        leaked_template = SPEC_ROOT / "templates" / "seven-segment-scan.asm"
+        self.assertFalse(leaked_template.exists())
+
+    def test_seven_segment_machine_rules_use_confirmed_board_contract(self) -> None:
+        rules = json.loads(
+            (SPEC_ROOT / "rules" / "asm-rules.json").read_text(encoding="utf-8")
+        )["rules"]
+        selected = {
+            rule["rule_id"]: rule
+            for rule in rules
+            if rule["rule_id"] in {f"HK-7SEG-00{index}" for index in range(1, 6)}
+        }
+        self.assertEqual(5, len(selected))
+        combined = json.dumps(selected, ensure_ascii=False)
+        for leaked_answer in (
+            "PB7=A",
+            "COM2、COM3、COM0、COM1",
+            "PA_PIO=60H",
+            "digits[0]→COM2",
+        ):
+            self.assertNotIn(leaked_answer, combined)
+        for rule in selected.values():
+            self.assertIn("board contract", rule["requirement"])
+
+    def test_builtin_compile_config_is_not_bound_to_a_board(self) -> None:
+        config = json.loads(
+            (SKILL_ROOT / "references" / "configs" / "builtin-config.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertNotIn("board_id", config)
 
     def test_oled_and_seven_segment_compile_release_checklists_keep_hardware_optional(self) -> None:
         documents = (

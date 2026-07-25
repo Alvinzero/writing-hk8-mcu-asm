@@ -27,7 +27,26 @@
       "expected_behavior": [
         "识别用户已经明确 HK64S825",
         "不要求用户回复是/否",
-        "直接进入 OLED 亮屏生成、静态检查、编译和 release"
+        "确认开发板、OLED 型号、接口引脚和电气参数",
+        "板级缺口解决前不生成候选 ASM、不创建 new-run"
+      ]
+    },
+    {
+      "id": "seven-segment-unknown-board-pauses",
+      "query": "已确认 HK64S825，请让数码管显示 5072。",
+      "expected_behavior": [
+        "识别芯片已确认，但开发板、驱动方式、段线、位选、极性和时钟未确认",
+        "一次最多三题询问开发板资料、驱动方式和位数/极性",
+        "不读取任何已注册板级映射来补答案，不输出 ASM，不创建 new-run"
+      ]
+    },
+    {
+      "id": "seven-segment-confirmed-profile-runs",
+      "query": "已确认 HK64S825，并明确使用 board profile HK64S825-DEFAULT，请让四位数码管显示 5072。",
+      "expected_behavior": [
+        "记录用户明确确认的 board profile 和 input_provenance=user_confirmed_profile",
+        "只读取 HK64S825-DEFAULT 对应数码管板级资料",
+        "完成候选生成、静态检查、编译和 new-run/release 闭环"
       ]
     },
     {

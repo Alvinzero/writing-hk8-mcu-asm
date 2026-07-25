@@ -2013,10 +2013,10 @@
       "scope": [
         "seven_segment"
       ],
-      "requirement": "当前板必须明确 PB7=A、PB6=B、PB5=C、PB4=D、PB3=E、PB2=F、PB1=G、PB0=DP；换板必须重新确认。",
+      "requirement": "已确认 board contract 必须逐段声明 A、B、C、D、E、F、G、DP 到 GPIO 或驱动器输出位的映射；不得使用默认段位顺序。",
       "rationale": "段位顺序错误会显示完全不同字符。",
       "bad_example": "使用通用 abcdefg bit0..bit6 表。",
-      "good_example": "以当前 PB7..PB0 映射生成段码。",
+      "good_example": "从用户提供或明确选择的 board contract 生成段码。",
       "verification": [
         "逐段点亮测试",
         "board_profile 检查"
@@ -2024,8 +2024,8 @@
       "evidence": [
         {
           "level": "E1",
-          "source": "seven_segment_1234.asm",
-          "note": "实板映射"
+          "source": "registered board profile",
+          "note": "逐板记录的实板映射"
         }
       ],
       "confidence": "high",
@@ -2046,10 +2046,10 @@
       "scope": [
         "seven_segment"
       ],
-      "requirement": "当前板 COM0/COM1 为共阳高有效且段低亮，COM2/COM3 为共阴低有效且段高亮；段码必须按当前 COM 极性转换。",
+      "requirement": "已确认 board contract 必须逐位声明共阳/共阴、位选有效电平、段有效电平和外部反相；段码按当前位的实际 MCU 引脚极性转换。",
       "rationale": "按统一共阴会造成一半位反相或鬼影。",
-      "bad_example": "四位共用同一未转换段码。",
-      "good_example": "逻辑 digit pattern 根据 COM polarity 取反/保持。",
+      "bad_example": "未确认逐位极性便让所有位共用同一物理段码。",
+      "good_example": "逻辑 digit pattern 根据 board contract 中每位实际极性取反或保持。",
       "verification": [
         "逐位显示 8/0/空白",
         "检查极性分支"
@@ -2072,25 +2072,25 @@
     },
     {
       "rule_id": "HK-7SEG-003",
-      "title": "物理位序使用 COM2,COM3,COM0,COM1",
+      "title": "物理位序来自板级契约",
       "normative_level": "MUST",
       "severity": "ERROR",
       "status": "active",
       "scope": [
         "seven_segment"
       ],
-      "requirement": "当前板从左到右物理位序为 COM2、COM3、COM0、COM1，不得按编号自然顺序扫描数据。",
-      "rationale": "1234→3412 是典型位序错误。",
-      "bad_example": "digits[0]→COM0。",
-      "good_example": "digits[0]→COM2，digits[1]→COM3，digits[2]→COM0，digits[3]→COM1。",
+      "requirement": "已确认 board contract 必须逐个声明视觉从左到右的位选映射；不得按 COM 名称、编号或 GPIO 编号猜测物理位序。",
+      "rationale": "逻辑编号与物理位置不一致会让显示内容循环移位。",
+      "bad_example": "默认 digits[0] 对应编号最小的位选。",
+      "good_example": "digits[i] 只映射到 board contract 明确记录的第 i 个视觉位置。",
       "verification": [
-        "显示 1234 方向测试"
+        "显示四个互不相同的非对称数字"
       ],
       "evidence": [
         {
           "level": "E1",
-          "source": "seven_segment_1234.asm",
-          "note": "实板位序"
+          "source": "registered board profile",
+          "note": "逐板记录的物理位序"
         }
       ],
       "confidence": "high",
@@ -2111,10 +2111,10 @@
       "scope": [
         "seven_segment"
       ],
-      "requirement": "每位刷新必须执行：关闭全部 COM→写段码→打开当前 COM→保持→再次关闭全部 COM。",
+      "requirement": "每位刷新必须执行：按已确认 board contract 关闭全部位选→写段码→只打开当前位选→保持→再次关闭全部位选。",
       "rationale": "带电切换段线会产生鬼影。",
-      "bad_example": "COM 开启时修改 PB_PIO。",
-      "good_example": "PA_PIO=60H 全关后再写 PB_PIO。",
+      "bad_example": "任一位选开启时修改段线输出。",
+      "good_example": "先写入 board contract 推导的全关状态，再更新段线并只开启当前位。",
       "verification": [
         "示波器/高速摄像鬼影检查",
         "静态扫描顺序"
@@ -2137,25 +2137,25 @@
     },
     {
       "rule_id": "HK-7SEG-005",
-      "title": "当前板全关值为 PA_PIO=60H",
+      "title": "全关状态由板级契约推导",
       "normative_level": "MUST",
       "severity": "ERROR",
       "status": "active",
       "scope": [
         "seven_segment"
       ],
-      "requirement": "当前开发板关闭全部四个 COM 时必须写 PA_PIO=60H；换板时该值必须重建而非继承。",
+      "requirement": "必须从已确认 board contract 的逐位关闭电平和外部反相推导全部位选关闭状态；不得继承其他开发板的固定端口值。",
       "rationale": "混合极性导致全关不是全 0 或全 1。",
-      "bad_example": "MOV A,#00H; MOV PA_PIO,A",
-      "good_example": "MOV A,#60H; MOV PA_PIO,A",
+      "bad_example": "未核对逐位关闭电平便把位选端口写成全 0 或全 1。",
+      "good_example": "根据当前 board contract 组合目标位，并保留非本任务 GPIO。",
       "verification": [
         "空白实板测试"
       ],
       "evidence": [
         {
           "level": "E1",
-          "source": "README.md / seven_segment ASM",
-          "note": "当前板全关值"
+          "source": "registered board profile",
+          "note": "逐板记录的全关状态"
         }
       ],
       "confidence": "high",

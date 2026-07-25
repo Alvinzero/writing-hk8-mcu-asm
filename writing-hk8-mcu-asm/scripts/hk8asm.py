@@ -23,6 +23,7 @@ from ssd1306_page_bitmap import build_result as build_display_asset_result
 from bdf_to_ssd1306 import (
     BdfError,
     CANONICAL_FONT_ID,
+    CANONICAL_FONT_SHA256,
     GENERATOR_VERSION as BDF_GENERATOR_VERSION,
     crop_glyph_cell as crop_bdf_glyph_cell,
     default_baseline as default_bdf_baseline,
@@ -37,6 +38,7 @@ from bdf_to_ssd1306 import (
 MANDATORY_ROLES = ("compiler",)
 OPTIONAL_HARDWARE_ROLES = ("programmer", "verifier")
 ROLES = (*MANDATORY_ROLES, *OPTIONAL_HARDWARE_ROLES)
+CONFIRMED_BOARD_INPUT_SOURCES = {"user_provided", "user_confirmed_profile"}
 RUN_SCHEMA_VERSION = 1
 MAX_FLASH_ATTEMPTS = 3
 PLACEHOLDER_MARKERS = ("REPLACE_WITH", "实际路径")
@@ -428,6 +430,32 @@ def timing_requires_clock(timing: Any) -> bool:
     return timing.get("precision") == "precise" or any(key != "precision" for key in timing)
 
 
+def validate_input_provenance(
+    request: dict[str, Any], *, uses_gpio: bool, uses_clock: bool
+) -> None:
+    provenance = request.get("input_provenance")
+    board_source = provenance.get("board") if isinstance(provenance, dict) else None
+    require(
+        board_source in CONFIRMED_BOARD_INPUT_SOURCES,
+        "BOARD_PROFILE_UNCONFIRMED",
+        "Board parameters must be provided by the user or selected from a user-confirmed profile",
+    )
+    if uses_gpio:
+        pin_source = provenance.get("pins") if isinstance(provenance, dict) else None
+        require(
+            pin_source in CONFIRMED_BOARD_INPUT_SOURCES,
+            "BOARD_INPUT_UNCONFIRMED",
+            "GPIO pin parameters require user-provided wiring or a user-confirmed board profile",
+        )
+    if uses_clock:
+        clock_source = provenance.get("clock") if isinstance(provenance, dict) else None
+        require(
+            clock_source in CONFIRMED_BOARD_INPUT_SOURCES,
+            "BOARD_INPUT_UNCONFIRMED",
+            "Clock parameters require a user-provided value or a user-confirmed board profile",
+        )
+
+
 def validate_output_pin_contract(name: str, pin: dict[str, Any]) -> None:
     require(
         pin.get("port") in {"PA", "PB"},
@@ -735,13 +763,20 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
 
 def validate_config(config: dict[str, Any]) -> None:
     require(config.get("schema_version") == 1, "INVALID_CONFIG", "Unsupported config schema")
-    require(
-        isinstance(config.get("board_id"), str) and bool(config["board_id"]),
-        "INVALID_CONFIG",
-        "Config board_id is required",
-    )
     adapters = config.get("adapters")
     require(isinstance(adapters, dict), "INVALID_CONFIG", "Config adapters are required")
+    board_id = config.get("board_id")
+    require(
+        board_id is None or (isinstance(board_id, str) and bool(board_id)),
+        "INVALID_CONFIG",
+        "Config board_id must be a non-empty string when provided",
+    )
+    if any(role in adapters for role in OPTIONAL_HARDWARE_ROLES):
+        require(
+            isinstance(board_id, str) and bool(board_id),
+            "INVALID_CONFIG",
+            "Config board_id is required for hardware adapters",
+        )
     for role in MANDATORY_ROLES:
         adapter = adapters.get(role)
         require(isinstance(adapter, dict), "INVALID_CONFIG", f"Missing {role} adapter")
@@ -1057,6 +1092,23 @@ def audit_display_table_sender(
         "DISPLAY_TABLE_INVALID",
         f"DB display asset requires '; 查表配对 TABLE_PAIR: {table_label},{sender_label}'",
     )
+    region = source_region_after_label(source_text, sender_label)
+    end = re.search(r"(?mi)^[ \t]*RET[ \t]*(?:;.*)?$", region)
+    require(
+        end is not None,
+        "DISPLAY_TABLE_INVALID",
+        f"Display table sender has no RET: {sender_label}",
+    )
+    routine = region[: end.start()]
+    operations = [
+        operation.upper()
+        for operation in re.findall(r"(?mi)^[ \t]*(TABL|TABH)\b", routine)
+    ]
+    require(
+        operations == ["TABL", "TABH"],
+        "DISPLAY_TABLE_INVALID",
+        f"Display table sender must execute one TABL followed by one TABH per loop: {sender_label}",
+    )
 
 
 def audit_text_glyph_provenance(
@@ -1072,6 +1124,11 @@ def audit_text_glyph_provenance(
         "Text assets require deterministic Unicode glyph provenance from bdf_to_ssd1306.py",
     )
     canonical_font_hash = sha256_file(CANONICAL_TEXT_FONT)
+    require(
+        canonical_font_hash == CANONICAL_FONT_SHA256,
+        "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+        "Bundled canonical text font SHA256 does not match the approved font identity",
+    )
     require(
         source.get("font_sha256") == canonical_font_hash,
         "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
@@ -1107,6 +1164,7 @@ def audit_text_glyph_provenance(
     try:
         _properties, font_glyphs = parse_bdf(CANONICAL_TEXT_FONT)
         rebuilt_glyphs: list[bytes] = []
+        seen_codepoint_hashes: dict[int, str] = {}
         for index, item in enumerate(layout):
             label = item["label"]
             require(
@@ -1132,14 +1190,22 @@ def audit_text_glyph_provenance(
                 )
             )
             rebuilt_glyphs.append(packed)
+            packed_hash = hashlib.sha256(packed).hexdigest()
+            if ord(label) not in seen_codepoint_hashes:
+                require(
+                    packed_hash not in seen_codepoint_hashes.values(),
+                    "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+                    f"Different Unicode codepoints resolve to an identical glyph: {label}",
+                )
+                seen_codepoint_hashes[ord(label)] = packed_hash
             expected_provenance = {
                 "label": label,
                 "codepoint": ord(label),
                 "width": int(item["width"]),
-                "source_sha256": hashlib.sha256(packed).hexdigest(),
+                "source_sha256": packed_hash,
             }
             require(
-                glyph_hashes.get(label) == hashlib.sha256(packed).hexdigest()
+                glyph_hashes.get(label) == packed_hash
                 and provenance[index] == expected_provenance,
                 "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
                 f"Unicode glyph SHA256 does not match canonical font rendering: {label}",
@@ -1184,23 +1250,6 @@ def audit_text_glyph_provenance(
         "glyph_encodings": encodings,
         "glyph_source_sha256": glyph_hashes,
     }
-    region = source_region_after_label(source_text, sender_label)
-    end = re.search(r"(?mi)^[ \t]*RET[ \t]*(?:;.*)?$", region)
-    require(
-        end is not None,
-        "DISPLAY_TABLE_INVALID",
-        f"Display table sender has no RET: {sender_label}",
-    )
-    routine = region[: end.start()]
-    operations = [
-        operation.upper()
-        for operation in re.findall(r"(?mi)^[ \t]*(TABL|TABH)\b", routine)
-    ]
-    require(
-        operations == ["TABL", "TABH"],
-        "DISPLAY_TABLE_INVALID",
-        f"Display table sender must execute one TABL followed by one TABH per loop: {sender_label}",
-    )
 
 
 def audit_display_asset(
@@ -1342,10 +1391,15 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
     require(isinstance(behavior, str) and bool(behavior.strip()), "INVALID_REQUEST", "behavior is required")
     timing = request.get("timing")
     clock_required = timing_requires_clock(timing)
+    uses_gpio = request_uses_gpio(request)
+    validate_input_provenance(
+        request,
+        uses_gpio=uses_gpio,
+        uses_clock=clock_required or "clock" in request or "clock_hz" in request,
+    )
     if clock_required or "clock" in request or "clock_hz" in request:
         validate_clock_contract(request, profile)
     pins = request.get("pins")
-    uses_gpio = request_uses_gpio(request)
     requires_gpio_output = request_requires_gpio_output(request)
     if uses_gpio:
         require(isinstance(pins, dict) and bool(pins), "INVALID_REQUEST", "pins are required for GPIO tasks")
@@ -1469,7 +1523,13 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
     board = request.get("board")
     require(isinstance(board, dict), "INVALID_REQUEST", "board must be an object")
     require(not contains_unresolved(board), "INVALID_REQUEST", "board contains unresolved values")
-    require(board.get("id") == config["board_id"], "INVALID_REQUEST", "Request board does not match config")
+    require(is_non_empty_string(board.get("id")), "INVALID_REQUEST", "board.id is required")
+    if config.get("board_id") is not None:
+        require(
+            board.get("id") == config["board_id"],
+            "INVALID_REQUEST",
+            "Request board does not match hardware config",
+        )
     acceptance = request.get("acceptance", [])
     require(isinstance(acceptance, list), "INVALID_REQUEST", "acceptance must be an array when provided")
     for item in acceptance:
@@ -1497,8 +1557,9 @@ def adapter_payload(
         "expected_device_id": profile.get("expected_device_id"),
         "expected_programmer_serial": config.get("programmer_serial"),
         "expected_voltage_mv": config.get("voltage_mv"),
-        "board_id": config["board_id"],
     }
+    if config.get("board_id") is not None:
+        payload["board_id"] = config["board_id"]
     if extra:
         payload.update(extra)
     return payload

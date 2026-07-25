@@ -48,19 +48,6 @@
       "hex_sha256": "2fa924c282462f7bbfe29fef74df5bc240f11ba7be8abe1d53af3b1f24907eac",
       "map_sha256": "e83b264d3d1c1301c48f2df66e05c1cb3297eadd2d193a85d83ebeac54f4dd85",
       "evidence_level": "E4"
-    },
-    {
-      "template": "templates/seven-segment-scan.asm",
-      "source_bytes": 2186,
-      "source_sha256": "006a2ec2d9fedadd8f0e9018b489867911c1b3fe140a59c467ebbeb621957e92",
-      "errors": 0,
-      "warnings": 0,
-      "code_words": 76,
-      "bin_bytes": 152,
-      "bin_sha256": "06836899fd347d579d52c7eeb09325a2b6cf930d0c23d885173a54d4bea7eb5c",
-      "hex_sha256": "b3573d291485149dfcb6589bf004bfe06963d4809e0865aa6f31d2b3d1f702be",
-      "map_sha256": "220370e20e234545e5f852b2938ff4a58151c662d4f39b9cc37b1ddc10469816",
-      "evidence_level": "E4"
     }
   ],
   "db_template": {

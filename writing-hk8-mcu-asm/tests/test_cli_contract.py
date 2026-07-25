@@ -132,6 +132,11 @@ class ClosedLoopCliContractTests(unittest.TestCase):
             "timing": {"period_us": 1000},
             "memory_limits": {"rom_bytes": 64, "ram_bytes": 8},
             "board": {"id": "HK64S825-SIM-BOARD"},
+            "input_provenance": {
+                "board": "user_confirmed_profile",
+                "pins": "user_confirmed_profile",
+                "clock": "user_confirmed_profile",
+            },
             "acceptance": [
                 {
                     "name": "fixture-observable",
@@ -352,10 +357,15 @@ raise SystemExit(__EXIT_CODE__)
 
     def run_cli(self, *args: str) -> subprocess.CompletedProcess[str]:
         self.assertTrue(CLI.exists(), f"production CLI missing: {CLI}")
+        env = os.environ.copy()
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        env.setdefault("PYTHONUTF8", "1")
         return subprocess.run(
             [sys.executable, str(CLI), *args],
             cwd=SKILL_ROOT,
             text=True,
+            encoding="utf-8",
+            env=env,
             capture_output=True,
             check=False,
         )
@@ -692,6 +702,103 @@ raise SystemExit(__EXIT_CODE__)
         self.assertTrue((run_dir / "config.json").is_file())
         self.assertTrue((run_dir / "request.json").is_file())
         self.assertTrue((run_dir / "src" / "candidate.asm").is_file())
+
+    def test_hardware_request_requires_confirmed_board_provenance(self) -> None:
+        request = self.structured_gpio_request()
+        del request["input_provenance"]["board"]
+        self._write_json(self.request_path, request)
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "unconfirmed-board"),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("BOARD_PROFILE_UNCONFIRMED", self.payload(result)["code"])
+
+    def test_gpio_request_requires_confirmed_pin_provenance(self) -> None:
+        request = self.structured_gpio_request()
+        del request["input_provenance"]["pins"]
+        self._write_json(self.request_path, request)
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "unconfirmed-pins"),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("BOARD_INPUT_UNCONFIRMED", self.payload(result)["code"])
+
+    def test_timed_request_requires_confirmed_clock_provenance(self) -> None:
+        request = self.structured_gpio_request()
+        del request["input_provenance"]["clock"]
+        self._write_json(self.request_path, request)
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "unconfirmed-clock"),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("BOARD_INPUT_UNCONFIRMED", self.payload(result)["code"])
+
+    def test_compile_only_config_is_board_agnostic(self) -> None:
+        config = self.compile_only_config()
+        del config["board_id"]
+        self._write_json(self.config_path, config)
+        request = self.structured_gpio_request()
+        request["board"] = {"id": "CUSTOM-HK64S825-BOARD"}
+        request["input_provenance"] = {
+            "board": "user_provided",
+            "pins": "user_provided",
+            "clock": "user_provided",
+        }
+        self._write_json(self.request_path, request)
+
+        run_dir = self.root / "board-agnostic-compile"
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+        self.assertEqual("RUN_CREATED", self.payload(result)["code"])
 
     def test_new_run_accepts_non_gpio_non_timing_request_without_pins_or_clock(self) -> None:
         self._write_json(self.request_path, self.minimal_non_gpio_request())
@@ -1056,6 +1163,37 @@ raise SystemExit(__EXIT_CODE__)
         self.assertNotEqual(0, result.returncode)
         self.assertEqual("DISPLAY_TABLE_INVALID", self.payload(result)["code"])
         self.assertIn("TABLE_PAIR", self.payload(result)["message"])
+        self.assertFalse(run_dir.exists())
+
+    def test_db_display_asset_rejects_sender_with_wrong_table_read_order(self) -> None:
+        self.configure_multi_page_display_asset()
+        source = self.source_path.read_text(encoding="utf-8")
+        self.source_path.write_text(
+            source.replace(
+                "    TABL\n    CALL CONSUME_BYTE\n    MOV A,88H\n    TABH",
+                "    TABH\n    CALL CONSUME_BYTE\n    MOV A,88H\n    TABL",
+            ),
+            encoding="utf-8",
+        )
+        run_dir = self.root / "display-asset-db-wrong-table-read-order"
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("DISPLAY_TABLE_INVALID", self.payload(result)["code"])
+        self.assertIn("TABL followed by one TABH", self.payload(result)["message"])
         self.assertFalse(run_dir.exists())
 
     def test_text_display_asset_rejects_inline_i2c_send(self) -> None:
