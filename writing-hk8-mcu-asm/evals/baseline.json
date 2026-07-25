@@ -47,9 +47,9 @@
     {
       "id": "oled-multipage-glyph-orientation-regression",
       "query": "在当前 HK64S825 OLED 板显示 16 像素高的 2026年8月1号。",
-      "observed_behavior": "生成结果沿用了已经修正的 A1H+C0H，但把 5x7 ASCII 的方向结论错误推广到 8x16 数字和 16x16 汉字；文本顺序正确，每个字符却同时上下和左右镜像。源码中的 192 个显示字节由手工生成，没有字符块宽度、转换 manifest、点阵预览或 ASM 输出哈希门禁。",
+      "observed_behavior": "原 skill 先把 5x7 ASCII 结论错误推广到 8x16 数字和 16x16 汉字，且未强制查表与 manifest；补入 manifest 后又根据照片症状直接泛化为 mirror_x=true、mirror_y=true。实板回归显示 r6 true/true 留下逐字符左右镜像，r7 false/false 留下上下颠倒，最终 r8 false/true 显示正常。",
       "failure_observed": true,
-      "failure_reason": "5x7 只占一个 page，垂直修正可以表现为单 byte bit 反转；16 像素高资产的垂直镜像必须交换上下 page 并反转每个 byte 的 bit。水平镜像还必须限制在各字符块内部，不能反转整行。缺少可执行转换器和 new-run 字节哈希审计，使正确的文档基线没有约束实际资产。"
+      "failure_reason": "原门禁只证明 manifest、ASM DB 和 SHA256 一致，不能证明视觉方向；错误的 true/true 字节同样可以 0 warning release。当前板 A1H+C0H 与 ssd1306-page-lsb-top 源组合只需要 mirror_y=true，不需要逐字符水平镜像。必须用 E1 orientation_profile 将 board、控制器命令、源格式和两个变换值绑定，并在 new-run/close-loop 失败关闭。"
     }
   ]
 }

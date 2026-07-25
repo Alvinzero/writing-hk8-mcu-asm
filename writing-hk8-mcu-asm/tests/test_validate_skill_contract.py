@@ -372,6 +372,9 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("BTSZ", by_id["HK-I2C-006"]["requirement"])
         self.assertIn("上电稳定延时", by_id["HK-OLED-005"]["requirement"])
         self.assertIn("ssd1306_page_bitmap.py", by_id["HK-OLED-006"]["requirement"])
+        self.assertIn("orientation_profile", by_id["HK-OLED-006"]["requirement"])
+        self.assertIn("mirror_x_within_glyphs=false", by_id["HK-OLED-006"]["good_example"])
+        self.assertIn("mirror_y=true", by_id["HK-OLED-006"]["good_example"])
         self.assertIn("ASM 指定 DB 表", by_id["HK-OLED-006"]["requirement"])
         self.assertIn("必须使用 DB", by_id["HK-OLED-007"]["requirement"])
         self.assertIn("table_sender", by_id["HK-OLED-007"]["requirement"])
@@ -389,6 +392,7 @@ class ValidateSkillContractTests(unittest.TestCase):
             "汉字、ASCII 字母、Logo、头像、图片",
             "DB + TABL/TABH",
             "source_encoding: \"db\"",
+            "orientation_profile",
             "table_sender",
             "TABLE_PAIR",
             "inline_i2c_send",
@@ -434,10 +438,11 @@ class ValidateSkillContractTests(unittest.TestCase):
                 "A1H+C0H",
                 "5x7",
                 "ssd1306_page_bitmap.py",
-                "字符块内部列",
+                "mirror_x_within_glyphs=false",
                 "交换两个 page",
+                "orientation_profile",
                 "source_label",
-                "released",
+                "DB + TABL/TABH",
             ),
         }
         for case_id, expected_phrases in expected_by_case.items():
@@ -467,10 +472,39 @@ class ValidateSkillContractTests(unittest.TestCase):
         cases = {case["id"]: case for case in baseline["cases"]}
         case = cases["oled-multipage-glyph-orientation-regression"]
         self.assertTrue(case["failure_observed"])
-        self.assertIn("文本顺序正确", case["observed_behavior"])
-        self.assertIn("上下和左右镜像", case["observed_behavior"])
-        self.assertIn("交换上下 page", case["failure_reason"])
-        self.assertIn("字符块内部", case["failure_reason"])
+        self.assertIn("r6 true/true", case["observed_behavior"])
+        self.assertIn("r7 false/false", case["observed_behavior"])
+        self.assertIn("r8 false/true", case["observed_behavior"])
+        self.assertIn("orientation_profile", case["failure_reason"])
+        self.assertIn("只需要 mirror_y=true", case["failure_reason"])
+
+    def test_canonical_oled_orientation_profile_records_hardware_baseline(self) -> None:
+        expected_id = "hk64s825-default-a1-c0-page-lsb-top-v1"
+        for filename in (
+            "HK64S825.profile.json",
+            "HK64S825.profile.example.json",
+        ):
+            with self.subTest(profile=filename):
+                profile = json.loads(
+                    (SKILL_ROOT / "references" / "profiles" / filename).read_text(
+                        encoding="utf-8"
+                    )
+                )
+                orientation = profile["orientation_profiles"][expected_id]
+                self.assertEqual("HK64S825-DEFAULT", orientation["board_id"])
+                self.assertEqual("A1H", orientation["segment_remap"])
+                self.assertEqual("C0H", orientation["com_scan_direction"])
+                self.assertEqual(
+                    "ssd1306-page-lsb-top", orientation["source_format"]
+                )
+                self.assertEqual(
+                    {"mirror_x_within_glyphs": False, "mirror_y": True},
+                    orientation["transform"],
+                )
+                self.assertEqual("E1", orientation["evidence"]["level"])
+                self.assertEqual(
+                    "hardware_verified", orientation["evidence"]["status"]
+                )
 
     def test_reference_workflow_keeps_builtin_compile_release_self_contained(self) -> None:
         paths = (

@@ -139,12 +139,13 @@ BIN little-endian bytes = [Y, nibble_swap(X)]
 ```json
 {
   "source_encoding": "db",
+  "orientation_profile": "hk64s825-default-a1-c0-page-lsb-top-v1",
   "source_label": "DATE_DATA",
   "table_sender": "SEND_DATE_DATA"
 }
 ```
 
-源码必须同时声明 `; 查表配对 TABLE_PAIR: DATE_DATA,SEND_DATE_DATA`。`inline_i2c_send` 只允许用户明确要求的无文本总线/方向 probe，须声明 `role: "probe"` 且不超过 8 bytes；不得用于正式文字或图片交付。
+`orientation_profile` 必须匹配请求 board；当前默认板 profile 固定 `A1H+C0H`、`ssd1306-page-lsb-top`、`mirror_x=false`、`mirror_y=true`。源码必须同时声明 `; 查表配对 TABLE_PAIR: DATE_DATA,SEND_DATE_DATA`。`inline_i2c_send` 只允许用户明确要求的无文本总线/方向 probe，须声明 `role: "probe"` 且不超过 8 bytes；不得用于正式文字或图片交付。
 
 E1 实板确认的唯一 active 路径：
 

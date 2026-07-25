@@ -45,6 +45,29 @@
       }
     }
   },
+  "orientation_profiles": {
+    "hk64s825-default-a1-c0-page-lsb-top-v1": {
+      "board_id": "HK64S825-DEFAULT",
+      "controller": "SSD1306",
+      "segment_remap": "A1H",
+      "com_scan_direction": "C0H",
+      "source_format": "ssd1306-page-lsb-top",
+      "transform": {
+        "mirror_x_within_glyphs": false,
+        "mirror_y": true
+      },
+      "evidence": {
+        "level": "E1",
+        "status": "hardware_verified",
+        "verified_on": "2026-07-25",
+        "run_id": "5b3f95decabb44b1b1c396cb871b7882",
+        "asset_source_sha256": "d3c2259b0dedfb924f11d7ba57a0b2eb14308d03cbca87866b99503dee9db179",
+        "asset_output_sha256": "c1e93c79c3d4f21871ffb881f13ff5404bee912420d2638e1de41ac435a2eb7d",
+        "asm_sha256": "6856a0860da8c92e317f3d376e04f985c8b5166e65cdc5e016e61b71ef2b6213",
+        "hex_sha256": "72a91967fa990669ea47fcd5af641c5d31b860c9d719ea766d3e3a964ef8b8b8"
+      }
+    }
+  },
   "approved_tool_versions": {
     "compiler": [
       "builtin-hk64s825-assembler-2"

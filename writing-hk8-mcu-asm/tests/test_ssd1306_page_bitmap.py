@@ -66,6 +66,37 @@ class Ssd1306PageBitmapTests(unittest.TestCase):
         self.assertEqual("0FCH", BITMAP.format_hex_byte(0xFC))
         self.assertEqual("80H", BITMAP.format_hex_byte(0x80))
 
+    def test_asm_format_emits_db_rows_instead_of_inline_i2c_calls(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "width": 2,
+            "height": 8,
+            "layout": [{"label": "A", "width": 2}],
+            "source": {
+                "format": "ssd1306-page-lsb-top",
+                "bytes": ["01H", "80H"],
+            },
+            "transform": {
+                "mirror_x_within_glyphs": False,
+                "mirror_y": False,
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            manifest = Path(temp) / "manifest.json"
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), str(manifest), "--format", "asm"],
+                cwd=SKILL_ROOT,
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("DB 01H,80H", result.stdout.strip())
+        self.assertNotIn("MOV A,#", result.stdout)
+        self.assertNotIn("CALL I2C_SEND", result.stdout)
+
     def test_cli_rejects_hash_mismatch(self) -> None:
         payload = {
             "schema_version": 1,

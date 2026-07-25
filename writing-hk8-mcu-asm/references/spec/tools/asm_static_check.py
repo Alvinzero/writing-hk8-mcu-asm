@@ -880,6 +880,7 @@ def audit_table_pairs(
 
 def audit_display_table_contract(
     request: dict[str, Any] | None,
+    profile: dict[str, Any] | None,
     request_path: Path | None,
     table_pairs: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -916,7 +917,7 @@ def audit_display_table_contract(
                 None,
                 "text, image, or multi-page display request has no display.asset contract",
                 "The display payload can fall back to untracked immediate-byte writes.",
-                "Add display.asset with source_encoding=db, source_label, table_sender, byte count, and hashes.",
+                "Add display.asset with source_encoding=db, orientation_profile, source_label, table_sender, byte count, and hashes.",
             )
         ]
 
@@ -945,6 +946,42 @@ def audit_display_table_contract(
                 "Use source_encoding=db. Reserve inline_i2c_send for an explicit non-text probe of at most 8 bytes.",
             )
         ]
+
+    orientation_profile_id = asset.get("orientation_profile")
+    if not isinstance(orientation_profile_id, str) or not orientation_profile_id:
+        return [
+            make_finding(
+                "HK-OLED-006",
+                "BLOCKER",
+                source,
+                None,
+                "DB display asset has no orientation_profile",
+                "Manifest bytes can be internally consistent while still using the wrong visual orientation.",
+                "Declare the hardware-verified display.asset.orientation_profile for the request board.",
+            )
+        ]
+    if isinstance(profile, dict):
+        profiles = profile.get("orientation_profiles")
+        orientation = (
+            profiles.get(orientation_profile_id) if isinstance(profiles, dict) else None
+        )
+        board = request.get("board")
+        if (
+            not isinstance(orientation, dict)
+            or not isinstance(board, dict)
+            or orientation.get("board_id") != board.get("id")
+        ):
+            return [
+                make_finding(
+                    "HK-OLED-006",
+                    "BLOCKER",
+                    source,
+                    None,
+                    f"display orientation profile does not match request board: {orientation_profile_id!r}",
+                    "A transform verified on a different board cannot establish this panel's visual direction.",
+                    "Use a profile whose board_id matches request.board.id, or run a probe and create a new E1 profile.",
+                )
+            ]
 
     table_label = asset.get("source_label")
     sender_label = asset.get("table_sender")
@@ -1324,7 +1361,9 @@ def main(argv: list[str] | None = None) -> int:
     table_pairs, pair_findings = audit_table_pairs(files, args.table_pair, [path.resolve() for path in args.maps])
     findings.extend(pair_findings)
     findings.extend(
-        audit_display_table_contract(request_context, args.request, table_pairs)
+        audit_display_table_contract(
+            request_context, profile_context, args.request, table_pairs
+        )
     )
     loop_audit_calls = 0
     gpio_audit_calls = 0

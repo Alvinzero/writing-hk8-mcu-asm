@@ -75,16 +75,23 @@ PinContract 必须把 PB7 和 PB6 拆开记录。需要 `POD` 的引脚设为开
 - `mirror_y=false`：像素行保持从上到下。
 - `mirror_y=true`：反转整个资产的像素行。对 16 像素高字模，输出上 page 来自输入下 page 的逐 byte bit 反转，输出下 page 来自输入上 page 的逐 byte bit 反转。
 
-当实板现象是“文本顺序正确，但每个字符同时上下和左右镜像”时，保持 `A1H + C0H`、窗口和文本块顺序不变，资产层设置：
+当前 `HK64S825-DEFAULT` 板在 `2026年8月1号` 16 像素高混合字模上的 E1 实板基线为：
 
 ```json
 {
+  "orientation_profile": "hk64s825-default-a1-c0-page-lsb-top-v1",
+  "controller_commands": ["A1H", "C0H"],
+  "source_format": "ssd1306-page-lsb-top",
   "transform": {
-    "mirror_x_within_glyphs": true,
+    "mirror_x_within_glyphs": false,
     "mirror_y": true
   }
 }
 ```
+
+根因是板级 `A1H + C0H` 映射与规范 page 源字模组合后只需要垂直补偿，不需要逐字符水平镜像。`mirror_y=true` 对 8 像素高资产等价于逐 byte bit 反转；对 16 像素高资产等价于交换上下 page，并反转每个 byte 的 bit。早期根据照片症状直接设置 `true/true`，把本来正确的字符列再次反转，因而残留逐字符左右镜像；把两轴都关掉又会残留板级上下颠倒。
+
+照片中的“上下左右都反了”只描述最终现象，不能唯一确定控制器映射、源字模格式和软件变换分别贡献了哪一轴。当前板正式资产必须复用上述 profile；换板、换 OLED 模组或换源格式时，用无文本非对称 probe 每次只改一个变量，实板确认后建立新的 profile，不得覆盖当前 E1 基线。
 
 使用 Skill 内置工具执行并审计：
 
@@ -390,7 +397,7 @@ for page in pages:
 - `transform.mirror_x_within_glyphs`、`transform.mirror_y`。
 - `expected_source_sha256`、`expected_output_sha256`。
 
-请求中的 `display.asset` 还必须声明 manifest 相对路径、byte count 和两项 SHA256。汉字、ASCII 字母、Logo、头像、图片和多 page 字模的正式显示资产必须声明 `source_encoding=db`、DB 的 `source_label` 和读取它的 `table_sender`，源码同时声明精确 `TABLE_PAIR`；不得使用连续 `MOV A,#byte`/`CALL I2C_SEND` 代替查表。`inline_i2c_send` 仅允许显式无文本 probe，须声明 `role=probe` 且最多 8 bytes。`new-run` 从指定 DB 重新提取实际字节并核对输出 SHA256及 sender，manifest 复制到 run 的 `assets/display-asset.json`；`close-loop` 编译后使用最终 MAP 证明 table/sender 同页，两者都参与 evidence 与 release 失效检查。
+请求中的 `display.asset` 还必须声明 manifest 相对路径、byte count 和两项 SHA256。汉字、ASCII 字母、Logo、头像、图片和多 page 字模的正式显示资产必须声明 `source_encoding=db`、`orientation_profile`、DB 的 `source_label` 和读取它的 `table_sender`，源码同时声明精确 `TABLE_PAIR`；不得使用连续 `MOV A,#byte`/`CALL I2C_SEND` 代替查表。`inline_i2c_send` 仅允许显式无文本 probe，须声明 `role=probe` 且最多 8 bytes，并豁免方向 profile。`new-run` 校验 profile 的 board、源格式和两个镜像参数后，从指定 DB 重新提取实际字节并核对输出 SHA256 及 sender，manifest 复制到 run 的 `assets/display-asset.json`；`close-loop` 重复资产审计，并在编译后使用最终 MAP 证明 table/sender 同页，以上快照都参与 evidence 与 release 失效检查。
 
 DB 源码按上述逻辑原始 byte sequence 写入，不得根据 BIN 物理排列做 nibble/word 补偿。分页查表见 [04-程序布局-ORG-查表规范.md](04-程序布局-ORG-查表规范.md)。
 
@@ -439,7 +446,7 @@ DB 源码按上述逻辑原始 byte sequence 写入，不得根据 BIN 物理排
 - [ ] 自定义/多 page/混合宽度字模已通过 `ssd1306_page_bitmap.py`；manifest、点阵预览、byte count、源/输出 SHA256 和 ASM 实际发送字节一致。
 - [ ] 水平镜像只在各字符块内部反转列；垂直镜像按全部像素行处理，多 page 时同时完成 page 交换和 byte bit 反转。
 - [ ] 多字符/汉字/图片块按 page → 字块/图片块 → 列发送；两个 16x16 汉字的 64 字节顺序为 page0 字1、page0 字2、page1 字1、page1 字2。
-- [ ] 正式汉字、ASCII 字母、Logo、头像、图片和多 page 字模使用 `DB + TABL/TABH`，请求含 `table_sender`，源码含精确 `TABLE_PAIR`。
+- [ ] 正式汉字、ASCII 字母、Logo、头像、图片和多 page 字模使用 `DB + TABL/TABH`，请求含匹配当前 board 的 `orientation_profile` 和 `table_sender`，源码含精确 `TABLE_PAIR`。
 - [ ] DB 原始顺序、`builtin_compiler` 构建、MAP 同页审计完成。
 - [ ] 静态检查和目标编译 0 error / 0 warning，`release` 返回 `RELEASED`。
 

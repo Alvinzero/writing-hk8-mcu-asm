@@ -28,6 +28,7 @@ CANONICAL_PROFILE = SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.j
 CANONICAL_CONFIG = SKILL_ROOT / "references" / "configs" / "builtin-config.json"
 BUILTIN_COMPILER = SKILL_ROOT / "scripts" / "builtin_compiler.py"
 INSTRUCTION_REFERENCE = SKILL_ROOT / "references" / "spec" / "rules" / "instruction-reference.json"
+OLED_ORIENTATION_PROFILE_ID = "hk64s825-default-a1-c0-page-lsb-top-v1"
 REQUIRED_FAKE_COMPILER_FILES = (
     "src/core/assembler.py",
     "src/core/output_generator.py",
@@ -62,7 +63,31 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     @staticmethod
-    def profile(*, status: str = "ready") -> dict:
+    def orientation_profile(board_id: str) -> dict:
+        return {
+            "board_id": board_id,
+            "controller": "SSD1306",
+            "segment_remap": "A1H",
+            "com_scan_direction": "C0H",
+            "source_format": "ssd1306-page-lsb-top",
+            "transform": {
+                "mirror_x_within_glyphs": False,
+                "mirror_y": True,
+            },
+            "evidence": {
+                "level": "E1",
+                "status": "hardware_verified",
+                "verified_on": "2026-07-25",
+                "run_id": "5b3f95decabb44b1b1c396cb871b7882",
+                "asset_source_sha256": "d3c2259b0dedfb924f11d7ba57a0b2eb14308d03cbca87866b99503dee9db179",
+                "asset_output_sha256": "c1e93c79c3d4f21871ffb881f13ff5404bee912420d2638e1de41ac435a2eb7d",
+                "asm_sha256": "6856a0860da8c92e317f3d376e04f985c8b5166e65cdc5e016e61b71ef2b6213",
+                "hex_sha256": "72a91967fa990669ea47fcd5af641c5d31b860c9d719ea766d3e3a964ef8b8b8",
+            },
+        }
+
+    @classmethod
+    def profile(cls, *, status: str = "ready") -> dict:
         return {
             "schema_version": 1,
             "chip": "HK64S825",
@@ -75,6 +100,11 @@ class ClosedLoopCliContractTests(unittest.TestCase):
                 "verifier": ["sim-1.0"],
             },
             "max_flash_attempts": 3,
+            "orientation_profiles": {
+                OLED_ORIENTATION_PROFILE_ID: cls.orientation_profile(
+                    "HK64S825-SIM-BOARD"
+                )
+            },
             "asm_rules": {
                 "required_patterns": ["; CHIP: HK64S825", "ORG", "END"],
                 "forbidden_patterns": ["FUSE", "LOCKBIT", "SECURITYBIT"],
@@ -372,7 +402,7 @@ raise SystemExit(__EXIT_CODE__)
 
     def configure_multi_page_display_asset(self) -> tuple[Path, list[int]]:
         source_bytes = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80]
-        output_bytes = [0x04, 0x08, 0x01, 0x02, 0x40, 0x80, 0x10, 0x20]
+        output_bytes = [0x08, 0x04, 0x02, 0x01, 0x80, 0x40, 0x20, 0x10]
         source_hash = hashlib.sha256(bytes(source_bytes)).hexdigest()
         output_hash = hashlib.sha256(bytes(output_bytes)).hexdigest()
         manifest_path = self.root / "display-asset.json"
@@ -391,7 +421,7 @@ raise SystemExit(__EXIT_CODE__)
                     "bytes": ["{:02X}H".format(value) for value in source_bytes],
                 },
                 "transform": {
-                    "mirror_x_within_glyphs": True,
+                    "mirror_x_within_glyphs": False,
                     "mirror_y": True,
                 },
                 "expected_source_sha256": source_hash,
@@ -412,6 +442,7 @@ raise SystemExit(__EXIT_CODE__)
             "asset": {
                 "manifest": manifest_path.name,
                 "source_encoding": "db",
+                "orientation_profile": OLED_ORIENTATION_PROFILE_ID,
                 "source_label": "DISPLAY_DATA",
                 "table_sender": "SEND_DISPLAY_DATA",
                 "byte_count": 8,
@@ -628,6 +659,13 @@ raise SystemExit(__EXIT_CODE__)
         self.assertEqual("pass", audit["status"])
         self.assertEqual(8, audit["output_byte_count"])
         self.assertEqual(["左", "右"], audit["text_order"])
+        self.assertEqual(OLED_ORIENTATION_PROFILE_ID, audit["orientation_profile"])
+        self.assertEqual(
+            {"mirror_x_within_glyphs": False, "mirror_y": True},
+            audit["transform"],
+        )
+        self.assertEqual("A1H", audit["orientation"]["segment_remap"])
+        self.assertEqual("C0H", audit["orientation"]["com_scan_direction"])
         self.assertIn("display_asset_sha256", evidence["snapshots"])
 
         snapshot = run_dir / "assets" / "display-asset.json"
@@ -689,7 +727,7 @@ raise SystemExit(__EXIT_CODE__)
     def test_multi_page_asset_rejects_asm_byte_drift_before_run_creation(self) -> None:
         _manifest_path, _output_bytes = self.configure_multi_page_display_asset()
         source = self.source_path.read_text(encoding="utf-8")
-        self.source_path.write_text(source.replace("DB 04H,08H", "DB 05H,08H", 1), encoding="utf-8")
+        self.source_path.write_text(source.replace("DB 08H,04H", "DB 09H,04H", 1), encoding="utf-8")
         run_dir = self.root / "display-asset-byte-drift"
 
         result = self.run_cli(
@@ -736,6 +774,108 @@ raise SystemExit(__EXIT_CODE__)
         self.assertEqual("INVALID_REQUEST", self.payload(result)["code"])
         self.assertIn("table_sender", self.payload(result)["message"])
         self.assertFalse(run_dir.exists())
+
+    def test_db_display_asset_requires_orientation_profile(self) -> None:
+        self.configure_multi_page_display_asset()
+        request = json.loads(self.request_path.read_text(encoding="utf-8"))
+        request["display"]["asset"].pop("orientation_profile")
+        self._write_json(self.request_path, request)
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "display-asset-missing-orientation-profile"),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("INVALID_REQUEST", self.payload(result)["code"])
+        self.assertIn("orientation_profile", self.payload(result)["message"])
+
+    def test_db_display_asset_rejects_transform_outside_orientation_profile(self) -> None:
+        manifest_path, _output_bytes = self.configure_multi_page_display_asset()
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["transform"]["mirror_x_within_glyphs"] = True
+        self._write_json(manifest_path, manifest)
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "display-asset-wrong-orientation-transform"),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(
+            "DISPLAY_ASSET_ORIENTATION_MISMATCH", self.payload(result)["code"]
+        )
+        self.assertIn("mirror transform", self.payload(result)["message"])
+
+    def test_db_display_asset_rejects_source_format_outside_orientation_profile(self) -> None:
+        manifest_path, _output_bytes = self.configure_multi_page_display_asset()
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["source"]["format"] = "ssd1306-page-msb-top"
+        self._write_json(manifest_path, manifest)
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "display-asset-wrong-orientation-source-format"),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(
+            "DISPLAY_ASSET_ORIENTATION_MISMATCH", self.payload(result)["code"]
+        )
+        self.assertIn("source format", self.payload(result)["message"])
+
+    def test_db_display_asset_rejects_orientation_profile_for_other_board(self) -> None:
+        self.configure_multi_page_display_asset()
+        profile = self.profile()
+        profile["orientation_profiles"][OLED_ORIENTATION_PROFILE_ID]["board_id"] = (
+            "ANOTHER-BOARD"
+        )
+        self._write_json(self.profile_path, profile)
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(self.root / "display-asset-wrong-orientation-board"),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("INVALID_REQUEST", self.payload(result)["code"])
+        self.assertIn("request board", self.payload(result)["message"])
 
     def test_db_display_asset_requires_exact_table_pair(self) -> None:
         self.configure_multi_page_display_asset()

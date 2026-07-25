@@ -39,6 +39,7 @@
 - 禁止把汉字、ASCII 字母、Logo、头像、图片或多 page 字模的正式显示数据展开成连续立即数发送；必须使用 `DB + TABL/TABH`。立即数只允许显式无文本 probe，且最多 8 bytes。
 - 禁止把当前板 5x7 ASCII 的单 page bit 反转结论直接套用到 8x16、16x16、汉字或其他多 page 资产；多页垂直镜像必须同时处理 page 顺序和 byte bit 顺序。
 - 禁止以整行逆序修复“文本顺序正确、每个字符左右镜像”；水平修正必须限制在 manifest 声明的各字符块内部。
+- 禁止根据照片中的最终镜像症状直接猜两个变换轴。当前 `HK64S825-DEFAULT` 正式资产只允许 profile `hk64s825-default-a1-c0-page-lsb-top-v1`：`A1H+C0H`、`ssd1306-page-lsb-top`、`mirror_x_within_glyphs=false`、`mirror_y=true`；换板或换源格式必须用 probe 建立新 profile。
 - 禁止让一个跨页通用 `TABL/TABH` 函数读取多个 256-word 页。
 - 禁止 `JMP/CALL` 直接使用数字字面量；使用标签或 `EQU` 符号。
 - 禁止接受任何地址覆盖、跳转截断或未知指令 warning。
@@ -68,7 +69,7 @@
 
 ### 4.2 DB 与查表
 
-汉字、ASCII 字母、Logo、头像、图片和多 page 字模的正式显示资产必须以 `DB` 存储，并在请求中声明 `source_encoding=db`、`source_label`、`table_sender`；源码必须声明精确 `TABLE_PAIR`。这是一条生成与 release 门禁，不得因立即数字节哈希正确而豁免。
+汉字、ASCII 字母、Logo、头像、图片和多 page 字模的正式显示资产必须以 `DB` 存储，并在请求中声明 `source_encoding=db`、匹配当前 board 的 `orientation_profile`、`source_label`、`table_sender`；源码必须声明精确 `TABLE_PAIR`。这是一条生成与 release 门禁，不得因立即数字节哈希正确而豁免。
 
 对源码：
 
@@ -167,7 +168,7 @@ AI 最终输出至少包含：
 - “全亮”链路测试必须真正向 GDDRAM 写 1024 个 `FFH`；`A5H/AFH` 不是唯一证据。
 - 1024 字节填充循环必须证明 exact count；8 位低计数器常用低字节 `00H` 配合高计数 `04H` 实现 4×256。
 - SSD1306 数据为 8 pages × 128 columns；每 byte 纵向 8 pixels，LSB 在页顶部。
-- 多 page 或混合宽度字模必须通过 `scripts/ssd1306_page_bitmap.py` 转换和审计。文本块顺序正确但每个字符同时上下/左右镜像时，保持控制器命令和文本顺序，使用逐字符水平镜像与全像素行垂直镜像。
+- 多 page 或混合宽度字模必须通过 `scripts/ssd1306_page_bitmap.py` 转换和审计。正式 DB 资产必须声明匹配当前 board 的 `orientation_profile`；`hk8asm.py` 必须校验 manifest 的源格式和两个镜像参数与 profile 一致。当前板已验证为不做逐字符水平镜像、只做全像素行垂直补偿。
 
 ### 当前四位数码管板
 

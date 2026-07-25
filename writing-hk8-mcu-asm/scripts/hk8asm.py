@@ -42,6 +42,7 @@ GPIO_OUTPUT_DEPENDENCY_RE = re.compile(
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 ASM_LABEL_RE = re.compile(r"^[A-Za-z_.$?][A-Za-z0-9_.$?]*$")
+ORIENTATION_PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,126}[a-z0-9]$")
 DISPLAY_TABLE_TEXT_RE = re.compile(r"[A-Za-z\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
 DISPLAY_IMAGE_REQUEST_RE = re.compile(
     r"(?i)(?:图片|图像|位图|图标|头像|logo|bitmap|image|icon|avatar)"
@@ -590,6 +591,90 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
                     "INVALID_PROFILE",
                     f"clock_model.divider_by_mode.{mode}.{selector} must be positive",
                 )
+    orientation_profiles = profile.get("orientation_profiles", {})
+    require(
+        isinstance(orientation_profiles, dict),
+        "INVALID_PROFILE",
+        "orientation_profiles must be an object",
+    )
+    for profile_id, orientation in orientation_profiles.items():
+        require(
+            isinstance(profile_id, str)
+            and ORIENTATION_PROFILE_ID_RE.fullmatch(profile_id) is not None,
+            "INVALID_PROFILE",
+            "orientation profile IDs must use lowercase letters, digits, and hyphens",
+        )
+        require(
+            isinstance(orientation, dict),
+            "INVALID_PROFILE",
+            f"orientation_profiles.{profile_id} must be an object",
+        )
+        require(
+            is_non_empty_string(orientation.get("board_id")),
+            "INVALID_PROFILE",
+            f"orientation_profiles.{profile_id}.board_id is required",
+        )
+        require(
+            orientation.get("controller") == "SSD1306",
+            "INVALID_PROFILE",
+            f"orientation_profiles.{profile_id}.controller must be SSD1306",
+        )
+        for key, allowed_commands in (
+            ("segment_remap", {"A0H", "A1H"}),
+            ("com_scan_direction", {"C0H", "C8H"}),
+        ):
+            command = orientation.get(key)
+            require(
+                command in allowed_commands,
+                "INVALID_PROFILE",
+                f"orientation_profiles.{profile_id}.{key} is not a valid SSD1306 orientation command",
+            )
+        require(
+            is_non_empty_string(orientation.get("source_format")),
+            "INVALID_PROFILE",
+            f"orientation_profiles.{profile_id}.source_format is required",
+        )
+        transform = orientation.get("transform")
+        require(
+            isinstance(transform, dict)
+            and set(transform) == {"mirror_x_within_glyphs", "mirror_y"}
+            and isinstance(transform.get("mirror_x_within_glyphs"), bool)
+            and isinstance(transform.get("mirror_y"), bool),
+            "INVALID_PROFILE",
+            f"orientation_profiles.{profile_id}.transform must contain boolean mirror flags",
+        )
+        evidence = orientation.get("evidence")
+        require(
+            isinstance(evidence, dict)
+            and evidence.get("level") == "E1"
+            and evidence.get("status") == "hardware_verified",
+            "INVALID_PROFILE",
+            f"orientation_profiles.{profile_id}.evidence must be hardware-verified E1",
+        )
+        require(
+            isinstance(evidence.get("verified_on"), str)
+            and re.fullmatch(r"\d{4}-\d{2}-\d{2}", evidence["verified_on"]) is not None,
+            "INVALID_PROFILE",
+            f"orientation_profiles.{profile_id}.evidence.verified_on must be YYYY-MM-DD",
+        )
+        require(
+            isinstance(evidence.get("run_id"), str)
+            and re.fullmatch(r"[0-9a-f]{32}", evidence["run_id"]) is not None,
+            "INVALID_PROFILE",
+            f"orientation_profiles.{profile_id}.evidence.run_id must be a lowercase run ID",
+        )
+        for key in (
+            "asset_source_sha256",
+            "asset_output_sha256",
+            "asm_sha256",
+            "hex_sha256",
+        ):
+            value = evidence.get(key)
+            require(
+                isinstance(value, str) and SHA256_RE.fullmatch(value) is not None,
+                "INVALID_PROFILE",
+                f"orientation_profiles.{profile_id}.evidence.{key} must be a lowercase SHA256",
+            )
     static_config = profile.get("static_check", {})
     require(isinstance(static_config, dict), "INVALID_PROFILE", "static_check must be an object")
     if static_config:
@@ -769,7 +854,7 @@ def display_requires_table_asset(request: dict[str, Any], display: dict[str, Any
     )
 
 
-def validate_display_contract(request: dict[str, Any]) -> None:
+def validate_display_contract(request: dict[str, Any], profile: dict[str, Any]) -> None:
     display = request.get("display")
     if display is None:
         return
@@ -852,6 +937,26 @@ def validate_display_contract(request: dict[str, Any]) -> None:
             and ASM_LABEL_RE.fullmatch(table_sender) is not None,
             "INVALID_REQUEST",
             "DB display assets require display.asset.table_sender",
+        )
+        orientation_profile_id = asset.get("orientation_profile")
+        require(
+            isinstance(orientation_profile_id, str) and bool(orientation_profile_id),
+            "INVALID_REQUEST",
+            "DB display assets require display.asset.orientation_profile",
+        )
+        orientation_profiles = profile.get("orientation_profiles", {})
+        orientation_profile = orientation_profiles.get(orientation_profile_id)
+        require(
+            isinstance(orientation_profile, dict),
+            "INVALID_REQUEST",
+            f"Unknown display.asset.orientation_profile: {orientation_profile_id}",
+        )
+        board = request.get("board")
+        require(
+            isinstance(board, dict)
+            and board.get("id") == orientation_profile.get("board_id"),
+            "INVALID_REQUEST",
+            "Display orientation profile does not match request board",
         )
     else:
         require(
@@ -954,7 +1059,7 @@ def audit_display_table_sender(
 
 
 def audit_display_asset(
-    request: dict[str, Any], source: Path, manifest_path: Path
+    request: dict[str, Any], source: Path, manifest_path: Path, profile: dict[str, Any]
 ) -> dict[str, Any] | None:
     display = request.get("display")
     if not isinstance(display, dict) or not isinstance(display.get("asset"), dict):
@@ -966,6 +1071,22 @@ def audit_display_asset(
         f"Display asset manifest does not exist: {manifest_path}",
     )
     manifest = read_json(manifest_path, "DISPLAY_ASSET_INVALID")
+    orientation_profile_id = asset.get("orientation_profile")
+    orientation_profile = None
+    if asset["source_encoding"] == "db":
+        orientation_profile = profile["orientation_profiles"][orientation_profile_id]
+        manifest_source = manifest.get("source")
+        require(
+            isinstance(manifest_source, dict)
+            and manifest_source.get("format") == orientation_profile["source_format"],
+            "DISPLAY_ASSET_ORIENTATION_MISMATCH",
+            "Manifest source format does not match display orientation profile",
+        )
+        require(
+            manifest.get("transform") == orientation_profile["transform"],
+            "DISPLAY_ASSET_ORIENTATION_MISMATCH",
+            "Manifest mirror transform does not match display orientation profile",
+        )
     require(
         manifest.get("expected_source_sha256") == asset["source_sha256"],
         "DISPLAY_ASSET_MISMATCH",
@@ -1039,6 +1160,17 @@ def audit_display_asset(
         "status": "pass",
         "rule_ids": ["HK-OLED-003", "HK-OLED-004", "HK-OLED-006", "HK-OLED-007"],
         "source_encoding": asset["source_encoding"],
+        "orientation_profile": orientation_profile_id,
+        "orientation": (
+            {
+                "board_id": orientation_profile["board_id"],
+                "segment_remap": orientation_profile["segment_remap"],
+                "com_scan_direction": orientation_profile["com_scan_direction"],
+                "source_format": orientation_profile["source_format"],
+            }
+            if orientation_profile is not None
+            else None
+        ),
         "source_label": asset["source_label"],
         "table_sender": asset.get("table_sender"),
         "manifest_sha256": sha256_file(manifest_path),
@@ -1113,7 +1245,7 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
         )
         if isinstance(item, dict):
             require(is_non_empty_string(item.get("name")), "INVALID_REQUEST", "Peripheral name is required")
-    validate_display_contract(request)
+    validate_display_contract(request, profile)
     if timing is not None:
         require(isinstance(timing, dict), "INVALID_REQUEST", "timing must be an object")
         require(not contains_unresolved(timing), "INVALID_REQUEST", "timing contains unresolved values")
@@ -1468,7 +1600,7 @@ def static_check(
     comment_language = validate_chinese_explanatory_comments(source)
     request = read_json(run_dir / "request.json", "RUN_INVALID")
     display_asset_audit = audit_display_asset(
-        request, source, run_dir / DISPLAY_ASSET_SNAPSHOT
+        request, source, run_dir / DISPLAY_ASSET_SNAPSHOT, profile
     )
     static_config = profile.get("static_check", {})
     spec_root_value = profile.get("spec_root")
@@ -1707,7 +1839,9 @@ def command_new_run(args: argparse.Namespace) -> dict[str, Any]:
     display_asset_audit = None
     if isinstance(asset, dict):
         display_asset_source = (args.request.resolve().parent / asset["manifest"]).resolve()
-        display_asset_audit = audit_display_asset(request, args.source, display_asset_source)
+        display_asset_audit = audit_display_asset(
+            request, args.source, display_asset_source, profile
+        )
     require(not args.run_dir.exists(), "RUN_EXISTS", f"Run directory already exists: {args.run_dir}")
     args.run_dir.mkdir(parents=True)
     source_copy = args.run_dir / "src" / "candidate.asm"

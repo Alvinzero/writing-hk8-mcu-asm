@@ -221,6 +221,11 @@ def emit_json(payload: Dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def emit_asm_db(values: Sequence[str], columns: int = 16) -> None:
+    for offset in range(0, len(values), columns):
+        print("    DB " + ",".join(values[offset : offset + columns]))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=Path)
@@ -255,9 +260,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif args.format == "hex":
         print(",".join(result["output_bytes_hex"]))
     elif args.format == "asm":
-        for value in result["output_bytes_hex"]:
-            print("    MOV A,#{}".format(value))
-            print("    CALL I2C_SEND")
+        emit_asm_db(result["output_bytes_hex"])
     else:
         print("\n".join(result["preview_rows"]))
     return 0

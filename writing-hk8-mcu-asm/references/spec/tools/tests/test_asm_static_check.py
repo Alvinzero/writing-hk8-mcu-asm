@@ -1126,6 +1126,7 @@ class AsmStaticCheckCliTests(unittest.TestCase):
                 "byte_count": 2,
                 "asset": {
                     "source_encoding": "db",
+                    "orientation_profile": "hk64s825-default-a1-c0-page-lsb-top-v1",
                     "source_label": "DISPLAY_DATA",
                     "table_sender": "SEND_DISPLAY_DATA",
                     "byte_count": 2,
@@ -1154,6 +1155,37 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, payload["findings"])
         self.assertNotIn("HK-OLED-007", self.rule_ids(payload))
         self.assertTrue(payload["table_pairs"][0]["same_256_word_page"])
+
+    def test_db_display_asset_without_orientation_profile_is_blocked(self):
+        request = {
+            "behavior": "OLED 使用查表显示 ASCII 字母 A",
+            "display": {
+                "text": "A",
+                "window": {
+                    "column_start": 0,
+                    "column_end": 1,
+                    "page_start": 0,
+                    "page_end": 0,
+                },
+                "byte_count": 2,
+                "asset": {
+                    "source_encoding": "db",
+                    "source_label": "DISPLAY_DATA",
+                    "table_sender": "SEND_DISPLAY_DATA",
+                    "byte_count": 2,
+                },
+            },
+        }
+        completed, payload = self.run_checker(
+            "ORG 0\n; TABLE_PAIR: DISPLAY_DATA,SEND_DISPLAY_DATA\n"
+            "DISPLAY_DATA:\n  DB 12H,34H\n"
+            "SEND_DISPLAY_DATA:\n  TABL\n  TABH\n  RET\nEND\n",
+            "--toolchain",
+            "builtin_compiler",
+            request=request,
+        )
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("HK-OLED-006", self.rule_ids(payload))
 
     def test_sender_start_same_page_does_not_hide_cross_page_table_instruction(self):
         completed, payload = self.run_checker(
