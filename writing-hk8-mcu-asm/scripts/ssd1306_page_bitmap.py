@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
 PAGE_FORMAT = "ssd1306-page-lsb-top"
-HEX_BYTE_RE = re.compile(r"^(?:0x)?([0-9a-fA-F]{1,2})(?:H)?$")
+HEX_BYTE_RE = re.compile(r"^(?:0x)?0?([0-9a-fA-F]{1,2})(?:H)?$")
 
 
 class AssetError(ValueError):

@@ -66,6 +66,9 @@ class Ssd1306PageBitmapTests(unittest.TestCase):
         self.assertEqual("0FCH", BITMAP.format_hex_byte(0xFC))
         self.assertEqual("80H", BITMAP.format_hex_byte(0x80))
 
+    def test_prefixed_asm_hex_literal_parses_back_to_original_byte(self) -> None:
+        self.assertEqual(0xC7, BITMAP.parse_byte("0C7H"))
+
     def test_asm_format_emits_db_rows_instead_of_inline_i2c_calls(self) -> None:
         payload = {
             "schema_version": 1,

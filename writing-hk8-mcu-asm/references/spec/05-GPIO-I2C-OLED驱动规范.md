@@ -397,6 +397,29 @@ for page in pages:
 - `transform.mirror_x_within_glyphs`、`transform.mirror_y`。
 - `expected_source_sha256`、`expected_output_sha256`。
 
+### 12.1 BDF 标准字模来源
+
+中文、ASCII 字母和数字的默认生成路径是 BDF，而不是手写行扫描常量或 U8g2 的压缩数组：
+
+```text
+BDF glyph (Unicode) -> baseline canvas -> ssd1306-page-lsb-top source bytes
+-> 已验证方向 profile -> manifest -> DB + TABL/TABH
+```
+
+使用 `scripts/bdf_to_ssd1306.py` 生成 source manifest。默认离线子集为
+`references/fonts/wenquanyi_bitmap_song_16px_ascii_date_cn.bdf`，包含可打印 ASCII
+和“年、月、号”；许可证和来源见同目录
+`NOTICE-wenquanyi-bitmap-song.txt`。完整中文字体只能按本次文本裁剪，不能把数十万
+字节完整字库写入 1K MTP。
+
+`u8g2_font_*` 是 U8g2 专有 RLE 流，不是 SSD1306 page 数据，禁止直接复制到 `DB`。
+`fontDisplay` 的 `ziku.bin`、`.PTL` 和取模 EXE 没有明确再分发许可，禁止复用其资产；
+可仅借鉴“按编码定位外部字库”的架构思路。
+
+如果数字或其他字块已有同一板级 profile 下的 E1 显示证据，可给转换器传入
+`--base-manifest`，并只为需要升级的字块指定 `--replace-label`。替换后必须重新运行
+`ssd1306_page_bitmap.py` 与完整的 manifest/DB/MAP 审计。
+
 请求中的 `display.asset` 还必须声明 manifest 相对路径、byte count 和两项 SHA256。汉字、ASCII 字母、Logo、头像、图片和多 page 字模的正式显示资产必须声明 `source_encoding=db`、`orientation_profile`、DB 的 `source_label` 和读取它的 `table_sender`，源码同时声明精确 `TABLE_PAIR`；不得使用连续 `MOV A,#byte`/`CALL I2C_SEND` 代替查表。`inline_i2c_send` 仅允许显式无文本 probe，须声明 `role=probe` 且最多 8 bytes，并豁免方向 profile。`new-run` 校验 profile 的 board、源格式和两个镜像参数后，从指定 DB 重新提取实际字节并核对输出 SHA256 及 sender，manifest 复制到 run 的 `assets/display-asset.json`；`close-loop` 重复资产审计，并在编译后使用最终 MAP 证明 table/sender 同页，以上快照都参与 evidence 与 release 失效检查。
 
 DB 源码按上述逻辑原始 byte sequence 写入，不得根据 BIN 物理排列做 nibble/word 补偿。分页查表见 [04-程序布局-ORG-查表规范.md](04-程序布局-ORG-查表规范.md)。

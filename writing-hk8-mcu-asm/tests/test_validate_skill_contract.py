@@ -17,6 +17,7 @@ PORTABLE_RUNTIME_SCRIPTS = [
     SKILL_ROOT / "scripts" / "hk8asm.py",
     SKILL_ROOT / "scripts" / "builtin_compiler.py",
     SKILL_ROOT / "scripts" / "compiler_adapter.py",
+    SKILL_ROOT / "scripts" / "bdf_to_ssd1306.py",
     SKILL_ROOT / "scripts" / "ssd1306_page_bitmap.py",
     SKILL_ROOT / "scripts" / "install.py",
     SKILL_ROOT / "scripts" / "validate_skill.py",
@@ -79,6 +80,28 @@ class ValidateSkillContractTests(unittest.TestCase):
             self.assertIn(phrase, openai_text)
         self.assertIn("内置编译模块", openai_text)
         self.assertNotIn("Generate HK8 ASM", openai_text)
+
+    def test_bdf_font_pipeline_is_packaged_with_provenance(self) -> None:
+        font_root = SKILL_ROOT / "references" / "fonts"
+        font = font_root / "wenquanyi_bitmap_song_16px_ascii_date_cn.bdf"
+        notice = font_root / "NOTICE-wenquanyi-bitmap-song.txt"
+        license_text = font_root / "COPYING-GPL-2.0.txt"
+        self.assertTrue(font.is_file())
+        self.assertTrue(notice.is_file())
+        self.assertTrue(license_text.is_file())
+        self.assertIn("CHARS 98", font.read_text(encoding="utf-8"))
+        notice_text = notice.read_text(encoding="utf-8")
+        self.assertIn("GPL v2 with font embedding exception", notice_text)
+        self.assertIn("b4bc0413cee9fb", notice_text)
+        self.assertIn("GNU GENERAL PUBLIC LICENSE", license_text.read_text(encoding="utf-8"))
+        skill_text = self.skill_text()
+        for phrase in (
+            "scripts/bdf_to_ssd1306.py",
+            "wenquanyi_bitmap_song_16px_ascii_date_cn.bdf",
+            "不能直接发送给 SSD1306",
+            "fontDisplay",
+        ):
+            self.assertIn(phrase, skill_text)
 
     def test_public_skill_surfaces_name_only_hk64s825(self) -> None:
         retired_names = ["HK64S8" + suffix for suffix in ("X", "x", "101")]
