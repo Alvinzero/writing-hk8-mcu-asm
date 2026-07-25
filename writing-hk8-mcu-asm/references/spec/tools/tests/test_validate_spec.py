@@ -128,7 +128,7 @@ class ValidateSpecCliTests(unittest.TestCase):
         completed, payload = self.run_validator(SPEC)
         self.assertEqual(completed.returncode, 0, payload)
         self.assertEqual(payload["summary"]["errors"], 0)
-        self.assertEqual(payload["checks"]["rule_count"], 83)
+        self.assertEqual(payload["checks"]["rule_count"], 84)
         self.assertEqual(payload["checks"]["instruction_variant_count"], 65)
         self.assertEqual(payload["checks"]["instruction_metadata_count"], 65)
         self.assertEqual(payload["checks"]["register_reference_count"], 96)
@@ -161,6 +161,7 @@ class ValidateSpecCliTests(unittest.TestCase):
                 "HK-I2C-005": "test_oled_ack_must_read_input_sense_not_output_latch",
                 "HK-I2C-006": "test_oled_btsz_send_bit_branch_must_preserve_msb_order",
                 "HK-OLED-005": "test_oled_initialization_requires_power_settle_delay_before_commands",
+                "HK-OLED-007": "test_text_display_inline_asset_is_blocked",
             },
         )
 

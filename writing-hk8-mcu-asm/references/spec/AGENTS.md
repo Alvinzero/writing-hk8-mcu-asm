@@ -36,6 +36,7 @@
 
 - 禁止用已退休的 `python_source_module_cli` 构建含 `DB` 的工件；`builtin_compiler` 支持 `DB` 并可完成编译 release。
 - 禁止对 OLED/字库 `DB` 做 nibble swap、word swap 或依据 BIN 的补偿。
+- 禁止把汉字、ASCII 字母、Logo、头像、图片或多 page 字模的正式显示数据展开成连续立即数发送；必须使用 `DB + TABL/TABH`。立即数只允许显式无文本 probe，且最多 8 bytes。
 - 禁止把当前板 5x7 ASCII 的单 page bit 反转结论直接套用到 8x16、16x16、汉字或其他多 page 资产；多页垂直镜像必须同时处理 page 顺序和 byte bit 顺序。
 - 禁止以整行逆序修复“文本顺序正确、每个字符左右镜像”；水平修正必须限制在 manifest 声明的各字符块内部。
 - 禁止让一个跨页通用 `TABL/TABH` 函数读取多个 256-word 页。
@@ -66,6 +67,8 @@
 - MAP `0x0100` 对应 BIN byte offset `0x0200`。
 
 ### 4.2 DB 与查表
+
+汉字、ASCII 字母、Logo、头像、图片和多 page 字模的正式显示资产必须以 `DB` 存储，并在请求中声明 `source_encoding=db`、`source_label`、`table_sender`；源码必须声明精确 `TABLE_PAIR`。这是一条生成与 release 门禁，不得因立即数字节哈希正确而豁免。
 
 对源码：
 
@@ -111,7 +114,7 @@
 
        python scripts/hk8asm.py close-loop --run-dir .hk8asm/run-id
 
-7. 静态检查和内置目标编译 0 warning 后执行 release，并保存源码/产物/evidence hash。
+7. 含查表项目先做源码预检，目标编译生成 MAP 后再次检查 table/sender 同页；最终静态检查和内置目标编译 0 warning 后执行 release，并保存源码/产物/evidence hash。
 8. 编译 release 不要求烧录、回读或实板验收；只有用户明确要求时才继续硬件 checklist。
 
 ## 6. 修改工作流
@@ -121,7 +124,7 @@
 - 判定文件角色：`verified`、`probe`、`example`、`production`。
 - 对 `verified` 文件优先复制为新实验文件，不在原文件试错。
 - 对 DB、ORG、ACK 序列、COM 映射的修改必须给出 before/after、规则 ID、影响地址和回归步骤。
-- 对自定义或多 page OLED 字模的修改必须保存 `ssd1306_page_bitmap.py` manifest、源/输出 SHA256、字符块宽度和点阵预览；`new-run` 必须从 ASM 指定例程或 DB 重新提取字节并与输出 SHA256 绑定。
+- 对自定义或多 page OLED 字模的修改必须保存 `ssd1306_page_bitmap.py` manifest、源/输出 SHA256、字符块宽度和点阵预览；`new-run` 必须从 ASM 指定 DB 重新提取字节并与输出 SHA256 绑定。
 - 不得顺手格式化或重排大表，除非任务明确要求且 hash/byte count 回归通过。
 
 ## 7. 审查输出格式

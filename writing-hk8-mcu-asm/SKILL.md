@@ -108,7 +108,8 @@ WDT 未明确关闭时，任何可见延时、长忙等或周期循环必须插�
 - 当前板 5x7 ASCII 数字/斜杠已用 `2026/7/24` 实板验证：字符按文本顺序发送，每个字符保持标准 5 列加 1 空列的原始列顺序；标准 5x7 列字节必须先做 bit 顺序反转，再作为 SSD1306 page byte 发送。该结论只覆盖单 page 的标准 5x7 常量，禁止直接推广到 8x16、16x16、汉字、Logo 或其他多 page 资产。
 - 自定义、多 page 或混合字符宽度的字模在创建候选源码前，必须建立资产清单并运行 `python scripts/ssd1306_page_bitmap.py <asset-manifest.json>`。清单必须固定宽高、按文本顺序排列的字符块及各自宽度、源格式 `ssd1306-page-lsb-top`、逐字符水平变换、垂直变换、源/输出 byte count 和 SHA256；转换器输出的点阵预览必须保持文本块顺序。
 - 水平和垂直修正必须按像素坐标定义：`mirror_x_within_glyphs` 只反转每个字符块内部的列，不得反转整行；多 page 的 `mirror_y` 必须反转全部像素行，等价于交换 page 顺序并反转每个 byte 的 bit 顺序，不能只交换 page 或只做 bit 反转。
-- 请求中的多 page `display` 必须提供 `display.asset`，至少包含相对 manifest 路径、`source_encoding`、`source_label`、byte count 和源/输出 SHA256。`new-run` 必须从 ASM 的指定例程或 DB 重新提取实际显示字节，与转换器输出逐字节哈希一致后才允许进入静态检查；manifest 作为 run 快照参与 release hash 门禁。
+- 汉字、ASCII 字母、Logo、头像、图片及多 page 字模的正式显示数据默认且强制使用 `DB + TABL/TABH` 查表，不得展开成连续 `MOV A,#xxH / CALL I2C_SEND`。请求中的 `display.asset` 必须写 `source_encoding: "db"`、DB 的 `source_label` 和查表函数 `table_sender`；源码必须有精确的 `; 查表配对 TABLE_PAIR: TABLE,SENDER`。`inline_i2c_send` 仅允许用户明确要求的无文本总线/方向探针，须声明 `role: "probe"` 且最多 8 bytes，不能作为正式文字或图片 release。
+- 上述显示资产还必须提供相对 manifest 路径、byte count 和源/输出 SHA256。`new-run` 从指定 DB 重新提取实际字节并核对转换输出，再检查 sender 含 `TABL -> 重载索引 -> TABH`；`close-loop` 必须在编译后使用最终 MAP 证明每个 table/sender pair 同一 256-word page，最终静态 evidence 为 0 warning，manifest 作为 run 快照参与 release hash 门禁。
 - 排查方向错误时，分别判断控制器整屏列/行映射、同一行中字块排列顺序、单个字模内部列方向，不得把三者混为一次整行翻转。使用左右和上下均不对称的测试图，每次只改变一个变量并记录实板结果；字块位置正确但每个字块左右镜像时，不得交换字块顺序。
 - 当文本顺序正确、但每个字符都上下和左右镜像时，保持 `A1H + C0H` 和文本块顺序不变，在资产层启用逐字符 `mirror_x_within_glyphs` 与 `mirror_y`；不得改成整行逆序。任何新组合在实板复验前只能标为候选，不得宣称已验证。
 - 每个 GDDRAM 数据字节必须使用 SSD1306 page 格式：bit0 是该 page 顶部像素，bit7 是该 page 底部像素；禁止把字模按普通横向行扫描直接发送。

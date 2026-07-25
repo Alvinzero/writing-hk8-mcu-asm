@@ -44,6 +44,7 @@
 - [ ] 已复核 `BTSZ R,b` 是 bit=0 跳过下一条，I2C bit 发送分支方向未反写。
 - [ ] 5x7 单 page 的 bit 反转结论没有套用到 8x16、16x16 或其他多 page 字模。
 - [ ] 自定义/多 page/混合宽度字模已有 `ssd1306_page_bitmap.py` manifest，字符块顺序和宽度、两个镜像轴、byte count、源/输出 SHA256 均已固定。
+- [ ] 汉字、ASCII 字母、Logo、头像、图片和多 page 字模已规划为 `DB + TABL/TABH`；请求包含 `source_encoding=db`、`source_label`、`table_sender`，源码将声明精确 `TABLE_PAIR`。
 - [ ] GDDRAM 全屏填充为 1024 字节；8 位计数器实现时低字节 `00H` 配合高计数 `04H` 或等价计数已说明。
 - [ ] clock stretching、NACK/retry、bus recovery 策略已决定。
 

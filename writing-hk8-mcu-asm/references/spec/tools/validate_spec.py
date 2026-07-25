@@ -93,6 +93,7 @@ AUTOMATED_RULE_TESTS = {
     "HK-I2C-005": "test_oled_ack_must_read_input_sense_not_output_latch",
     "HK-I2C-006": "test_oled_btsz_send_bit_branch_must_preserve_msb_order",
     "HK-OLED-005": "test_oled_initialization_requires_power_settle_delay_before_commands",
+    "HK-OLED-007": "test_text_display_inline_asset_is_blocked",
 }
 
 
@@ -320,8 +321,8 @@ def check_rules(
 
     rules = document.get("rules", [])
     checks["rule_count"] = len(rules) if isinstance(rules, list) else 0
-    if checks["rule_count"] != 83:
-        add_finding(findings, "rule-count", rules_path, f"expected 83 rules, found {checks['rule_count']}")
+    if checks["rule_count"] != 84:
+        add_finding(findings, "rule-count", rules_path, f"expected 84 rules, found {checks['rule_count']}")
     ids = collect_valid_rule_ids(rules, schema)
     duplicate_ids = sorted(
         value for value, count in Counter(ids).items() if count > 1

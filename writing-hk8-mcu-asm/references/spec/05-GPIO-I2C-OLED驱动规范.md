@@ -94,7 +94,7 @@ python scripts/ssd1306_page_bitmap.py asset-manifest.json
 
 工具必须输出源/目标 byte count、SHA256、文本块顺序和带块边界的点阵预览。未经过新一轮烧录复验的输出仍是 release 候选，不得写成实板已验证。
 
-适用规则：`HK-GPIO-001`、`HK-I2C-001..006`、`HK-OLED-001..006`。
+适用规则：`HK-GPIO-001`、`HK-I2C-001..006`、`HK-OLED-001..007`。
 
 ## 2. GPIO 初始化顺序
 
@@ -390,7 +390,7 @@ for page in pages:
 - `transform.mirror_x_within_glyphs`、`transform.mirror_y`。
 - `expected_source_sha256`、`expected_output_sha256`。
 
-请求中的 `display.asset` 还必须声明 manifest 相对路径、ASM 中实际数据的 `source_encoding` 与 `source_label`、byte count 和两项 SHA256。`new-run` 从该例程的 `MOV A,#byte`/`CALL I2C_SEND` 对或指定 DB 表重新提取实际字节并核对输出 SHA256；manifest 复制到 run 的 `assets/display-asset.json`，参与 evidence 快照和 release 失效检查。
+请求中的 `display.asset` 还必须声明 manifest 相对路径、byte count 和两项 SHA256。汉字、ASCII 字母、Logo、头像、图片和多 page 字模的正式显示资产必须声明 `source_encoding=db`、DB 的 `source_label` 和读取它的 `table_sender`，源码同时声明精确 `TABLE_PAIR`；不得使用连续 `MOV A,#byte`/`CALL I2C_SEND` 代替查表。`inline_i2c_send` 仅允许显式无文本 probe，须声明 `role=probe` 且最多 8 bytes。`new-run` 从指定 DB 重新提取实际字节并核对输出 SHA256及 sender，manifest 复制到 run 的 `assets/display-asset.json`；`close-loop` 编译后使用最终 MAP 证明 table/sender 同页，两者都参与 evidence 与 release 失效检查。
 
 DB 源码按上述逻辑原始 byte sequence 写入，不得根据 BIN 物理排列做 nibble/word 补偿。分页查表见 [04-程序布局-ORG-查表规范.md](04-程序布局-ORG-查表规范.md)。
 
@@ -439,6 +439,7 @@ DB 源码按上述逻辑原始 byte sequence 写入，不得根据 BIN 物理排
 - [ ] 自定义/多 page/混合宽度字模已通过 `ssd1306_page_bitmap.py`；manifest、点阵预览、byte count、源/输出 SHA256 和 ASM 实际发送字节一致。
 - [ ] 水平镜像只在各字符块内部反转列；垂直镜像按全部像素行处理，多 page 时同时完成 page 交换和 byte bit 反转。
 - [ ] 多字符/汉字/图片块按 page → 字块/图片块 → 列发送；两个 16x16 汉字的 64 字节顺序为 page0 字1、page0 字2、page1 字1、page1 字2。
+- [ ] 正式汉字、ASCII 字母、Logo、头像、图片和多 page 字模使用 `DB + TABL/TABH`，请求含 `table_sender`，源码含精确 `TABLE_PAIR`。
 - [ ] DB 原始顺序、`builtin_compiler` 构建、MAP 同页审计完成。
 - [ ] 静态检查和目标编译 0 error / 0 warning，`release` 返回 `RELEASED`。
 

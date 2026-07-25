@@ -358,7 +358,13 @@ class ValidateSkillContractTests(unittest.TestCase):
             (SPEC_ROOT / "rules" / "asm-rules.json").read_text(encoding="utf-8")
         )
         by_id = {item["rule_id"]: item for item in rules["rules"]}
-        for rule_id in ("HK-I2C-005", "HK-I2C-006", "HK-OLED-005", "HK-OLED-006"):
+        for rule_id in (
+            "HK-I2C-005",
+            "HK-I2C-006",
+            "HK-OLED-005",
+            "HK-OLED-006",
+            "HK-OLED-007",
+        ):
             self.assertIn(rule_id, by_id)
             self.assertEqual("BLOCKER", by_id[rule_id]["severity"])
         self.assertIn("PB_INS", by_id["HK-I2C-002"]["good_example"])
@@ -366,7 +372,30 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("BTSZ", by_id["HK-I2C-006"]["requirement"])
         self.assertIn("上电稳定延时", by_id["HK-OLED-005"]["requirement"])
         self.assertIn("ssd1306_page_bitmap.py", by_id["HK-OLED-006"]["requirement"])
-        self.assertIn("ASM 指定例程或 DB 表", by_id["HK-OLED-006"]["requirement"])
+        self.assertIn("ASM 指定 DB 表", by_id["HK-OLED-006"]["requirement"])
+        self.assertIn("必须使用 DB", by_id["HK-OLED-007"]["requirement"])
+        self.assertIn("table_sender", by_id["HK-OLED-007"]["requirement"])
+        self.assertIn("最多 8 bytes", by_id["HK-OLED-007"]["requirement"])
+
+    def test_text_and_image_assets_default_to_db_table_lookup(self) -> None:
+        combined = "\n".join(
+            (
+                self.skill_text(),
+                self.spec_text("04-程序布局-ORG-查表规范.md"),
+                self.spec_text("05-GPIO-I2C-OLED驱动规范.md"),
+            )
+        )
+        for phrase in (
+            "汉字、ASCII 字母、Logo、头像、图片",
+            "DB + TABL/TABH",
+            "source_encoding: \"db\"",
+            "table_sender",
+            "TABLE_PAIR",
+            "inline_i2c_send",
+            "最多 8 bytes",
+            "最终 MAP",
+        ):
+            self.assertIn(phrase, combined)
 
     def test_simple_tasks_use_targeted_reference_lookup_without_extra_artifacts(self) -> None:
         skill_text = self.skill_text()
@@ -576,7 +605,7 @@ class ValidateSkillContractTests(unittest.TestCase):
         coding_spec = self.spec_text("01-HK64S825-ASM编码规范.md")
         self.assertNotIn("hardware acceptance required", coding_spec)
 
-    def test_spec_surfaces_report_83_machine_rules(self) -> None:
+    def test_spec_surfaces_report_84_machine_rules(self) -> None:
         document_paths = (
             "README.md",
             "09-AI智能体生成与审查协议.md",
@@ -585,12 +614,12 @@ class ValidateSkillContractTests(unittest.TestCase):
         for relative_path in document_paths:
             with self.subTest(relative_path=relative_path):
                 text = self.spec_text(relative_path)
-                self.assertIn("83 条", text)
+                self.assertIn("84 条", text)
                 self.assertNotIn("79 条", text)
                 self.assertNotIn("78 条", text)
                 self.assertNotIn("70 条", text)
         evidence_index = self.spec_text("10-证据索引与待确认事项.md")
-        self.assertIn("| 规则数 | 83 |", evidence_index)
+        self.assertIn("| 规则数 | 84 |", evidence_index)
         self.assertNotIn("| 规则数 | 79 |", evidence_index)
         self.assertNotIn("| 规则数 | 78 |", evidence_index)
         self.assertNotIn("| 规则数 | 70 |", evidence_index)

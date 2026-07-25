@@ -42,6 +42,16 @@ GPIO_OUTPUT_DEPENDENCY_RE = re.compile(
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 ASM_LABEL_RE = re.compile(r"^[A-Za-z_.$?][A-Za-z0-9_.$?]*$")
+DISPLAY_TABLE_TEXT_RE = re.compile(r"[A-Za-z\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
+DISPLAY_IMAGE_REQUEST_RE = re.compile(
+    r"(?i)(?:图片|图像|位图|图标|头像|logo|bitmap|image|icon|avatar)"
+)
+DISPLAY_TABLE_PAIR_RE = re.compile(
+    r"(?mi)^[ \t]*;[^\r\n]*\bTABLE_PAIR\s*:\s*"
+    r"([A-Za-z_.$?][A-Za-z0-9_.$?]*)\s*[, :]\s*"
+    r"([A-Za-z_.$?][A-Za-z0-9_.$?]*)"
+)
+MAX_INLINE_DISPLAY_PROBE_BYTES = 8
 DISPLAY_ASSET_SNAPSHOT = Path("assets") / "display-asset.json"
 APPROVED_TECHNICAL_TOKENS = {
     "A", "ACK", "ASM", "ASSEMBLER", "BIN", "BUILTIN", "CHIP", "CLOBBERS",
@@ -745,6 +755,20 @@ def display_geometry(display: dict[str, Any]) -> tuple[int, int, int]:
     return width, pages, width * pages
 
 
+def display_requires_table_asset(request: dict[str, Any], display: dict[str, Any]) -> bool:
+    text = display.get("text")
+    behavior = request.get("behavior", "")
+    _width, pages, _byte_count = display_geometry(display)
+    return (
+        pages > 1
+        or (isinstance(text, str) and DISPLAY_TABLE_TEXT_RE.search(text) is not None)
+        or (
+            isinstance(behavior, str)
+            and DISPLAY_IMAGE_REQUEST_RE.search(behavior) is not None
+        )
+    )
+
+
 def validate_display_contract(request: dict[str, Any]) -> None:
     display = request.get("display")
     if display is None:
@@ -770,11 +794,12 @@ def validate_display_contract(request: dict[str, Any]) -> None:
         "display.byte_count does not match the address window",
     )
     asset = display.get("asset")
-    if pages > 1:
+    requires_table_asset = display_requires_table_asset(request, display)
+    if requires_table_asset:
         require(
             isinstance(asset, dict),
             "INVALID_REQUEST",
-            "multi-page display assets require display.asset",
+            "text, image, and multi-page display assets require display.asset",
         )
     if asset is None:
         return
@@ -796,8 +821,9 @@ def validate_display_contract(request: dict[str, Any]) -> None:
         "INVALID_REQUEST",
         "display.asset.manifest must be a JSON file",
     )
+    source_encoding = asset.get("source_encoding")
     require(
-        asset.get("source_encoding") in {"inline_i2c_send", "db"},
+        source_encoding in {"inline_i2c_send", "db"},
         "INVALID_REQUEST",
         "display.asset.source_encoding must be inline_i2c_send or db",
     )
@@ -819,6 +845,23 @@ def validate_display_contract(request: dict[str, Any]) -> None:
         "INVALID_REQUEST",
         "display.asset.byte_count must equal display.byte_count",
     )
+    if source_encoding == "db":
+        table_sender = asset.get("table_sender")
+        require(
+            isinstance(table_sender, str)
+            and ASM_LABEL_RE.fullmatch(table_sender) is not None,
+            "INVALID_REQUEST",
+            "DB display assets require display.asset.table_sender",
+        )
+    else:
+        require(
+            not requires_table_asset
+            and asset.get("role") == "probe"
+            and text is None
+            and byte_count <= MAX_INLINE_DISPLAY_PROBE_BYTES,
+            "INVALID_REQUEST",
+            "inline_i2c_send is limited to explicit non-text probe assets of at most 8 bytes; use db for text and images",
+        )
 
 
 def parse_asm_byte_token(token: str) -> int:
@@ -877,6 +920,37 @@ def extract_db_asset_bytes(source_text: str, label: str) -> list[int]:
         for token in match.group(1).split(","):
             output.append(parse_asm_byte_token(token))
     return output
+
+
+def audit_display_table_sender(
+    source_text: str, table_label: str, sender_label: str
+) -> None:
+    declared_pairs = {
+        (match.group(1).upper(), match.group(2).upper())
+        for match in DISPLAY_TABLE_PAIR_RE.finditer(source_text)
+    }
+    require(
+        (table_label.upper(), sender_label.upper()) in declared_pairs,
+        "DISPLAY_TABLE_INVALID",
+        f"DB display asset requires '; 查表配对 TABLE_PAIR: {table_label},{sender_label}'",
+    )
+    region = source_region_after_label(source_text, sender_label)
+    end = re.search(r"(?mi)^[ \t]*RET[ \t]*(?:;.*)?$", region)
+    require(
+        end is not None,
+        "DISPLAY_TABLE_INVALID",
+        f"Display table sender has no RET: {sender_label}",
+    )
+    routine = region[: end.start()]
+    operations = [
+        operation.upper()
+        for operation in re.findall(r"(?mi)^[ \t]*(TABL|TABH)\b", routine)
+    ]
+    require(
+        operations == ["TABL", "TABH"],
+        "DISPLAY_TABLE_INVALID",
+        f"Display table sender must execute one TABL followed by one TABH per loop: {sender_label}",
+    )
 
 
 def audit_display_asset(
@@ -945,6 +1019,11 @@ def audit_display_asset(
         source_bytes = extract_inline_i2c_asset_bytes(source_text, asset["source_label"])
     else:
         source_bytes = extract_db_asset_bytes(source_text, asset["source_label"])
+        audit_display_table_sender(
+            source_text,
+            asset["source_label"],
+            asset["table_sender"],
+        )
     require(
         len(source_bytes) == result["output_byte_count"],
         "DISPLAY_ASSET_MISMATCH",
@@ -958,7 +1037,10 @@ def audit_display_asset(
     )
     return {
         "status": "pass",
-        "rule_ids": ["HK-OLED-003", "HK-OLED-004", "HK-OLED-006"],
+        "rule_ids": ["HK-OLED-003", "HK-OLED-004", "HK-OLED-006", "HK-OLED-007"],
+        "source_encoding": asset["source_encoding"],
+        "source_label": asset["source_label"],
+        "table_sender": asset.get("table_sender"),
         "manifest_sha256": sha256_file(manifest_path),
         "source_byte_count": result["source_byte_count"],
         "source_sha256": result["source_sha256"],
@@ -1375,7 +1457,14 @@ def save_failure(run_dir: Path, run: dict[str, Any], stage: str, code: str, mess
     write_json(run_dir / "run.json", run)
 
 
-def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+def static_check(
+    source: Path,
+    profile: dict[str, Any],
+    run_dir: Path,
+    *,
+    map_files: list[Path] | None = None,
+    defer_table_map: bool = False,
+) -> dict[str, Any]:
     comment_language = validate_chinese_explanatory_comments(source)
     request = read_json(run_dir / "request.json", "RUN_INVALID")
     display_asset_audit = audit_display_asset(
@@ -1399,12 +1488,16 @@ def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[s
             str(run_dir / "profile.json"),
             "--json",
         ]
-        for map_file in static_config.get("map_files", []):
-            command.extend(["--map", map_file])
+        selected_map_files = (
+            map_files if map_files is not None else static_config.get("map_files", [])
+        )
+        for map_file in selected_map_files:
+            command.extend(["--map", str(map_file)])
         for table_pair in static_config.get("table_pairs", []):
             command.extend(["--table-pair", table_pair])
         strict_warnings = static_config.get("strict_warnings", False)
-        if strict_warnings:
+        effective_strict_warnings = strict_warnings and not defer_table_map
+        if effective_strict_warnings:
             command.append("--strict-warnings")
         completed = subprocess.run(
             command,
@@ -1460,13 +1553,29 @@ def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[s
             severity_counts[severity_summary_keys[finding["severity"]]] += 1
         if severity_counts["blockers"] or severity_counts["errors"]:
             expected_exit_code = 2
-        elif strict_warnings and severity_counts["warnings"]:
+        elif effective_strict_warnings and severity_counts["warnings"]:
             expected_exit_code = 1
         else:
             expected_exit_code = 0
         summary = {**severity_counts, "exit_code": expected_exit_code}
         if result.get("summary") != summary or completed.returncode != expected_exit_code:
             reject_checker_payload()
+        if defer_table_map:
+            deferred_warnings = [
+                finding
+                for finding in checker_findings
+                if finding["severity"] == "WARNING"
+            ]
+            if any(
+                finding["rule_id"] != "HK-LAYOUT-008"
+                or "no final MAP" not in finding["evidence"]
+                for finding in deferred_warnings
+            ):
+                raise GateError(
+                    "STATIC_CHECK_FAILED",
+                    "Pre-build static checker found warnings unrelated to the pending MAP audit",
+                    details=result,
+                )
 
         checker_audits = result.get("semantic_audits")
         expected_audit_rules = {
@@ -1540,6 +1649,10 @@ def static_check(source: Path, profile: dict[str, Any], run_dir: Path) -> dict[s
             "summary": summary,
             "comment_language": comment_language,
         }
+        if isinstance(result.get("table_pairs"), list):
+            static_result["table_pairs"] = result["table_pairs"]
+        if defer_table_map:
+            static_result["deferred_table_map"] = True
         if (
             isinstance(checker_audits, dict)
             and isinstance(checker_audits.get("timing"), list)
@@ -1634,6 +1747,20 @@ def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
     run, profile, config, request = load_run(run_dir)
     source = run_dir / "src" / "candidate.asm"
     require(source.is_file(), "SOURCE_NOT_FOUND", "Run candidate source is missing")
+    try:
+        source_text = source.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError) as exc:
+        raise GateError("SOURCE_NOT_FOUND", f"Run candidate source cannot be read: {exc}") from exc
+    requires_table_map = DISPLAY_TABLE_PAIR_RE.search(source_text) is not None
+    if requires_table_map:
+        require(
+            isinstance(profile.get("static_check"), dict)
+            and bool(profile["static_check"])
+            and isinstance(profile.get("spec_root"), str)
+            and bool(profile["spec_root"]),
+            "STATIC_CHECK_FAILED",
+            "DB table release requires the packaged static checker for final MAP proof",
+        )
     current_hash = sha256_file(source)
     if current_hash != run.get("source_sha256"):
         run["source_sha256"] = current_hash
@@ -1647,7 +1774,12 @@ def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
     write_json(run_dir / "run.json", run)
 
     try:
-        static_result = static_check(source, profile, run_dir)
+        static_result = static_check(
+            source,
+            profile,
+            run_dir,
+            defer_table_map=requires_table_map,
+        )
         run_doctor(profile, config)
     except GateError as exc:
         save_failure(run_dir, run, "preflight", exc.code, exc.message)
@@ -1691,6 +1823,30 @@ def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
     except GateError as exc:
         save_failure(run_dir, run, "compile", exc.code, exc.message)
         raise
+
+    if requires_table_map:
+        try:
+            artifacts = compile_result.get("artifacts", {})
+            require(
+                isinstance(artifacts, dict),
+                "STATIC_CHECK_FAILED",
+                "Compiler artifact manifest is invalid",
+            )
+            map_path = resolve_run_artifact_path(run_dir, artifacts.get("map_path"))
+            require(
+                map_path is not None and map_path.is_file(),
+                "STATIC_CHECK_FAILED",
+                "DB table release requires the compiler MAP artifact",
+            )
+            static_result = static_check(
+                source,
+                profile,
+                run_dir,
+                map_files=[map_path],
+            )
+        except GateError as exc:
+            save_failure(run_dir, run, "postbuild-static", exc.code, exc.message)
+            raise
 
     run["state"] = "BUILT"
     run["artifact_sha256"] = artifact_hash

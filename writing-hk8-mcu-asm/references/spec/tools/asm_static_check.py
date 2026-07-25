@@ -58,6 +58,12 @@ TABLE_PAIR_RE = re.compile(
     r"\bTABLE_PAIR\s*:\s*([A-Za-z_.$?][\w.$?]*)\s*[, :]\s*([A-Za-z_.$?][\w.$?]*)",
     re.IGNORECASE,
 )
+DISPLAY_TABLE_TEXT_RE = re.compile(r"[A-Za-z\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
+DISPLAY_IMAGE_REQUEST_RE = re.compile(
+    r"(?:图片|图像|位图|图标|头像|logo|bitmap|image|icon|avatar)",
+    re.IGNORECASE,
+)
+MAX_INLINE_DISPLAY_PROBE_BYTES = 8
 LABEL_RE = re.compile(r"^\s*([A-Za-z_.$?][\w.$?]*)\s*:\s*(.*)$")
 MAP_SYMBOL_RE = re.compile(r"^\s*(\S+)\s+0x([0-9A-Fa-f]+)\s+", re.MULTILINE)
 NUMERIC_TARGET_RE = re.compile(r"^(?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|[0-9]+)\b", re.IGNORECASE)
@@ -750,7 +756,7 @@ def audit_table_pairs(
                 None,
                 "DB and TABL/TABH are present but no TABLE_PAIR declaration was supplied",
                 "The table word and executing table-read routine cannot be paired for same-page proof.",
-                "Add '; TABLE_PAIR: TABLE,SENDER' or --table-pair TABLE:SENDER, then provide the final MAP.",
+                "Add '; 查表配对 TABLE_PAIR: TABLE,SENDER' or --table-pair TABLE:SENDER, then provide the final MAP.",
             )
         )
 
@@ -870,6 +876,98 @@ def audit_table_pairs(
             )
         )
     return pair_results, findings
+
+
+def audit_display_table_contract(
+    request: dict[str, Any] | None,
+    request_path: Path | None,
+    table_pairs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not isinstance(request, dict) or not isinstance(request.get("display"), dict):
+        return []
+    display = request["display"]
+    text = display.get("text")
+    behavior = request.get("behavior", "")
+    window = display.get("window")
+    pages = None
+    if isinstance(window, dict):
+        page_start = parse_number(str(window.get("page_start", "")))
+        page_end = parse_number(str(window.get("page_end", "")))
+        if page_start is not None and page_end is not None and page_start <= page_end:
+            pages = page_end - page_start + 1
+    requires_table = (
+        (pages is not None and pages > 1)
+        or (isinstance(text, str) and DISPLAY_TABLE_TEXT_RE.search(text) is not None)
+        or (
+            isinstance(behavior, str)
+            and DISPLAY_IMAGE_REQUEST_RE.search(behavior) is not None
+        )
+    )
+    asset = display.get("asset")
+    source = request_path or "<request>"
+    if not isinstance(asset, dict):
+        if not requires_table:
+            return []
+        return [
+            make_finding(
+                "HK-OLED-007",
+                "BLOCKER",
+                source,
+                None,
+                "text, image, or multi-page display request has no display.asset contract",
+                "The display payload can fall back to untracked immediate-byte writes.",
+                "Add display.asset with source_encoding=db, source_label, table_sender, byte count, and hashes.",
+            )
+        ]
+
+    encoding = asset.get("source_encoding")
+    byte_count = asset.get("byte_count")
+    inline_probe = (
+        encoding == "inline_i2c_send"
+        and asset.get("role") == "probe"
+        and text is None
+        and isinstance(byte_count, int)
+        and not isinstance(byte_count, bool)
+        and 0 < byte_count <= MAX_INLINE_DISPLAY_PROBE_BYTES
+        and not requires_table
+    )
+    if encoding != "db":
+        if inline_probe:
+            return []
+        return [
+            make_finding(
+                "HK-OLED-007",
+                "BLOCKER",
+                source,
+                None,
+                f"display asset uses source_encoding={encoding!r}",
+                "Production text and image bytes are not stored in an auditable ROM table.",
+                "Use source_encoding=db. Reserve inline_i2c_send for an explicit non-text probe of at most 8 bytes.",
+            )
+        ]
+
+    table_label = asset.get("source_label")
+    sender_label = asset.get("table_sender")
+    matching_pair = any(
+        isinstance(table_label, str)
+        and isinstance(sender_label, str)
+        and pair.get("table", "").upper() == table_label.upper()
+        and pair.get("sender", "").upper() == sender_label.upper()
+        for pair in table_pairs
+    )
+    if matching_pair:
+        return []
+    return [
+        make_finding(
+            "HK-OLED-007",
+            "BLOCKER",
+            source,
+            None,
+            f"DB display asset pair is missing: {table_label!r}:{sender_label!r}",
+            "The declared asset table is not bound to a concrete TABL/TABH sender for MAP proof.",
+            "Declare display.asset.table_sender and add the exact '; 查表配对 TABLE_PAIR: TABLE,SENDER' source comment.",
+        )
+    ]
 
 
 def symbol_token(value: str) -> str:
@@ -1225,6 +1323,9 @@ def main(argv: list[str] | None = None) -> int:
 
     table_pairs, pair_findings = audit_table_pairs(files, args.table_pair, [path.resolve() for path in args.maps])
     findings.extend(pair_findings)
+    findings.extend(
+        audit_display_table_contract(request_context, args.request, table_pairs)
+    )
     loop_audit_calls = 0
     gpio_audit_calls = 0
     oled_i2c_audit_calls = 0

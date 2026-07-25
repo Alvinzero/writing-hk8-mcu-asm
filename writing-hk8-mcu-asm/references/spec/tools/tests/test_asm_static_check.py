@@ -1078,6 +1078,83 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         self.assertIn("HK-TABLE-005", self.rule_ids(payload))
         self.assertEqual(payload["table_pairs"][0]["evidence"], "map")
 
+    def test_text_display_inline_asset_is_blocked(self):
+        request = {
+            "behavior": "OLED 显示 ASCII 字母 A",
+            "display": {
+                "text": "A",
+                "window": {
+                    "column_start": 0,
+                    "column_end": 1,
+                    "page_start": 0,
+                    "page_end": 0,
+                },
+                "byte_count": 2,
+                "asset": {
+                    "source_encoding": "inline_i2c_send",
+                    "source_label": "SHOW_A",
+                    "byte_count": 2,
+                },
+            },
+        }
+        completed, payload = self.run_checker(
+            "ORG 0\nSTART:\n  CLRWDT\n  JMP START\nEND\n",
+            "--toolchain",
+            "builtin_compiler",
+            request=request,
+        )
+        self.assertEqual(completed.returncode, 2)
+        findings = [
+            finding
+            for finding in payload["findings"]
+            if finding["rule_id"] == "HK-OLED-007"
+        ]
+        self.assertTrue(findings, payload["findings"])
+        self.assertTrue(all(item["severity"] == "BLOCKER" for item in findings))
+
+    def test_db_display_asset_pair_passes_with_final_map(self):
+        request = {
+            "behavior": "OLED 使用查表显示 ASCII 字母 A",
+            "display": {
+                "text": "A",
+                "window": {
+                    "column_start": 0,
+                    "column_end": 1,
+                    "page_start": 0,
+                    "page_end": 0,
+                },
+                "byte_count": 2,
+                "asset": {
+                    "source_encoding": "db",
+                    "source_label": "DISPLAY_DATA",
+                    "table_sender": "SEND_DISPLAY_DATA",
+                    "byte_count": 2,
+                },
+            },
+        }
+        source = (
+            "ORG 0x0000\n"
+            "START:\n  CALL SEND_DISPLAY_DATA\n"
+            "HALT:\n  CLRWDT\n  JMP HALT\n"
+            "; TABLE_PAIR: DISPLAY_DATA,SEND_DISPLAY_DATA\n"
+            "ORG 0x0100\nDISPLAY_DATA:\n  DB 12H,34H\n"
+            "SEND_DISPLAY_DATA:\n"
+            "  MOV A,#00H\n  TABL\n  CALL CONSUME\n"
+            "  MOV A,#00H\n  TABH\n  CALL CONSUME\n  RET\n"
+            "CONSUME:\n  RET\nEND\n"
+        )
+        completed, payload = self.run_checker(
+            source,
+            "--toolchain",
+            "builtin_compiler",
+            "--strict-warnings",
+            map_text="DISPLAY_DATA 0x0100 256\nSEND_DISPLAY_DATA 0x0101 257\n",
+            request=request,
+        )
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertNotIn("HK-OLED-007", self.rule_ids(payload))
+        self.assertTrue(payload["table_pairs"][0]["same_256_word_page"])
+
     def test_sender_start_same_page_does_not_hide_cross_page_table_instruction(self):
         completed, payload = self.run_checker(
             "; TABLE_PAIR: TABLE0,SEND0\n"

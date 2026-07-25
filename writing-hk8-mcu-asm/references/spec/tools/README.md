@@ -9,7 +9,7 @@ python tools/validate_spec.py <spec-root>
 python tools/validate_spec.py <spec-root> --json
 ```
 
-检查范围包括：必需文件、UTF-8、JSON/Schema、83 条规则、65 个指令探针、65 条 instruction metadata、407 行/96 个 register metadata、INC/metadata OPEN、Markdown 相对链接、模板源码哈希，以及模板静态检查的正反例。
+检查范围包括：必需文件、UTF-8、JSON/Schema、84 条规则、65 个指令探针、65 条 instruction metadata、407 行/96 个 register metadata、INC/metadata OPEN、Markdown 相对链接、模板源码哈希，以及模板静态检查的正反例。
 
 退出码：
 
@@ -30,7 +30,7 @@ python tools/asm_static_check.py main.asm `
 表项目也可在源码中声明：
 
 ```asm
-; TABLE_PAIR: TABLE0,SEND_TABLE0
+; 查表配对 TABLE_PAIR: TABLE0,SEND_TABLE0
 ```
 
 检查器比较的是表地址与 sender 内实际 `TABL/TABH` 指令地址，而不只比较 sender 起始标签；因此能发现 sender 从页尾跨页的情况。MAP 符号行支持：

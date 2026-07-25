@@ -130,6 +130,22 @@ BIN little-endian bytes = [Y, nibble_swap(X)]
 
 ## 8. 运行时 DB 规则：原始字节，不做补偿
 
+### 正式显示资产默认查表
+
+汉字、ASCII 字母、Logo、头像、图片和跨 page 字模的正式显示数据必须写入 `DB`，通过 `TABL/TABH` 发送。连续 `MOV A,#byte` / `CALL I2C_SEND` 即使 byte count 与 SHA256 正确，也不能替代 ROM 表、sender 和 MAP 同页证明。
+
+结构化请求必须声明：
+
+```json
+{
+  "source_encoding": "db",
+  "source_label": "DATE_DATA",
+  "table_sender": "SEND_DATE_DATA"
+}
+```
+
+源码必须同时声明 `; 查表配对 TABLE_PAIR: DATE_DATA,SEND_DATE_DATA`。`inline_i2c_send` 只允许用户明确要求的无文本总线/方向 probe，须声明 `role: "probe"` 且不超过 8 bytes；不得用于正式文字或图片交付。
+
 E1 实板确认的唯一 active 路径：
 
 ```asm
@@ -213,7 +229,7 @@ source contains DB + target_toolchain=python_source_module_cli
 ## 12. sender 模板契约
 
 ```asm
-; TABLE_PAIR: IMAGE_DATA0,SEND_IMAGE_DATA0
+; 查表配对 TABLE_PAIR: IMAGE_DATA0,SEND_IMAGE_DATA0
 ; IMAGE_DATA0: even byte count, raw consumer order
 ORG 0x0020
 IMAGE_DATA0:
@@ -329,6 +345,7 @@ self.rom[addr]
 - [ ] 无重叠、无 jump truncation warning。
 - [ ] 报告 highest word、image bytes 和 hole words。
 - [ ] 含 DB 时不得使用 `python_source_module_cli`；默认 `builtin_compiler` 可完成编译 release。
+- [ ] 汉字、ASCII 字母、Logo、头像、图片和多 page 字模使用 DB；不存在正式资产立即数发送。
 - [ ] DB 为原始消费者顺序，每条偶数字节。
 - [ ] 每次 `TABH` 前重新装载 A/index。
 - [ ] 每个 table/sender pair 在 MAP 中同一 256-word page。

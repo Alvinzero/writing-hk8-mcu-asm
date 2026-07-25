@@ -411,26 +411,50 @@ raise SystemExit(__EXIT_CODE__)
             "format": "SSD1306 page format, bit0 top",
             "asset": {
                 "manifest": manifest_path.name,
-                "source_encoding": "inline_i2c_send",
-                "source_label": "OLED_SHOW_BITMAP",
+                "source_encoding": "db",
+                "source_label": "DISPLAY_DATA",
+                "table_sender": "SEND_DISPLAY_DATA",
                 "byte_count": 8,
                 "source_sha256": source_hash,
                 "output_sha256": output_hash,
             },
         }
         self._write_json(self.request_path, request)
+        literals = ["{:02X}H".format(value) for value in output_bytes]
         lines = [
             "; CHIP: HK64S825",
             "; 用途：多页字模资产闭环测试",
             "ORG 0x0000",
             "START:",
-            "    CALL OLED_SHOW_BITMAP",
-            "    SJMP START",
-            "OLED_SHOW_BITMAP:",
+            "    CALL SHOW_BITMAP",
+            "    JMP START",
+            "SHOW_BITMAP:",
+            "    CALL SEND_DISPLAY_DATA",
+            "    RET",
+            "CONSUME_BYTE:",
+            "    RET",
+            "; 查表配对 TABLE_PAIR: DISPLAY_DATA,SEND_DISPLAY_DATA",
+            "ORG 0x0100",
+            "DISPLAY_DATA:",
+            "    DB " + ",".join(literals),
+            "SEND_DISPLAY_DATA:",
+            "    MOV A,#00H",
+            "    MOV 88H,A",
+            "    MOV A,#04H",
+            "    MOV 89H,A",
+            "SEND_DISPLAY_DATA_LOOP:",
+            "    MOV A,88H",
+            "    TABL",
+            "    CALL CONSUME_BYTE",
+            "    MOV A,88H",
+            "    TABH",
+            "    CALL CONSUME_BYTE",
+            "    INCR 88H",
+            "    DECSZR 89H",
+            "    JMP SEND_DISPLAY_DATA_LOOP",
+            "    RET",
+            "END",
         ]
-        for value in output_bytes:
-            lines.extend(("    MOV A,#{:02X}H".format(value), "    CALL I2C_SEND"))
-        lines.extend(("    RET", "I2C_SEND:", "    RET", "END"))
         self.source_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return manifest_path, output_bytes
 
@@ -575,14 +599,18 @@ raise SystemExit(__EXIT_CODE__)
 
     def test_multi_page_asset_is_audited_and_bound_to_evidence(self) -> None:
         manifest_path, _output_bytes = self.configure_multi_page_display_asset()
+        request = json.loads(self.request_path.read_text(encoding="utf-8"))
+        request["board"] = {"id": "HK64S825-DEFAULT"}
+        request["memory_limits"] = {"rom_bytes": 2048, "ram_bytes": 64}
+        self._write_json(self.request_path, request)
         run_dir = self.root / "display-asset-pass"
 
         created = self.run_cli(
             "new-run",
             "--profile",
-            str(self.profile_path),
+            str(CANONICAL_PROFILE),
             "--config",
-            str(self.config_path),
+            str(CANONICAL_CONFIG),
             "--request",
             str(self.request_path),
             "--source",
@@ -614,10 +642,54 @@ raise SystemExit(__EXIT_CODE__)
         self.assertNotEqual(0, release.returncode)
         self.assertEqual("RELEASE_BLOCKED", self.payload(release)["code"])
 
+    def test_db_display_close_loop_rechecks_table_pair_with_final_map(self) -> None:
+        self.configure_multi_page_display_asset()
+        request = json.loads(self.request_path.read_text(encoding="utf-8"))
+        request["board"] = {"id": "HK64S825-DEFAULT"}
+        request["memory_limits"] = {"rom_bytes": 2048, "ram_bytes": 64}
+        self._write_json(self.request_path, request)
+        run_dir = self.root / "display-asset-db-final-map"
+
+        created = self.run_cli(
+            "new-run",
+            "--profile",
+            str(CANONICAL_PROFILE),
+            "--config",
+            str(CANONICAL_CONFIG),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+        self.assertEqual(0, created.returncode, created.stderr or created.stdout)
+
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+        self.assertEqual(0, loop.returncode, loop.stderr or loop.stdout)
+        evidence = json.loads((run_dir / "evidence.json").read_text(encoding="utf-8"))
+        static = evidence["gates"]["static"]
+        self.assertEqual(0, static["summary"]["warnings"])
+        self.assertNotIn("deferred_table_map", static)
+        self.assertEqual("db", static["display_asset_audit"]["source_encoding"])
+        self.assertEqual("SEND_DISPLAY_DATA", static["display_asset_audit"]["table_sender"])
+        self.assertEqual("map", static["table_pairs"][0]["evidence"])
+        self.assertTrue(static["table_pairs"][0]["same_256_word_page"])
+
+    def test_db_display_close_loop_requires_packaged_map_checker(self) -> None:
+        self.configure_multi_page_display_asset()
+        run_dir = self.new_run("display-asset-db-no-map-checker")
+
+        loop = self.run_cli("close-loop", "--run-dir", str(run_dir))
+
+        self.assertNotEqual(0, loop.returncode)
+        self.assertEqual("STATIC_CHECK_FAILED", self.payload(loop)["code"])
+        self.assertIn("final MAP proof", self.payload(loop)["message"])
+
     def test_multi_page_asset_rejects_asm_byte_drift_before_run_creation(self) -> None:
         _manifest_path, _output_bytes = self.configure_multi_page_display_asset()
         source = self.source_path.read_text(encoding="utf-8")
-        self.source_path.write_text(source.replace("MOV A,#04H", "MOV A,#05H", 1), encoding="utf-8")
+        self.source_path.write_text(source.replace("DB 04H,08H", "DB 05H,08H", 1), encoding="utf-8")
         run_dir = self.root / "display-asset-byte-drift"
 
         result = self.run_cli(
@@ -639,25 +711,142 @@ raise SystemExit(__EXIT_CODE__)
         self.assertIn("SHA256", self.payload(result)["message"])
         self.assertFalse(run_dir.exists())
 
-    def test_multi_page_asset_can_bind_a_db_table(self) -> None:
-        _manifest_path, output_bytes = self.configure_multi_page_display_asset()
+    def test_db_display_asset_requires_table_sender(self) -> None:
+        self.configure_multi_page_display_asset()
         request = json.loads(self.request_path.read_text(encoding="utf-8"))
-        request["display"]["asset"]["source_encoding"] = "db"
-        request["display"]["asset"]["source_label"] = "DISPLAY_DATA"
+        request["display"]["asset"].pop("table_sender")
         self._write_json(self.request_path, request)
-        literals = ["{:02X}H".format(value) for value in output_bytes]
+        run_dir = self.root / "display-asset-db-missing-sender"
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("INVALID_REQUEST", self.payload(result)["code"])
+        self.assertIn("table_sender", self.payload(result)["message"])
+        self.assertFalse(run_dir.exists())
+
+    def test_db_display_asset_requires_exact_table_pair(self) -> None:
+        self.configure_multi_page_display_asset()
+        source = self.source_path.read_text(encoding="utf-8")
         self.source_path.write_text(
-            "; CHIP: HK64S825\n"
-            "; 用途：多页字模数据表闭环测试\n"
-            "ORG 0x0000\n"
-            "START:\n"
-            "    SJMP START\n"
-            "DISPLAY_DATA:\n"
-            "    DB " + ",".join(literals) + "\n"
-            "END\n",
+            source.replace(
+                "; 查表配对 TABLE_PAIR: DISPLAY_DATA,SEND_DISPLAY_DATA",
+                "; 查表配对 TABLE_PAIR: DISPLAY_DATA,WRONG_SENDER",
+            ),
             encoding="utf-8",
         )
-        run_dir = self.root / "display-asset-db"
+        run_dir = self.root / "display-asset-db-wrong-pair"
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("DISPLAY_TABLE_INVALID", self.payload(result)["code"])
+        self.assertIn("TABLE_PAIR", self.payload(result)["message"])
+        self.assertFalse(run_dir.exists())
+
+    def test_text_display_asset_rejects_inline_i2c_send(self) -> None:
+        self.configure_multi_page_display_asset()
+        request = json.loads(self.request_path.read_text(encoding="utf-8"))
+        asset = request["display"]["asset"]
+        asset["source_encoding"] = "inline_i2c_send"
+        asset["source_label"] = "OLED_SHOW_BITMAP"
+        asset.pop("table_sender")
+        self._write_json(self.request_path, request)
+        run_dir = self.root / "display-asset-inline-text"
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("INVALID_REQUEST", self.payload(result)["code"])
+        self.assertIn("use db for text and images", self.payload(result)["message"])
+        self.assertFalse(run_dir.exists())
+
+    def test_explicit_eight_byte_non_text_probe_can_use_inline_i2c_send(self) -> None:
+        source_bytes = list(range(1, 9))
+        source_hash = hashlib.sha256(bytes(source_bytes)).hexdigest()
+        manifest_path = self.root / "inline-probe.json"
+        self._write_json(
+            manifest_path,
+            {
+                "schema_version": 1,
+                "width": 8,
+                "height": 8,
+                "layout": [{"label": "probe", "width": 8}],
+                "source": {
+                    "format": "ssd1306-page-lsb-top",
+                    "bytes": ["{:02X}H".format(value) for value in source_bytes],
+                },
+                "transform": {
+                    "mirror_x_within_glyphs": False,
+                    "mirror_y": False,
+                },
+                "expected_source_sha256": source_hash,
+                "expected_output_sha256": source_hash,
+            },
+        )
+        request = self.minimal_non_gpio_request()
+        request["behavior"] = "执行八字节总线方向探针"
+        request["display"] = {
+            "window": {
+                "column_start": 0,
+                "column_end": 7,
+                "page_start": 0,
+                "page_end": 0,
+            },
+            "byte_count": 8,
+            "asset": {
+                "manifest": manifest_path.name,
+                "source_encoding": "inline_i2c_send",
+                "source_label": "SHOW_PROBE",
+                "role": "probe",
+                "byte_count": 8,
+                "source_sha256": source_hash,
+                "output_sha256": source_hash,
+            },
+        }
+        self._write_json(self.request_path, request)
+        lines = ["; CHIP: HK64S825", "ORG 0", "SHOW_PROBE:"]
+        for value in source_bytes:
+            lines.extend((f"    MOV A,#{value:02X}H", "    CALL I2C_SEND"))
+        lines.extend(("    RET", "I2C_SEND:", "    RET", "END"))
+        self.source_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        run_dir = self.root / "display-inline-probe"
 
         result = self.run_cli(
             "new-run",

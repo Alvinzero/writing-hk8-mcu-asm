@@ -25,7 +25,7 @@
 - [ ] 长循环的 `CLRWDT` 间隔受控，且没有用喂狗掩盖死循环。
 - [ ] OLED/I2C 源码已通过 `oled_i2c` 语义审计：ACK 读 `PB_INS`、`BTSZ` bit 分支方向正确、第一条事务前有上电稳定延时。
 - [ ] OLED 亮屏默认保留 `PB_PPU/PB_POE/PB_PIO` 已验证最小初始化；额外 `PB_POD/PB_INS/PB_PPD/PB_PSL` 有 board profile、E1 证据或用户明确要求。
-- [ ] 多 page OLED 字模已通过显示资产门禁：manifest 被快照，字符块顺序、窗口尺寸、byte count、转换输出 SHA256 与 ASM 实际字节一致。
+- [ ] 正式文字/图片及多 page OLED 字模已通过显示资产门禁：manifest 被快照，`source_encoding=db`、`table_sender`、字符块顺序、窗口尺寸、byte count、转换输出 SHA256 与 ASM DB 实际字节一致。
 
 ## C. DB/TABLE 门禁
 
@@ -36,6 +36,7 @@
 - [ ] DB 是消费者原始顺序，无 nibble/word swap 补偿。
 - [ ] 每个 table 有 table/sender pair。
 - [ ] 每个 `TABH` 前重新装载 A/index。
+- [ ] 每个正式显示 DB 都有精确 `TABLE_PAIR`，编译后将以最终 MAP 二次严格检查同页且 0 warning。
 - [ ] 预计 table/sender 在同一 256-word page。
 - [ ] 原始资产和生成 DB byte count/hash 匹配。
 
