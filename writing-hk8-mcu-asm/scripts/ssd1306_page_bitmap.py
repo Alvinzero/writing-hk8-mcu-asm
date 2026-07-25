@@ -51,7 +51,15 @@ def normalize_layout(raw_layout: Any, width: int) -> List[Dict[str, Any]]:
             raise AssetError("layout item {} needs a non-empty label".format(index))
         if isinstance(glyph_width, bool) or not isinstance(glyph_width, int) or glyph_width <= 0:
             raise AssetError("layout item {} needs a positive integer width".format(index))
-        layout.append({"label": label, "width": glyph_width})
+        item = {"label": label, "width": glyph_width}
+        if "kind" in raw_item:
+            kind = raw_item.get("kind")
+            if kind not in {"text", "image"}:
+                raise AssetError(
+                    "layout item {} kind must be text or image".format(index)
+                )
+            item["kind"] = kind
+        layout.append(item)
         total_width += glyph_width
     if total_width != width:
         raise AssetError(
@@ -113,6 +121,26 @@ def transform_rows(
 
 def sha256_bytes(data: Sequence[int]) -> str:
     return hashlib.sha256(bytes(bytearray(data))).hexdigest()
+
+
+def split_glyph_bytes(
+    data: Sequence[int], layout: Sequence[Dict[str, Any]], height: int
+) -> List[List[int]]:
+    pages = height // 8
+    row_width = sum(int(item["width"]) for item in layout)
+    offsets: List[int] = []
+    offset = 0
+    for item in layout:
+        offsets.append(offset)
+        offset += int(item["width"])
+    glyphs: List[List[int]] = [[] for _ in layout]
+    for page in range(pages):
+        page_start = page * row_width
+        for index, item in enumerate(layout):
+            start = page_start + offsets[index]
+            end = start + int(item["width"])
+            glyphs[index].extend(data[start:end])
+    return glyphs
 
 
 def format_hex_byte(value: int) -> str:
@@ -180,6 +208,14 @@ def build_result(payload: Dict[str, Any]) -> Dict[str, Any]:
     output_bytes = pack_page_bytes(output_rows, width, height)
     source_hash = sha256_bytes(source_bytes)
     output_hash = sha256_bytes(output_bytes)
+    source_glyph_hashes = [
+        sha256_bytes(glyph)
+        for glyph in split_glyph_bytes(source_bytes, layout, height)
+    ]
+    output_glyph_hashes = [
+        sha256_bytes(glyph)
+        for glyph in split_glyph_bytes(output_bytes, layout, height)
+    ]
 
     expected_source_hash = payload.get("expected_source_sha256")
     if expected_source_hash is not None and expected_source_hash != source_hash:
@@ -210,8 +246,10 @@ def build_result(payload: Dict[str, Any]) -> Dict[str, Any]:
         },
         "source_byte_count": len(source_bytes),
         "source_sha256": source_hash,
+        "source_glyph_sha256": source_glyph_hashes,
         "output_byte_count": len(output_bytes),
         "output_sha256": output_hash,
+        "output_glyph_sha256": output_glyph_hashes,
         "output_bytes_hex": [format_hex_byte(value) for value in output_bytes],
         "preview_rows": preview_rows(output_rows, layout),
     }

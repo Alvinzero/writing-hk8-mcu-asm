@@ -3,6 +3,13 @@
   "captured_at": "2026-07-14",
   "cases": [
     {
+      "id": "oled-text-label-only-glyph-provenance-regression",
+      "failure_observed": true,
+      "observed_behavior": "旧资产把你、好、中、国四个 label 绑定到同一稀疏点阵；整体 byte count、方向、SHA256、ASM DB、编译和 release 全部通过，实板稳定显示为两个类似分号的符号。",
+      "failure_reason": "现有门禁只校验结构、传输和字节一致性，没有把 Unicode codepoint 绑定到固定字体的逐字 glyph；内置字体缺中/国时也没有失败关闭，而是复用无来源旧字模。",
+      "required_regression": "正式文字必须从固定字体 SHA256 按 Unicode 逐字节重建；label-only、自填 SHA256、字体缺字或像素不一致必须以 DISPLAY_GLYPH_PROVENANCE_MISMATCH 拒绝。"
+    },
+    {
       "id": "explicit-hk64s825-confirmation-only-regression",
       "query": "HK64S825 ASM 闭环 写一个 OLED 亮屏代码。",
       "raw_response": "请回复：是 / 否。",

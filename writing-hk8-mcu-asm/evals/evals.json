@@ -3,6 +3,16 @@
   "skill": "writing-hk8-mcu-asm",
   "cases": [
     {
+      "id": "oled-text-glyph-provenance-consistency",
+      "query": "已确认 HK64S825，在默认 SSD1306 OLED 显示 123ABC中国%￥#。旧 manifest 已有中和国的 label、byte count 与 SHA256，可以直接复制以节省时间。",
+      "expected_behavior": [
+        "拒绝把 label、整体 SHA256 或肉眼预览当作中文字形语义证据",
+        "从 Skill 内置固定字体按每个 Unicode codepoint 确定性生成，记录字体 SHA256、生成器版本和逐字 glyph SHA256",
+        "new-run 与 close-loop 从固定字体逐字节重建并核对 manifest 与 ASM DB",
+        "字体缺字、来源缺失或任一像素不一致时以 DISPLAY_GLYPH_PROVENANCE_MISMATCH 失败关闭，不回退旧 manifest、手绘或模型猜测点阵"
+      ]
+    },
+    {
       "id": "asks-chip-model-when-missing",
       "query": "帮我写一个 8 位 MCU 的 LED 闪烁程序。",
       "expected_behavior": [

@@ -19,7 +19,12 @@ from ssd1306_page_bitmap import (
     pack_page_bytes,
     parse_byte,
     unpack_page_bytes,
+    split_glyph_bytes,
 )
+
+
+GENERATOR_VERSION = "bdf-to-ssd1306-2"
+CANONICAL_FONT_ID = "wenquanyi-bitmap-song-16px-canonical-v1"
 
 
 class BdfError(ValueError):
@@ -195,6 +200,22 @@ def render_glyph(
     return canvas
 
 
+def crop_glyph_cell(
+    rendered: List[List[int]], cell_width: int
+) -> List[List[int]]:
+    if cell_width <= 0:
+        raise BdfError("cell width must be positive")
+    source_width = len(rendered[0])
+    if cell_width > source_width:
+        raise BdfError(
+            "cell width {} exceeds canonical glyph advance {}".format(
+                cell_width, source_width
+            )
+        )
+    left = (source_width - cell_width) // 2
+    return [row[left : left + cell_width] for row in rendered]
+
+
 def glyph_by_label(glyphs: Dict[int, Glyph], label: str) -> Glyph:
     if len(label) != 1:
         raise BdfError("layout labels must contain one Unicode character: {!r}".format(label))
@@ -239,7 +260,12 @@ def clone_layout(payload: dict) -> List[dict]:
             raise BdfError("base manifest layout item is invalid")
         if not isinstance(item.get("width"), int) or item["width"] <= 0:
             raise BdfError("base manifest layout width is invalid")
-        layout.append({"label": item["label"], "width": item["width"]})
+        cloned = {"label": item["label"], "width": item["width"]}
+        if "kind" in item:
+            if item["kind"] not in {"text", "image"}:
+                raise BdfError("base manifest layout kind is invalid")
+            cloned["kind"] = item["kind"]
+        layout.append(cloned)
     return layout
 
 
@@ -264,6 +290,22 @@ def make_manifest(
 ) -> dict:
     width = len(source_rows[0])
     source_bytes = pack_page_bytes(source_rows, width, cell_height)
+    source_glyphs = split_glyph_bytes(source_bytes, layout, cell_height)
+    rendered_labels = [
+        item["label"]
+        for item in layout
+        if item.get("kind") == "text"
+    ]
+    glyph_provenance = [
+        {
+            "label": item["label"],
+            "codepoint": ord(item["label"]),
+            "width": item["width"],
+            "source_sha256": hashlib.sha256(bytes(source_glyphs[index])).hexdigest(),
+        }
+        for index, item in enumerate(layout)
+        if item.get("kind") == "text"
+    ]
     manifest = {
         "schema_version": 1,
         "asset_id": asset_id,
@@ -274,13 +316,23 @@ def make_manifest(
             "format": PAGE_FORMAT,
             "bytes": [format_hex_byte(value) for value in source_bytes],
             "generator": "bdf_to_ssd1306.py",
+            "generator_version": GENERATOR_VERSION,
+            "font_id": CANONICAL_FONT_ID,
             "font_source": str(font_path),
             "font_sha256": hashlib.sha256(font_path.read_bytes()).hexdigest(),
             "font_properties": properties,
             "baseline_row": baseline_row,
             "replaced_labels": list(replaced_labels),
             "base_manifest": str(base_manifest) if base_manifest is not None else None,
-            "glyph_encodings": {label: ord(label) for label in sorted(set(replaced_labels))},
+            "glyph_encodings": {
+                label: ord(label) for label in sorted(set(rendered_labels))
+            },
+            "glyph_source_sha256": {
+                item["label"]: hashlib.sha256(bytes(source_glyphs[index])).hexdigest()
+                for index, item in enumerate(layout)
+                if item.get("kind") == "text"
+            },
+            "glyph_provenance": glyph_provenance,
         },
         "transform": {
             "mirror_x_within_glyphs": mirror_x,
@@ -312,6 +364,20 @@ def build_manifest(args: argparse.Namespace) -> dict:
                     ", ".join(sorted(unknown_labels))
                 )
             )
+        missing_text_labels = {
+            item["label"]
+            for item in layout
+            if item.get("kind") != "image" and item["label"] not in replace_labels
+        }
+        if missing_text_labels:
+            raise BdfError(
+                "base manifest text labels must all be replaced: {}".format(
+                    ", ".join(sorted(missing_text_labels))
+                )
+            )
+        for item in layout:
+            if item["label"] in replace_labels:
+                item["kind"] = "text"
     else:
         if args.replace_label:
             raise BdfError("--replace-label requires --base-manifest")
@@ -323,7 +389,7 @@ def build_manifest(args: argparse.Namespace) -> dict:
         for index, label in enumerate(labels):
             glyph = glyph_by_label(glyphs, label)
             width = parsed_widths[index] if parsed_widths is not None else glyph.dwidth
-            layout.append({"label": label, "width": width})
+            layout.append({"label": label, "width": width, "kind": "text"})
         cell_height = args.cell_height
         rows = [[0 for _ in range(sum(item["width"] for item in layout))] for _ in range(cell_height)]
         replace_labels = set(labels)
@@ -342,7 +408,10 @@ def build_manifest(args: argparse.Namespace) -> dict:
         label = item["label"]
         if label in replace_labels:
             glyph = glyph_by_label(glyphs, label)
-            rendered = render_glyph(glyph, item["width"], cell_height, baseline_row)
+            rendered = crop_glyph_cell(
+                render_glyph(glyph, glyph.dwidth, cell_height, baseline_row),
+                item["width"],
+            )
             for row_index in range(cell_height):
                 rows[row_index][offset : offset + item["width"]] = rendered[row_index]
         offset += item["width"]

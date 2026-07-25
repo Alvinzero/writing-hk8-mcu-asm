@@ -2,7 +2,8 @@ WenQuanYi Bitmap Song 16px subset notice
 
 This directory contains a mechanically extracted subset of WenQuanYi Bitmap
 Song 0.9.9.8 Release 8. It contains printable ASCII (U+0020..U+007E) plus
-U+5E74, U+6708, and U+53F7 for the HK64S825 OLED workflow.
+U+5E74, U+6708, U+53F7, U+4E2D, U+56FD, and U+FFE5 for the HK64S825 OLED
+workflow.
 
 Upstream project: https://github.com/larryli/u8g2_wqy
 Upstream source: bdf/wenquanyi_12pt.bdf

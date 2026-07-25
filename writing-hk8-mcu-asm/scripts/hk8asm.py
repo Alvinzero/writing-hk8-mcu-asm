@@ -20,6 +20,18 @@ from typing import Any
 
 from ssd1306_page_bitmap import AssetError as DisplayAssetError
 from ssd1306_page_bitmap import build_result as build_display_asset_result
+from bdf_to_ssd1306 import (
+    BdfError,
+    CANONICAL_FONT_ID,
+    GENERATOR_VERSION as BDF_GENERATOR_VERSION,
+    crop_glyph_cell as crop_bdf_glyph_cell,
+    default_baseline as default_bdf_baseline,
+    glyph_by_label as bdf_glyph_by_label,
+    pack_page_bytes as pack_bdf_page_bytes,
+    parse_bdf,
+    render_glyph as render_bdf_glyph,
+    unpack_page_bytes as unpack_bdf_page_bytes,
+)
 
 
 MANDATORY_ROLES = ("compiler",)
@@ -54,6 +66,12 @@ DISPLAY_TABLE_PAIR_RE = re.compile(
 )
 MAX_INLINE_DISPLAY_PROBE_BYTES = 8
 DISPLAY_ASSET_SNAPSHOT = Path("assets") / "display-asset.json"
+CANONICAL_TEXT_FONT = (
+    SKILL_ROOT
+    / "references"
+    / "fonts"
+    / "wenquanyi_bitmap_song_16px_ascii_date_cn.bdf"
+)
 APPROVED_TECHNICAL_TOKENS = {
     "A", "ACK", "ASM", "ASSEMBLER", "BIN", "BUILTIN", "CHIP", "CLOBBERS",
     "COMPILER", "CRC", "GPIO", "HEX", "HK64S825", "HZ", "I2C", "IN", "KHZ",
@@ -1039,6 +1057,133 @@ def audit_display_table_sender(
         "DISPLAY_TABLE_INVALID",
         f"DB display asset requires '; 查表配对 TABLE_PAIR: {table_label},{sender_label}'",
     )
+
+
+def audit_text_glyph_provenance(
+    manifest: dict[str, Any], display_text: str, result: dict[str, Any]
+) -> dict[str, Any]:
+    source = manifest.get("source")
+    require(
+        isinstance(source, dict)
+        and source.get("generator") == "bdf_to_ssd1306.py"
+        and source.get("generator_version") == BDF_GENERATOR_VERSION
+        and source.get("font_id") == CANONICAL_FONT_ID,
+        "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+        "Text assets require deterministic Unicode glyph provenance from bdf_to_ssd1306.py",
+    )
+    canonical_font_hash = sha256_file(CANONICAL_TEXT_FONT)
+    require(
+        source.get("font_sha256") == canonical_font_hash,
+        "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+        "Text asset font SHA256 does not match the canonical bundled font",
+    )
+    encodings = source.get("glyph_encodings")
+    glyph_hashes = source.get("glyph_source_sha256")
+    provenance = source.get("glyph_provenance")
+    require(
+        isinstance(encodings, dict)
+        and isinstance(glyph_hashes, dict)
+        and isinstance(provenance, list)
+        and len(provenance) == len(result["layout"]),
+        "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+        "Text asset is missing Unicode glyph codepoints or glyph SHA256 provenance",
+    )
+    layout = result["layout"]
+    require(
+        all(
+            len(item["label"]) == 1 and item.get("kind") == "text"
+            for item in layout
+        ),
+        "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+        "Text asset layout entries must be text glyphs with one Unicode character",
+    )
+    baseline_row = source.get("baseline_row")
+    require(
+        isinstance(baseline_row, int)
+        and baseline_row == default_bdf_baseline(result["height"]),
+        "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+        "Text asset baseline does not match the canonical rendering policy",
+    )
+    try:
+        _properties, font_glyphs = parse_bdf(CANONICAL_TEXT_FONT)
+        rebuilt_glyphs: list[bytes] = []
+        for index, item in enumerate(layout):
+            label = item["label"]
+            require(
+                encodings.get(label) == ord(label),
+                "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+                f"Unicode codepoint provenance does not match layout label: {label}",
+            )
+            glyph = bdf_glyph_by_label(font_glyphs, label)
+            rendered = crop_bdf_glyph_cell(
+                render_bdf_glyph(
+                    glyph,
+                    glyph.dwidth,
+                    result["height"],
+                    baseline_row,
+                ),
+                int(item["width"]),
+            )
+            packed = bytes(
+                pack_bdf_page_bytes(
+                    rendered,
+                    int(item["width"]),
+                    result["height"],
+                )
+            )
+            rebuilt_glyphs.append(packed)
+            expected_provenance = {
+                "label": label,
+                "codepoint": ord(label),
+                "width": int(item["width"]),
+                "source_sha256": hashlib.sha256(packed).hexdigest(),
+            }
+            require(
+                glyph_hashes.get(label) == hashlib.sha256(packed).hexdigest()
+                and provenance[index] == expected_provenance,
+                "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+                f"Unicode glyph SHA256 does not match canonical font rendering: {label}",
+            )
+    except BdfError as exc:
+        raise GateError(
+            "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+            f"Canonical font cannot reproduce requested Unicode glyph: {exc}",
+        ) from exc
+    rebuilt_rows = [
+        [0 for _ in range(result["width"])] for _ in range(result["height"])
+    ]
+    offset = 0
+    for item, packed in zip(layout, rebuilt_glyphs):
+        glyph_rows = unpack_bdf_page_bytes(
+            list(packed), int(item["width"]), result["height"]
+        )
+        for row_index, row in enumerate(glyph_rows):
+            rebuilt_rows[row_index][
+                offset : offset + int(item["width"])
+            ] = row
+        offset += int(item["width"])
+    rebuilt_source = pack_bdf_page_bytes(
+        rebuilt_rows, result["width"], result["height"]
+    )
+    require(
+        hashlib.sha256(bytes(rebuilt_source)).hexdigest() == result["source_sha256"],
+        "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+        "Text asset source bytes do not match canonical Unicode glyph rendering",
+    )
+    require(
+        "".join(item["label"] for item in layout) == display_text,
+        "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+        "Text asset Unicode glyph order does not match display text",
+    )
+    return {
+        "status": "pass",
+        "generator": source["generator"],
+        "generator_version": source["generator_version"],
+        "font_id": source["font_id"],
+        "font_sha256": canonical_font_hash,
+        "glyph_encodings": encodings,
+        "glyph_source_sha256": glyph_hashes,
+    }
     region = source_region_after_label(source_text, sender_label)
     end = re.search(r"(?mi)^[ \t]*RET[ \t]*(?:;.*)?$", region)
     require(
@@ -1121,6 +1266,11 @@ def audit_display_asset(
             "DISPLAY_ASSET_MISMATCH",
             "Asset layout labels do not preserve display text order",
         )
+        glyph_provenance = audit_text_glyph_provenance(
+            manifest, display["text"], result
+        )
+    else:
+        glyph_provenance = None
     require(
         result["source_sha256"] == asset["source_sha256"],
         "DISPLAY_ASSET_MISMATCH",
@@ -1180,6 +1330,7 @@ def audit_display_asset(
         "output_sha256": result["output_sha256"],
         "text_order": result["text_order"],
         "transform": result["transform"],
+        "glyph_provenance": glyph_provenance,
     }
 
 

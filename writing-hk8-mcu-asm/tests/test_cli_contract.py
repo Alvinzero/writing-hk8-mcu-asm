@@ -27,6 +27,14 @@ EXAMPLE_CONFIG = SKILL_ROOT / "references" / "configs" / "local-adapter.example.
 CANONICAL_PROFILE = SKILL_ROOT / "references" / "profiles" / "HK64S825.profile.json"
 CANONICAL_CONFIG = SKILL_ROOT / "references" / "configs" / "builtin-config.json"
 BUILTIN_COMPILER = SKILL_ROOT / "scripts" / "builtin_compiler.py"
+BDF_CONVERTER = SKILL_ROOT / "scripts" / "bdf_to_ssd1306.py"
+BITMAP_AUDITOR = SKILL_ROOT / "scripts" / "ssd1306_page_bitmap.py"
+STANDARD_TEXT_FONT = (
+    SKILL_ROOT
+    / "references"
+    / "fonts"
+    / "wenquanyi_bitmap_song_16px_ascii_date_cn.bdf"
+)
 INSTRUCTION_REFERENCE = SKILL_ROOT / "references" / "spec" / "rules" / "instruction-reference.json"
 OLED_ORIENTATION_PROFILE_ID = "hk64s825-default-a1-c0-page-lsb-top-v1"
 REQUIRED_FAKE_COMPILER_FILES = (
@@ -401,43 +409,57 @@ raise SystemExit(__EXIT_CODE__)
         return run_dir
 
     def configure_multi_page_display_asset(self) -> tuple[Path, list[int]]:
-        source_bytes = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80]
-        output_bytes = [0x08, 0x04, 0x02, 0x01, 0x80, 0x40, 0x20, 0x10]
-        source_hash = hashlib.sha256(bytes(source_bytes)).hexdigest()
-        output_hash = hashlib.sha256(bytes(output_bytes)).hexdigest()
         manifest_path = self.root / "display-asset.json"
-        self._write_json(
-            manifest_path,
-            {
-                "schema_version": 1,
-                "width": 4,
-                "height": 16,
-                "layout": [
-                    {"label": "左", "width": 2},
-                    {"label": "右", "width": 2},
-                ],
-                "source": {
-                    "format": "ssd1306-page-lsb-top",
-                    "bytes": ["{:02X}H".format(value) for value in source_bytes],
-                },
-                "transform": {
-                    "mirror_x_within_glyphs": False,
-                    "mirror_y": True,
-                },
-                "expected_source_sha256": source_hash,
-                "expected_output_sha256": output_hash,
-            },
+        generated = subprocess.run(
+            [
+                sys.executable,
+                str(BDF_CONVERTER),
+                str(STANDARD_TEXT_FONT),
+                "--text",
+                "12",
+                "--widths",
+                "8,8",
+                "--asset-id",
+                "display-asset",
+                "--output",
+                str(manifest_path),
+            ],
+            cwd=SKILL_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
         )
+        self.assertEqual(0, generated.returncode, generated.stderr)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        source_bytes = [
+            int(value[:-1], 16) for value in manifest["source"]["bytes"]
+        ]
+        source_hash = manifest["expected_source_sha256"]
+        output_hash = manifest["expected_output_sha256"]
+        output_bytes = [
+            int(value[:-1], 16)
+            for value in json.loads(
+                subprocess.run(
+                    [sys.executable, str(BITMAP_AUDITOR), str(manifest_path)],
+                    cwd=SKILL_ROOT,
+                    text=True,
+                    encoding="utf-8",
+                    capture_output=True,
+                    check=True,
+                ).stdout
+            )["output_bytes_hex"]
+        ]
         request = self.minimal_non_gpio_request()
         request["display"] = {
-            "text": "左右",
+            "text": "12",
             "window": {
                 "column_start": "00H",
-                "column_end": "03H",
+                "column_end": "0FH",
                 "page_start": "00H",
                 "page_end": "01H",
             },
-            "byte_count": 8,
+            "byte_count": 32,
             "format": "SSD1306 page format, bit0 top",
             "asset": {
                 "manifest": manifest_path.name,
@@ -445,7 +467,7 @@ raise SystemExit(__EXIT_CODE__)
                 "orientation_profile": OLED_ORIENTATION_PROFILE_ID,
                 "source_label": "DISPLAY_DATA",
                 "table_sender": "SEND_DISPLAY_DATA",
-                "byte_count": 8,
+                "byte_count": 32,
                 "source_sha256": source_hash,
                 "output_sha256": output_hash,
             },
@@ -471,7 +493,7 @@ raise SystemExit(__EXIT_CODE__)
             "SEND_DISPLAY_DATA:",
             "    MOV A,#00H",
             "    MOV 88H,A",
-            "    MOV A,#04H",
+            "    MOV A,#10H",
             "    MOV 89H,A",
             "SEND_DISPLAY_DATA_LOOP:",
             "    MOV A,88H",
@@ -488,6 +510,104 @@ raise SystemExit(__EXIT_CODE__)
         ]
         self.source_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return manifest_path, output_bytes
+
+    def configure_self_consistent_but_semantically_wrong_text_asset(self) -> Path:
+        manifest_path = self.root / "wrong-unicode-glyph.json"
+        generated = subprocess.run(
+            [
+                sys.executable,
+                str(BDF_CONVERTER),
+                str(STANDARD_TEXT_FONT),
+                "--text",
+                "12",
+                "--widths",
+                "8,8",
+                "--asset-id",
+                "wrong-unicode-glyph",
+                "--output",
+                str(manifest_path),
+            ],
+            cwd=SKILL_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, generated.returncode, generated.stderr)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["source"]["bytes"][0] = "01H"
+        manifest.pop("expected_source_sha256")
+        manifest.pop("expected_output_sha256")
+        self._write_json(manifest_path, manifest)
+        audited = subprocess.run(
+            [sys.executable, str(BITMAP_AUDITOR), str(manifest_path)],
+            cwd=SKILL_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, audited.returncode, audited.stderr)
+        audit = json.loads(audited.stdout)
+        manifest["expected_source_sha256"] = audit["source_sha256"]
+        manifest["expected_output_sha256"] = audit["output_sha256"]
+        self._write_json(manifest_path, manifest)
+
+        request = self.minimal_non_gpio_request()
+        request["display"] = {
+            "text": "12",
+            "window": {
+                "column_start": "00H",
+                "column_end": "0FH",
+                "page_start": "00H",
+                "page_end": "01H",
+            },
+            "byte_count": 32,
+            "asset": {
+                "manifest": manifest_path.name,
+                "source_encoding": "db",
+                "orientation_profile": OLED_ORIENTATION_PROFILE_ID,
+                "source_label": "DISPLAY_DATA",
+                "table_sender": "SEND_DISPLAY_DATA",
+                "byte_count": 32,
+                "source_sha256": audit["source_sha256"],
+                "output_sha256": audit["output_sha256"],
+            },
+        }
+        self._write_json(self.request_path, request)
+        lines = [
+            "; CHIP: HK64S825",
+            "; 用途：拒绝标签与像素语义不一致的文字资产",
+            "ORG 0x0000",
+            "START:",
+            "    CALL SEND_DISPLAY_DATA",
+            "    JMP START",
+            "CONSUME_BYTE:",
+            "    RET",
+            "; 查表配对 TABLE_PAIR: DISPLAY_DATA,SEND_DISPLAY_DATA",
+            "ORG 0x0100",
+            "DISPLAY_DATA:",
+            "    DB " + ",".join(audit["output_bytes_hex"]),
+            "SEND_DISPLAY_DATA:",
+            "    MOV A,#00H",
+            "    MOV 88H,A",
+            "    MOV A,#10H",
+            "    MOV 89H,A",
+            "SEND_DISPLAY_DATA_LOOP:",
+            "    MOV A,88H",
+            "    TABL",
+            "    CALL CONSUME_BYTE",
+            "    MOV A,88H",
+            "    TABH",
+            "    CALL CONSUME_BYTE",
+            "    INCR 88H",
+            "    DECSZR 89H",
+            "    JMP SEND_DISPLAY_DATA_LOOP",
+            "    RET",
+            "END",
+        ]
+        self.source_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return manifest_path
 
     def test_doctor_fails_closed_when_profile_is_not_ready(self) -> None:
         self._write_json(self.profile_path, self.profile(status="requires-vendor-materials"))
@@ -657,8 +777,8 @@ raise SystemExit(__EXIT_CODE__)
         evidence = json.loads((run_dir / "evidence.json").read_text(encoding="utf-8"))
         audit = evidence["gates"]["static"]["display_asset_audit"]
         self.assertEqual("pass", audit["status"])
-        self.assertEqual(8, audit["output_byte_count"])
-        self.assertEqual(["左", "右"], audit["text_order"])
+        self.assertEqual(32, audit["output_byte_count"])
+        self.assertEqual(["1", "2"], audit["text_order"])
         self.assertEqual(OLED_ORIENTATION_PROFILE_ID, audit["orientation_profile"])
         self.assertEqual(
             {"mirror_x_within_glyphs": False, "mirror_y": True},
@@ -725,9 +845,14 @@ raise SystemExit(__EXIT_CODE__)
         self.assertIn("final MAP proof", self.payload(loop)["message"])
 
     def test_multi_page_asset_rejects_asm_byte_drift_before_run_creation(self) -> None:
-        _manifest_path, _output_bytes = self.configure_multi_page_display_asset()
+        _manifest_path, output_bytes = self.configure_multi_page_display_asset()
         source = self.source_path.read_text(encoding="utf-8")
-        self.source_path.write_text(source.replace("DB 08H,04H", "DB 09H,04H", 1), encoding="utf-8")
+        first = "{:02X}H".format(output_bytes[0])
+        changed = "{:02X}H".format(output_bytes[0] ^ 0x01)
+        self.source_path.write_text(
+            source.replace("DB " + first, "DB " + changed, 1),
+            encoding="utf-8",
+        )
         run_dir = self.root / "display-asset-byte-drift"
 
         result = self.run_cli(
@@ -747,6 +872,31 @@ raise SystemExit(__EXIT_CODE__)
         self.assertNotEqual(0, result.returncode)
         self.assertEqual("DISPLAY_ASSET_MISMATCH", self.payload(result)["code"])
         self.assertIn("SHA256", self.payload(result)["message"])
+        self.assertFalse(run_dir.exists())
+
+    def test_text_asset_rejects_self_consistent_bytes_that_do_not_match_unicode_glyphs(self) -> None:
+        self.configure_self_consistent_but_semantically_wrong_text_asset()
+        run_dir = self.root / "wrong-unicode-glyph"
+
+        result = self.run_cli(
+            "new-run",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(
+            "DISPLAY_GLYPH_PROVENANCE_MISMATCH", self.payload(result)["code"]
+        )
+        self.assertIn("Unicode glyph", self.payload(result)["message"])
         self.assertFalse(run_dir.exists())
 
     def test_db_display_asset_requires_table_sender(self) -> None:

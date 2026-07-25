@@ -89,7 +89,10 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertTrue(font.is_file())
         self.assertTrue(notice.is_file())
         self.assertTrue(license_text.is_file())
-        self.assertIn("CHARS 98", font.read_text(encoding="utf-8"))
+        font_text = font.read_text(encoding="utf-8")
+        self.assertIn("CHARS 101", font_text)
+        for encoding in ("ENCODING 20013", "ENCODING 22269", "ENCODING 65509"):
+            self.assertIn(encoding, font_text)
         notice_text = notice.read_text(encoding="utf-8")
         self.assertIn("GPL v2 with font embedding exception", notice_text)
         self.assertIn("b4bc0413cee9fb", notice_text)
@@ -424,6 +427,24 @@ class ValidateSkillContractTests(unittest.TestCase):
         ):
             self.assertIn(phrase, combined)
 
+    def test_standard_text_assets_require_reproducible_unicode_glyph_provenance(self) -> None:
+        combined = "\n".join(
+            (
+                self.skill_text(),
+                self.spec_text("05-GPIO-I2C-OLED驱动规范.md"),
+                self.spec_text("07-构建-烧录-验收规范.md"),
+            )
+        )
+        for phrase in (
+            "Unicode codepoint",
+            "固定字体 SHA256",
+            "逐字节重建",
+            "禁止复用只有 label 和自填 SHA256 的旧字模",
+            "缺字必须失败关闭",
+            "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+        ):
+            self.assertIn(phrase, combined)
+
     def test_simple_tasks_use_targeted_reference_lookup_without_extra_artifacts(self) -> None:
         skill_text = self.skill_text()
         for phrase in (
@@ -500,6 +521,32 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("r8 false/true", case["observed_behavior"])
         self.assertIn("orientation_profile", case["failure_reason"])
         self.assertIn("只需要 mirror_y=true", case["failure_reason"])
+
+    def test_baseline_records_label_only_glyph_provenance_regression(self) -> None:
+        baseline = json.loads(
+            (SKILL_ROOT / "evals" / "baseline.json").read_text(encoding="utf-8")
+        )
+        cases = {case["id"]: case for case in baseline["cases"]}
+        case = cases["oled-text-label-only-glyph-provenance-regression"]
+        self.assertTrue(case["failure_observed"])
+        self.assertIn("同一稀疏点阵", case["observed_behavior"])
+        self.assertIn("Unicode codepoint", case["failure_reason"])
+        self.assertIn("DISPLAY_GLYPH_PROVENANCE_MISMATCH", case["required_regression"])
+
+    def test_forward_evaluation_covers_text_glyph_provenance_consistency(self) -> None:
+        evals = json.loads((SKILL_ROOT / "evals" / "evals.json").read_text(encoding="utf-8"))
+        cases = {case["id"]: case for case in evals["cases"]}
+        behavior = "\n".join(
+            cases["oled-text-glyph-provenance-consistency"]["expected_behavior"]
+        )
+        for phrase in (
+            "Unicode codepoint",
+            "固定字体",
+            "逐字 glyph SHA256",
+            "逐字节重建",
+            "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+        ):
+            self.assertIn(phrase, behavior)
 
     def test_canonical_oled_orientation_profile_records_hardware_baseline(self) -> None:
         expected_id = "hk64s825-default-a1-c0-page-lsb-top-v1"
