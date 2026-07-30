@@ -25,7 +25,7 @@ from ssd1306_page_bitmap import (
 
 GENERATOR_VERSION = "bdf-to-ssd1306-2"
 CANONICAL_FONT_ID = "wenquanyi-bitmap-song-16px-canonical-v1"
-CANONICAL_FONT_SHA256 = "7f4e5ee2d26faef12ccb90e77532346a0cfbd2a8335535907825b8f498629f65"
+CANONICAL_FONT_SHA256 = "7cdde010b3d72a116c6f7058ce79c79d7e49e1a117d5a6a44453b9d2e65b9993"
 
 
 class BdfError(ValueError):
