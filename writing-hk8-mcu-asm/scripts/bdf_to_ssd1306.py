@@ -10,7 +10,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ssd1306_page_bitmap import (
     PAGE_FORMAT,
@@ -26,6 +26,51 @@ from ssd1306_page_bitmap import (
 GENERATOR_VERSION = "bdf-to-ssd1306-2"
 CANONICAL_FONT_ID = "wenquanyi-bitmap-song-16px-canonical-v1"
 CANONICAL_FONT_SHA256 = "7cdde010b3d72a116c6f7058ce79c79d7e49e1a117d5a6a44453b9d2e65b9993"
+
+# 批准字库白名单。两者都从上游 bdf/wenquanyi_12pt.bdf
+# (SHA256 b4bc0413cee9fb865b6f4bbd0a8e3923c057f0a55e414c7c5ccc0a62a4247a28)
+# 按 ENCODING 机械提取，点阵字节、DWIDTH、BBX 与上游逐字节一致。
+# 文字资产只允许来自本表中的字库；新增字库必须先在此登记 SHA256。
+APPROVED_FONTS = {
+    "wenquanyi-bitmap-song-16px-canonical-v1": {
+        "filename": "wenquanyi_bitmap_song_16px_ascii_date_cn.bdf",
+        "sha256": "7cdde010b3d72a116c6f7058ce79c79d7e49e1a117d5a6a44453b9d2e65b9993",
+        "note": "ASCII 与少量日期汉字子集，103 字",
+    },
+    "wenquanyi-bitmap-song-16px-gb2312-v1": {
+        "filename": "wenquanyi_bitmap_song_16px_gb2312.bdf",
+        "sha256": "27986209393675dcf4755a1e6cecfb548a81ead9fa1d3a7403511a3f59542000",
+        "note": "ASCII、常用标点与 GB2312 一级二级，7539 字",
+    },
+}
+
+
+def approved_font_by_sha256(font_sha256: str):
+    """按 SHA256 反查批准字库条目，未登记返回 None。"""
+    for font_id, entry in APPROVED_FONTS.items():
+        if entry["sha256"] == font_sha256:
+            return font_id, entry
+    return None
+
+
+def approved_font_path(font_id: str, fonts_dir: Path) -> Path:
+    entry = APPROVED_FONTS.get(font_id)
+    if entry is None:
+        raise BdfError("font id is not in the approved list: {}".format(font_id))
+    return fonts_dir / entry["filename"]
+
+
+def font_identity(font_path: Path) -> str:
+    """按内容哈希判定字库身份。未登记的字库拒绝生成正式资产。"""
+    font_sha256 = hashlib.sha256(font_path.read_bytes()).hexdigest()
+    hit = approved_font_by_sha256(font_sha256)
+    if hit is None:
+        raise BdfError(
+            "font is not in the approved list: {} (SHA256 {})".format(
+                font_path.name, font_sha256
+            )
+        )
+    return hit[0]
 
 
 class BdfError(ValueError):
@@ -276,6 +321,39 @@ def default_baseline(cell_height: int) -> int:
     return cell_height - 3
 
 
+def layout_baseline(
+    layout: Sequence[Dict[str, Any]], glyphs: Dict[int, "Glyph"], cell_height: int
+) -> int:
+    """按本资产实际字形推导确定的基线行。
+
+    渲染时 target_y = baseline_row - font_y，字形占 font_y 从 y_offset 起。
+    下伸部使 y_offset 为负，需要 baseline_row - y_offset <= cell_height - 1。
+    汉字 y_offset 为 -2，拉丁小写 g/j/p/q/y 等为 -3，故只用 cell_height - 3
+    会让 3 行下伸部恰好溢出一行。
+
+    取默认值与本 layout 允许的最大基线中的较小者：
+    - 只含汉字或无下伸部时结果与 default_baseline 相同，既有资产哈希不变；
+    - 含下伸部时自动下移，且由 layout 唯一决定，不需要人工传参。
+    """
+    if cell_height < 3:
+        raise BdfError("cell height is too small for a baseline")
+    baseline = default_baseline(cell_height)
+    for item in layout:
+        label = item["label"]
+        if len(label) != 1:
+            continue
+        glyph = glyphs.get(ord(label))
+        if glyph is None:
+            continue
+        # 该字形最低一行落在 baseline - y_offset，必须留在 cell 内
+        allowed = cell_height - 1 + glyph.y_offset
+        if allowed < baseline:
+            baseline = allowed
+    if baseline < 0:
+        raise BdfError("cell height cannot accommodate the layout descenders")
+    return baseline
+
+
 def make_manifest(
     font_path: Path,
     layout: Sequence[dict],
@@ -318,7 +396,7 @@ def make_manifest(
             "bytes": [format_hex_byte(value) for value in source_bytes],
             "generator": "bdf_to_ssd1306.py",
             "generator_version": GENERATOR_VERSION,
-            "font_id": CANONICAL_FONT_ID,
+            "font_id": font_identity(font_path),
             "font_source": str(font_path),
             "font_sha256": hashlib.sha256(font_path.read_bytes()).hexdigest(),
             "font_properties": properties,
@@ -349,13 +427,17 @@ def make_manifest(
 
 def build_manifest(args: argparse.Namespace) -> dict:
     font_hash = hashlib.sha256(args.font.read_bytes()).hexdigest()
-    if args.font.resolve() == (Path(__file__).resolve().parents[1] / "references" / "fonts" / "wenquanyi_bitmap_song_16px_ascii_date_cn.bdf").resolve():
-        if font_hash != CANONICAL_FONT_SHA256:
-            raise BdfError(
-                "canonical font SHA256 mismatch: expected {}, got {}".format(
-                    CANONICAL_FONT_SHA256, font_hash
+    fonts_dir = Path(__file__).resolve().parents[1] / "references" / "fonts"
+    # 随包字库必须与白名单登记的 SHA256 一致，防止被静默替换。
+    for entry in APPROVED_FONTS.values():
+        if args.font.resolve() == (fonts_dir / entry["filename"]).resolve():
+            if font_hash != entry["sha256"]:
+                raise BdfError(
+                    "bundled font SHA256 mismatch for {}: expected {}, got {}".format(
+                        entry["filename"], entry["sha256"], font_hash
+                    )
                 )
-            )
+            break
     properties, glyphs = parse_bdf(args.font)
     if args.base_manifest is not None:
         if args.text is not None or args.widths is not None:
@@ -408,7 +490,7 @@ def build_manifest(args: argparse.Namespace) -> dict:
         raise BdfError("base manifest dimensions do not match its layout")
     baseline_row = args.baseline_row
     if baseline_row is None:
-        baseline_row = default_baseline(cell_height)
+        baseline_row = layout_baseline(layout, glyphs, cell_height)
     if not 0 <= baseline_row < cell_height:
         raise BdfError("baseline row must be inside the cell")
 

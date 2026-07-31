@@ -1,14 +1,30 @@
 WenQuanYi Bitmap Song 16px subset notice
 
-This directory contains a mechanically extracted subset of WenQuanYi Bitmap
-Song 0.9.9.8 Release 8. It contains printable ASCII (U+0020..U+007E) plus
-U+5E74, U+6708, U+53F7, U+4E2D, U+56FD, and U+FFE5 for the HK64S825 OLED
-workflow.
+This directory contains two mechanically extracted subsets of WenQuanYi Bitmap
+Song 0.9.9.8 Release 8, both taken from the same upstream BDF by ENCODING with
+bitmap bytes, DWIDTH, and BBX kept byte-identical to upstream:
+
+1. wenquanyi_bitmap_song_16px_ascii_date_cn.bdf
+   Printable ASCII (U+0020..U+007E) plus U+5E74, U+6708, U+53F7, U+4E2D,
+   U+56FD, and U+FFE5. 101 glyphs.
+   SHA256: 7cdde010b3d72a116c6f7058ce79c79d7e49e1a117d5a6a44453b9d2e65b9993
+
+2. wenquanyi_bitmap_song_16px_gb2312.bdf
+   Printable ASCII plus every GB2312 double-byte character present upstream,
+   covering GB2312 levels 1 and 2 and the fullwidth punctuation block.
+   7539 glyphs. U+2015 is absent from upstream and therefore absent here.
+   SHA256: 27986209393675dcf4755a1e6cecfb548a81ead9fa1d3a7403511a3f59542000
+
+Both hashes are registered in APPROVED_FONTS in scripts/bdf_to_ssd1306.py.
+Text assets may only be generated from a registered font, and the release gate
+re-verifies the bundled file's hash against that registration.
 
 Upstream project: https://github.com/larryli/u8g2_wqy
 Upstream source: bdf/wenquanyi_12pt.bdf
 Upstream revision: 34d1bf7e054ef5a331c45248cd238edc49498897
 Upstream source SHA256: b4bc0413cee9fb865b6f4bbd0a8e3923c057f0a55e414c7c5ccc0a62a4247a28
+Upstream file size: 6759714 bytes (verify the size before hashing; a truncated
+download yields a different SHA256 and silently omits later glyph blocks)
 
 The upstream BDF identifies the font as:
 Copyright (C) 2004-2010, WenQuanYi Project Board of Trustees and Qianqian Fang
@@ -19,5 +35,8 @@ BDF's font embedding exception declaration remains in the subset BDF comments.
 
 The wrapper repository's MIT license does not replace the font license above.
 Keep this notice and the source BDF comments with any redistribution of the
-subset or firmware assets derived from it. This notice is provenance metadata,
-not legal advice.
+subsets or firmware assets derived from them. This notice is provenance
+metadata, not legal advice.
+
+Font size is unrelated to MTP budget: the subsets are only lookup sources, and
+only the glyphs used by the current text are written to the device.

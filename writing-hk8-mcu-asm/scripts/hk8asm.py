@@ -22,12 +22,11 @@ from ssd1306_page_bitmap import AssetError as DisplayAssetError
 from ssd1306_page_bitmap import build_result as build_display_asset_result
 from bdf_to_ssd1306 import (
     BdfError,
-    CANONICAL_FONT_ID,
-    CANONICAL_FONT_SHA256,
+    APPROVED_FONTS,
     GENERATOR_VERSION as BDF_GENERATOR_VERSION,
     crop_glyph_cell as crop_bdf_glyph_cell,
-    default_baseline as default_bdf_baseline,
     glyph_by_label as bdf_glyph_by_label,
+    layout_baseline as bdf_layout_baseline,
     pack_page_bytes as pack_bdf_page_bytes,
     parse_bdf,
     render_glyph as render_bdf_glyph,
@@ -1119,20 +1118,35 @@ def audit_text_glyph_provenance(
         isinstance(source, dict)
         and source.get("generator") == "bdf_to_ssd1306.py"
         and source.get("generator_version") == BDF_GENERATOR_VERSION
-        and source.get("font_id") == CANONICAL_FONT_ID,
+        and isinstance(source.get("font_id"), str),
         "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
         "Text assets require deterministic Unicode glyph provenance from bdf_to_ssd1306.py",
     )
-    canonical_font_hash = sha256_file(CANONICAL_TEXT_FONT)
+    # 字库按白名单校验：资产声明的 font_id 必须已登记，随包文件的实际
+    # SHA256 必须与登记值一致，且资产记录的 font_sha256 必须等于该值。
+    font_id = source.get("font_id")
+    approved = APPROVED_FONTS.get(font_id)
     require(
-        canonical_font_hash == CANONICAL_FONT_SHA256,
+        approved is not None,
         "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
-        "Bundled canonical text font SHA256 does not match the approved font identity",
+        f"Text asset font id is not in the approved list: {font_id}",
+    )
+    text_font = CANONICAL_TEXT_FONT.parent / approved["filename"]
+    require(
+        text_font.is_file(),
+        "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+        f"Approved text font is missing from the bundle: {approved['filename']}",
+    )
+    canonical_font_hash = sha256_file(text_font)
+    require(
+        canonical_font_hash == approved["sha256"],
+        "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+        "Bundled text font SHA256 does not match the approved font identity",
     )
     require(
         source.get("font_sha256") == canonical_font_hash,
         "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
-        "Text asset font SHA256 does not match the canonical bundled font",
+        "Text asset font SHA256 does not match the approved bundled font",
     )
     encodings = source.get("glyph_encodings")
     glyph_hashes = source.get("glyph_source_sha256")
@@ -1155,14 +1169,19 @@ def audit_text_glyph_provenance(
         "Text asset layout entries must be text glyphs with one Unicode character",
     )
     baseline_row = source.get("baseline_row")
-    require(
-        isinstance(baseline_row, int)
-        and baseline_row == default_bdf_baseline(result["height"]),
-        "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
-        "Text asset baseline does not match the canonical rendering policy",
-    )
     try:
-        _properties, font_glyphs = parse_bdf(CANONICAL_TEXT_FONT)
+        _properties, font_glyphs = parse_bdf(text_font)
+        # 基线必须等于由本 layout 字形唯一推导的值，不接受人工传入的任意基线。
+        # 只用 cell_height - 3 会让 3 行下伸部（g/j/p/q/y 等）恰好溢出一行，
+        # 故按 layout 实际字形推导，纯汉字资产结果与旧公式相同。
+        require(
+            isinstance(baseline_row, int)
+            and baseline_row == bdf_layout_baseline(
+                layout, font_glyphs, result["height"]
+            ),
+            "DISPLAY_GLYPH_PROVENANCE_MISMATCH",
+            "Text asset baseline does not match the canonical rendering policy",
+        )
         rebuilt_glyphs: list[bytes] = []
         seen_codepoint_hashes: dict[int, str] = {}
         for index, item in enumerate(layout):

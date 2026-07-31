@@ -278,6 +278,109 @@ class BdfToSsd1306Tests(unittest.TestCase):
             [item["label"] for item in manifest["source"]["glyph_provenance"]],
         )
 
+    def test_descender_glyphs_lower_the_baseline_within_the_cell(self) -> None:
+        """含 3 行下伸部的小写字母必须能渲染，且基线自动下移一行。
+
+        只用 cell_height - 3 会让 y_offset 为 -3 的字形恰好溢出一行，
+        与 cell_height 取值无关。基线须按本 layout 实际字形推导。
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "descender.json"
+            result = self.run_converter(
+                "--text", "hy",
+                "--widths", "8,8",
+                "--cell-height", "24",
+                "--asset-id", "descender",
+                "--output", str(output),
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            manifest = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(20, manifest["source"]["baseline_row"])
+        self.assertEqual(48, len(manifest["source"]["bytes"]))
+        self.assertIn("#", "".join(manifest["preview_rows"]))
+
+    def test_ascender_only_layout_keeps_the_default_baseline(self) -> None:
+        """无下伸部时基线仍为 cell_height - 3，既有资产哈希不受影响。"""
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "plain.json"
+            result = self.run_converter(
+                "--text", "12",
+                "--widths", "8,8",
+                "--cell-height", "16",
+                "--asset-id", "plain",
+                "--output", str(output),
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            manifest = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(13, manifest["source"]["baseline_row"])
+
+    def test_layout_baseline_matches_default_without_descenders(self) -> None:
+        _properties, glyphs = BDF.parse_bdf(FONT)
+        layout = [{"label": "1", "width": 8}]
+        self.assertEqual(
+            BDF.default_baseline(16),
+            BDF.layout_baseline(layout, glyphs, 16),
+        )
+
+    def test_layout_baseline_drops_for_descenders(self) -> None:
+        _properties, glyphs = BDF.parse_bdf(FONT)
+        layout = [{"label": "y", "width": 8}]
+        self.assertEqual(20, BDF.layout_baseline(layout, glyphs, 24))
+        self.assertLess(
+            BDF.layout_baseline(layout, glyphs, 24),
+            BDF.default_baseline(24),
+        )
+
+    def test_approved_font_list_covers_bundled_fonts(self) -> None:
+        """白名单登记的 SHA256 必须与随包字库实际内容一致。"""
+        fonts_dir = SKILL_ROOT / "references" / "fonts"
+        self.assertIn("wenquanyi-bitmap-song-16px-canonical-v1", BDF.APPROVED_FONTS)
+        self.assertIn("wenquanyi-bitmap-song-16px-gb2312-v1", BDF.APPROVED_FONTS)
+        for font_id, entry in BDF.APPROVED_FONTS.items():
+            path = fonts_dir / entry["filename"]
+            self.assertTrue(path.is_file(), f"{font_id} 的字库文件缺失: {path}")
+            self.assertEqual(
+                entry["sha256"],
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+                f"{font_id} 的登记 SHA256 与实际内容不一致",
+            )
+            self.assertEqual(font_id, BDF.font_identity(path))
+
+    def test_unapproved_font_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            fake = Path(temp) / "fake.bdf"
+            fake.write_bytes(FONT.read_bytes() + b"\nCOMMENT tampered\n")
+            with self.assertRaises(BDF.BdfError):
+                BDF.font_identity(fake)
+
+    def test_gb2312_font_renders_chinese_glyphs(self) -> None:
+        """GB2312 字库须覆盖常用汉字与全角标点，并记录对应 font_id。"""
+        gb2312 = SKILL_ROOT / "references" / "fonts" / "wenquanyi_bitmap_song_16px_gb2312.bdf"
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "cn.json"
+            result = subprocess.run(
+                [
+                    sys.executable, str(SCRIPT), str(gb2312),
+                    "--text", "你好，",
+                    "--widths", "16,16,16",
+                    "--cell-height", "24",
+                    "--asset-id", "cn",
+                    "--output", str(output),
+                ],
+                cwd=SKILL_ROOT, text=True, encoding="utf-8",
+                env=env, capture_output=True, check=False,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            manifest = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(
+            "wenquanyi-bitmap-song-16px-gb2312-v1",
+            manifest["source"]["font_id"],
+        )
+        self.assertEqual(["你", "好", "，"], [i["label"] for i in manifest["layout"]])
+        self.assertIn("#", "".join(manifest["preview_rows"]))
+
     def test_standard_asm_hex_prefix_round_trips(self) -> None:
         result = BDF.build_result({
             "schema_version": 1,
