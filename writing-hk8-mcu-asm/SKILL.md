@@ -101,6 +101,7 @@ D. 不确定/我不知道
 - 所有任务：读取 `references/spec/AGENTS.md` 和 `09-AI智能体生成与审查协议.md` 的相关段落；从 `asm-rules.json`、`instruction-reference.json`、`register-reference.json`、`register-alias-policy.json` 定向查询实际使用项。
 - LED/GPIO：再读取 `05-GPIO-I2C-OLED驱动规范.md` 中 GPIO/LED 相关段落和必要 checklist。
 - OLED：再读取 `05-GPIO-I2C-OLED驱动规范.md` 中 I2C/OLED 相关段落。
+- OLED 字形出现“窗口尺寸正确但字形不完整、像多个字符拼接”时，再读取 `08-踩坑案例与症状诊断手册.md` 的 OLED 查表索引案例。
 - 数码管：先读取通用 `06-数码管动态扫描规范.md`；只有用户明确选择已注册 profile 后，才读取 `references/boards/<board_profile_id>/seven-segment.md`，不得枚举或试读其他板级目录来替用户选板。
 - 构建/编译：读取 `07-构建-烧录-验收规范.md` 中编译相关段落、profile/config 和 adapter 配置。
 

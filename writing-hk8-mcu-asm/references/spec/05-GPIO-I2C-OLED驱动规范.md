@@ -471,6 +471,7 @@ DB 源码按上述逻辑原始 byte sequence 写入，不得根据 BIN 物理排
 - [ ] 水平镜像只在各字符块内部反转列；垂直镜像按全部像素行处理，多 page 时同时完成 page 交换和 byte bit 反转。
 - [ ] 多字符/汉字/图片块按 page → 字块/图片块 → 列发送；两个 16x16 汉字的 64 字节顺序为 page0 字1、page0 字2、page1 字1、page1 字2。
 - [ ] 正式汉字、ASCII 字母、Logo、头像、图片和多 page 字模使用 `DB + TABL/TABH`，请求含匹配当前 board 的 `orientation_profile` 和 `table_sender`，源码含精确 `TABLE_PAIR`。
+- [ ] 多 page 定宽字模的运行时表索引已用最终 MAP 回核：索引基值等于表低 8 位，跨 page 偏移按 word 数计算。
 - [ ] DB 原始顺序、`builtin_compiler` 构建、MAP 同页审计完成。
 - [ ] 静态检查和目标编译 0 error / 0 warning，`release` 返回 `RELEASED`。
 

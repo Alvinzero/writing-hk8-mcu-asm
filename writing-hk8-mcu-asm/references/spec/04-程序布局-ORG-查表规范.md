@@ -258,7 +258,17 @@ SEND_IMAGE_DATA0_LOOP:
   RET
 ```
 
-若通过 `ADD A,#TABLE_LABEL` 计算偏移，同样必须保证结果的低 8 位和 instruction page 符合目标芯片查表语义，并以实板小 marker 证明。
+若通过 `ADD A,#TABLE_LABEL` 或等价 `EQU` 常量计算运行时表索引，同样必须保证结果低 8 位等于最终 MAP 中目标表 word 地址的低 8 位。不能凭源码目测 `ORG` 或人工估算常量；release 前必须用 MAP 回核。
+
+多 page 定宽字模使用“按 page 分区”发送时，跨 page 偏移必须按 word 数计算：
+
+```text
+glyph_page_words = glyph_width_bytes / 2
+page1_offset     = glyph_count * glyph_page_words
+runtime_index    = (table_word_address & 0FFH) + glyph_index * glyph_page_words
+```
+
+例如 10 个 `8x16` 数字：单 page 为 `8 bytes = 4 words`，第二 page 偏移为 `10 * 4 = 28H`。若 MAP 中 `DIGIT_DATA=010BH`，运行时第 0 个数字的索引必须从 `0BH` 开始；写成 `0AH` 会从表前一个 word 取数，表现为窗口尺寸正确但字形像两个数字被截断拼接。该类修复只改索引/偏移后重新 release，不先重排 DB、交换 `TABL/TABH` 或修改 OLED 方向。
 
 ## 13. MAP 审计
 
@@ -276,7 +286,9 @@ TABLE2:SEND_TABLE2
 2. 定位 sender 内具体 `TABL/TABH` 的 word 地址。
 3. 比较高 8 位 page。
 4. 检查 sender 自身没有跨 `xxFF -> (xx+1)00` 边界。
-5. 记录每块 bytes、words、起止地址和剩余 page 容量。
+5. 若运行时用常量或 `ADD` 生成表索引，核对索引基值等于 `table_address & 0FFH`。
+6. 若同一表内按 page 分区取多页字模，核对跨 page 偏移等于前一批 glyph 的 word 总数。
+7. 记录每块 bytes、words、起止地址和剩余 page 容量。
 
 命令示例：
 
@@ -350,5 +362,7 @@ self.rom[addr]
 - [ ] DB 为原始消费者顺序，每条偶数字节。
 - [ ] 每次 `TABH` 前重新装载 A/index。
 - [ ] 每个 table/sender pair 在 MAP 中同一 256-word page。
+- [ ] 运行时表索引基值等于 MAP 中 table word 地址低 8 位。
+- [ ] 多 page 定宽字模的跨 page 偏移按 word 数计算，并与 glyph 数量、宽度一致。
 - [ ] simulator 未被用来证明跨页查表。
 - [ ] 原始资产、转换参数、byte count、hash 可追溯。
