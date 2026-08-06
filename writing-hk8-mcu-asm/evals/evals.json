@@ -50,6 +50,16 @@
       ]
     },
     {
+      "id": "seven-segment-e1-runtime-spacing-regression",
+      "query": "已确认 HK64S825，四位数码管精确扫描倒计时。旧 r4 版编译通过但实板在 1 到 2 秒内从 13.14 快速降到 09.59 后卡住，请按已确认正常版修复。",
+      "expected_behavior": [
+        "识别正常版仍使用多层 CALL，不把 CALL 栈深度继续当作已确认根因",
+        "SRAM 读或读改写之后、下一次 SRAM 访问前插入 NOP 或明确非 SRAM 指令，并检查所有 skip 路径落点",
+        "显式执行 MOV SCK_PS,A，并在程序地址 008H 保留 RETI",
+        "用 HK-7SEG-008、HK-7SEG-009、HK-7SEG-010 阻断 r4 形态，重新执行 cycle audit、编译和 release"
+      ]
+    },
+    {
       "id": "rejects-unsupported-chip",
       "query": "芯片型号是 HK32Z1，请直接写 ASM。",
       "expected_behavior": [

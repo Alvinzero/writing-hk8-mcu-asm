@@ -730,6 +730,55 @@ class ValidateSkillContractTests(unittest.TestCase):
         for rule in selected.values():
             self.assertIn("board contract", rule["requirement"])
 
+    def test_precise_seven_segment_e1_runtime_guards_are_packaged(self) -> None:
+        rules = json.loads(
+            (SPEC_ROOT / "rules" / "asm-rules.json").read_text(encoding="utf-8")
+        )["rules"]
+        selected = {
+            rule["rule_id"]: rule
+            for rule in rules
+            if rule["rule_id"] in {"HK-7SEG-008", "HK-7SEG-009", "HK-7SEG-010"}
+        }
+        self.assertEqual(3, len(selected))
+        for rule in selected.values():
+            self.assertEqual("BLOCKER", rule["severity"])
+            self.assertIn("seven_segment", rule["scope"])
+            self.assertIn("timing.precision=precise", rule["requirement"])
+
+        documents = (
+            self.skill_text(),
+            self.spec_text("06-数码管动态扫描规范.md"),
+            self.spec_text("08-踩坑案例与症状诊断手册.md"),
+            self.spec_text("AGENTS.md"),
+            self.spec_text("09-AI智能体生成与审查协议.md"),
+        )
+        combined = "\n".join(documents)
+        for phrase in (
+            "HK-7SEG-008..010",
+            "MOV SCK_PS,A",
+            "ORG 008H",
+            "RETI",
+            "SRAM 读或读改写",
+            "skip",
+            "多层 `CALL`",
+        ):
+            self.assertIn(phrase, combined)
+
+        evals = json.loads(
+            (SKILL_ROOT / "evals" / "evals.json").read_text(encoding="utf-8")
+        )
+        cases = {case["id"]: case for case in evals["cases"]}
+        case = cases["seven-segment-e1-runtime-spacing-regression"]
+        behavior = "\n".join(case["expected_behavior"])
+        for phrase in (
+            "CALL 栈深度",
+            "SRAM 读或读改写",
+            "MOV SCK_PS,A",
+            "008H",
+            "HK-7SEG-010",
+        ):
+            self.assertIn(phrase, behavior)
+
     def test_builtin_compile_config_is_not_bound_to_a_board(self) -> None:
         config = json.loads(
             (SKILL_ROOT / "references" / "configs" / "builtin-config.json").read_text(
@@ -807,7 +856,7 @@ class ValidateSkillContractTests(unittest.TestCase):
         for relative_path in document_paths:
             with self.subTest(relative_path=relative_path):
                 text = self.spec_text(relative_path)
-                self.assertIn("84 条", text)
+                self.assertIn("87 条", text)
                 self.assertNotIn("79 条", text)
                 self.assertNotIn("78 条", text)
                 self.assertNotIn("70 条", text)

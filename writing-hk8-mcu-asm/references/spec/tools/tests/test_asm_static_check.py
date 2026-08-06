@@ -363,6 +363,58 @@ def timing_request(
     }
 
 
+def seven_segment_precise_request() -> dict:
+    return {
+        "schema_version": 1,
+        "chip": "HK64S825",
+        "behavior": "GPIO直驱四位数码管精确动态扫描倒计时",
+        "peripherals": [{"name": "seven_segment"}],
+        "timing": {"precision": "precise"},
+    }
+
+
+SEVEN_SEGMENT_R4_SHAPE_SOURCE = """; CHIP: HK64S825
+; GPIO直驱四位数码管精确动态扫描
+ORG 000H
+    JMP START
+
+START:
+    MOV A,90H
+    MOV 96H,A
+    DECSZR 80H
+    JMP AFTER_SKIP
+    DECSZR 81H
+AFTER_SKIP:
+    RET
+END
+"""
+
+
+SEVEN_SEGMENT_E1_SHAPE_SOURCE = """; CHIP: HK64S825
+; GPIO直驱四位数码管精确动态扫描
+ORG 000H
+    JMP START
+
+ORG 008H
+    RETI
+
+START:
+    MOV A,#034H
+    MOV SCK_PS,A
+    MOV A,90H
+    NOP
+    MOV 96H,A
+    NOP
+    DECSZR 80H
+    JMP AFTER_SKIP
+    NOP
+    DECSZR 81H
+AFTER_SKIP:
+    RET
+END
+"""
+
+
 def delay_source(outer: int = 4, *, prefix: str = "") -> str:
     return (
         prefix
@@ -850,6 +902,54 @@ class AsmStaticCheckCliTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0)
         self.assertEqual(payload["files"][0]["sram_addresses"], ["0x80", "0xBF"])
+
+    def test_precise_seven_segment_rejects_r4_runtime_shape(self):
+        completed, payload = self.run_checker(
+            SEVEN_SEGMENT_R4_SHAPE_SOURCE,
+            "--toolchain",
+            "builtin_compiler",
+            request=seven_segment_precise_request(),
+        )
+        self.assertEqual(completed.returncode, 2, payload["findings"])
+        self.assertTrue(
+            {"HK-7SEG-008", "HK-7SEG-009", "HK-7SEG-010"}
+            <= self.rule_ids(payload),
+            payload["findings"],
+        )
+        seven_segment_audit = payload["semantic_audits"]["seven_segment"]
+        self.assertTrue(seven_segment_audit["audited"])
+        self.assertEqual(seven_segment_audit["status"], "fail")
+
+    def test_precise_seven_segment_accepts_e1_spacing_and_entries(self):
+        completed, payload = self.run_checker(
+            SEVEN_SEGMENT_E1_SHAPE_SOURCE,
+            "--toolchain",
+            "builtin_compiler",
+            request=seven_segment_precise_request(),
+        )
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertNotIn("HK-7SEG-008", self.rule_ids(payload))
+        self.assertNotIn("HK-7SEG-009", self.rule_ids(payload))
+        self.assertNotIn("HK-7SEG-010", self.rule_ids(payload))
+        self.assertEqual(
+            payload["semantic_audits"]["seven_segment"]["status"], "pass"
+        )
+
+    def test_e1_runtime_guards_do_not_expand_to_non_four_digit_tasks(self):
+        request = seven_segment_precise_request()
+        request["behavior"] = "GPIO直驱单个数码管精确扫描"
+        completed, payload = self.run_checker(
+            SEVEN_SEGMENT_R4_SHAPE_SOURCE,
+            "--toolchain",
+            "builtin_compiler",
+            request=request,
+        )
+        self.assertEqual(completed.returncode, 0, payload["findings"])
+        self.assertFalse(
+            {"HK-7SEG-008", "HK-7SEG-009", "HK-7SEG-010"}
+            & self.rule_ids(payload)
+        )
+        self.assertNotIn("seven_segment", payload["semantic_audits"])
 
     def test_unused_business_equ_warns_and_strict_mode_fails(self):
         source = "LED_MASK EQU 29H\nORG 0\nSTART:\n  MOV A,#29H\nEND\n"

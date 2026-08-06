@@ -320,8 +320,8 @@ def check_rules(
 
     rules = document.get("rules", [])
     checks["rule_count"] = len(rules) if isinstance(rules, list) else 0
-    if checks["rule_count"] != 84:
-        add_finding(findings, "rule-count", rules_path, f"expected 84 rules, found {checks['rule_count']}")
+    if checks["rule_count"] != 87:
+        add_finding(findings, "rule-count", rules_path, f"expected 87 rules, found {checks['rule_count']}")
     ids = collect_valid_rule_ids(rules, schema)
     duplicate_ids = sorted(
         value for value, count in Counter(ids).items() if count > 1

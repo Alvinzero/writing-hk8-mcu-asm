@@ -104,6 +104,15 @@
 - `DECSZ/INCSZ` 写 A；`DECSZR/INCSZR` 写回 R。循环必须证明状态进展，`CLRWDT` 不得掩盖死循环。
 - 精确延时从 OSC、SCK_PS、实际 SCK 和指令 cycles 推导。默认 `SCK_PS=34H` 时，16 MHz OSC 对应 2 MHz SCK。
 
+针对当前 HK64S825 四位精确动态扫描 E1 基线，另有以下必须保持的运行时结构：
+
+- SRAM 读或读改写之后，下一次 SRAM 访问前必须有 `NOP` 或其他明确非 SRAM 指令；纯写入后不强制额外间隔。
+- skip 指令（包括 `BTSZ/BTSNZ/SZ/SZR/DECSZ/DECSZR/INCSZ/INCSZR`）跳过下一条后若会落到 SRAM 访问，跳过槽位必须放 `NOP`。
+- 必须显式执行 `MOV SCK_PS,A`，并在程序地址 `008H` 放 `RETI`。
+- 不得把正常工作版仍使用多层 `CALL` 简化为“栈深度根因”；CALL 深度只有在独立硬件证据支持时才可改变。
+
+静态检查器以 `HK-7SEG-008..010` 实施上述门禁，只对结构化请求中的 `seven_segment + timing.precision=precise` 生效。
+
 ## 5. 生成工作流
 
 1. 输出 `resolved_inputs` 和 `unresolved_inputs`。
@@ -176,6 +185,7 @@ AI 最终输出至少包含：
 - 未经用户明确选择 `board_profile_id`，不得读取 `references/boards/` 中任何已注册板资料。
 - 用户自定义接线时，以逐段、逐位 PinContract 和 `input_provenance` 为准，不得用相似开发板补齐缺口。
 - 扫描固定遵循：全关 → 写段码 → 只开当前位 → 延时 → 全关；各步骤的实际电平由已确认 board contract 计算。
+- 精确四位扫描还必须通过 `HK-7SEG-008..010` 的 SRAM 间隔、skip 落点、`SCK_PS` 和 `008H/RETI` 检查。
 
 ## 9. 自检
 

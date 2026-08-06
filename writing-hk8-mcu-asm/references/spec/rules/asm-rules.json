@@ -2233,6 +2233,119 @@
       ]
     },
     {
+      "rule_id": "HK-7SEG-008",
+      "title": "精确扫描 SRAM 访问必须有执行间隔",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "seven_segment"
+      ],
+      "requirement": "结构化四位数码管请求声明 seven_segment 且 timing.precision=precise 时，SRAM 读或读改写指令之后、下一次 SRAM 访问前必须执行 NOP 或其他明确的非 SRAM 指令；纯写入 SRAM 后不强制额外间隔。",
+      "rationale": "用户确认正常的 E1 倒计时版本在 SRAM 读/RMW 到下一次 SRAM 访问之间保留执行间隔；缺少间隔的 r4 版本出现快速倒计时、扫描异常并卡在 09.59。",
+      "bad_example": "MOV A,90H 后立即 MOV 96H,A。",
+      "good_example": "MOV A,90H；NOP；MOV 96H,A，并重新审计扫描周期。",
+      "verification": [
+        "asm_static_check.py SRAM 读/RMW 后访问间隔检查",
+        "r4 负例与 E1 正例回归"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "2026-08-06 四位数码管倒计时实板对照",
+          "note": "正常版加入 SRAM 访问间隔，r4 缺少间隔"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "builtin_compiler",
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "7seg",
+        "memory",
+        "timing",
+        "static-check"
+      ]
+    },
+    {
+      "rule_id": "HK-7SEG-009",
+      "title": "精确扫描 skip 落点前必须保留间隔",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "seven_segment"
+      ],
+      "requirement": "结构化四位数码管请求声明 seven_segment 且 timing.precision=precise 时，任何 skip 指令跳过下一条后若会直接落到 SRAM 访问，被跳过的槽位必须显式放 NOP。",
+      "rationale": "只在非 skip 路径放间隔不能保护跳过路径；r4 的 DECSZR/JMP/DECSZR 结构缺少该路径间隔。",
+      "bad_example": "DECSZR 81H；JMP LOOP；DECSZR 82H。",
+      "good_example": "DECSZR 81H；JMP LOOP；NOP；DECSZR 82H。",
+      "verification": [
+        "asm_static_check.py skip 落点检查",
+        "逐个复核 BTSZ/BTSNZ/SE/SZ/SZR/DECSZ/DECSZR/INCSZ/INCSZR"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "2026-08-06 四位数码管倒计时实板对照",
+          "note": "正常版保护 skip 路径，r4 未保护"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "builtin_compiler",
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "7seg",
+        "skip",
+        "memory",
+        "timing",
+        "static-check"
+      ]
+    },
+    {
+      "rule_id": "HK-7SEG-010",
+      "title": "精确扫描必须固定运行时时钟并保留中断入口",
+      "normative_level": "MUST",
+      "severity": "BLOCKER",
+      "status": "active",
+      "scope": [
+        "seven_segment"
+      ],
+      "requirement": "结构化四位数码管请求声明 seven_segment 且 timing.precision=precise 时，初始化必须显式执行 MOV SCK_PS,A，程序字地址 008H 必须唯一且为 RETI。",
+      "rationale": "注释或 cycle audit 不能代替运行时分频写入；缺失或被占用的中断入口也可能在实板重定向执行。",
+      "bad_example": "只在注释声明 SCK_PS=34H，且从 ORG 000H 连续排布普通代码覆盖 008H。",
+      "good_example": "MOV A,#034H；MOV SCK_PS,A，并用 ORG 008H；RETI 保留入口。",
+      "verification": [
+        "asm_static_check.py SCK_PS 写入检查",
+        "程序地址 008H 指令检查"
+      ],
+      "evidence": [
+        {
+          "level": "E1",
+          "source": "2026-08-06 四位数码管倒计时实板对照",
+          "note": "正常版显式写 SCK_PS 并保留 008H/RETI，r4 缺失"
+        }
+      ],
+      "confidence": "high",
+      "toolchain_applicability": [
+        "builtin_compiler",
+        "company_ide",
+        "hardware"
+      ],
+      "tags": [
+        "7seg",
+        "clock",
+        "interrupt",
+        "layout",
+        "static-check"
+      ]
+    },
+    {
       "rule_id": "HK-BUILD-001",
       "title": "构建成功不是可烧录充分条件",
       "normative_level": "MUST",

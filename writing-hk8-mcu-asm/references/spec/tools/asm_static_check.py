@@ -75,12 +75,30 @@ GPIO_COMPLEX_CONTEXT_RE = re.compile(
     r"(I2C|OLED|SSD1306|数码|七段|7SEG|BOARD[_ -]?PROFILE|板级|经验证)",
     re.IGNORECASE,
 )
+SEVEN_SEGMENT_CONTEXT_RE = re.compile(
+    r"(?:seven[_ -]?segment|7seg|七段|数码管)", re.IGNORECASE
+)
+FOUR_DIGIT_SEVEN_SEGMENT_RE = re.compile(
+    r"(?:四位|4\s*位|four[_ -]?digit)", re.IGNORECASE
+)
 GPIO_AUDIT_RULE_IDS = ["HK-GPIO-002", "HK-GPIO-INIT-001"]
 LOOP_AUDIT_RULE_IDS = ["HK-SYN-012", "HK-WDT-001", "HK-WDT-002"]
 OLED_I2C_AUDIT_RULE_IDS = ["HK-I2C-005", "HK-I2C-006", "HK-OLED-005"]
+SEVEN_SEGMENT_AUDIT_RULE_IDS = ["HK-7SEG-008", "HK-7SEG-009", "HK-7SEG-010"]
 DELAY_LABEL_RE = re.compile(r"(DELAY|WAIT)", re.IGNORECASE)
 WDT_OFF_RE = re.compile(r"(WDT|看门狗).{0,20}(OFF|DISABLE|DISABLED|关闭|禁用|已关)", re.IGNORECASE)
 WRITE_FIRST_OPERAND_OPS = {"MOV", "BSET", "BCLR", "BCPL"}
+SKIP_OPS = {
+    "BTSZ",
+    "BTSNZ",
+    "DECSZ",
+    "DECSZR",
+    "INCSZ",
+    "INCSZR",
+    "SE",
+    "SZ",
+    "SZR",
+}
 
 
 def load_context_json(path: Path | None, label: str) -> dict[str, Any] | None:
@@ -162,8 +180,67 @@ def collect_sram_addresses(args: str) -> set[int]:
     return addresses
 
 
+def instruction_reads_sram(instruction: dict[str, Any]) -> bool:
+    args = instruction.get("args", "")
+    if not collect_sram_addresses(args):
+        return False
+    if instruction.get("op") != "MOV":
+        return True
+    operands = split_values(args)
+    if len(operands) != 2:
+        return True
+    destination_sram = collect_sram_addresses(operands[0])
+    source_sram = collect_sram_addresses(operands[1])
+    return bool(source_sram) or not destination_sram
+
+
 def first_operand(args: str) -> str:
     return args.split(",", 1)[0].strip()
+
+
+def request_mentions_seven_segment(request: dict[str, Any] | None) -> bool:
+    if not isinstance(request, dict):
+        return False
+    candidates: list[str] = []
+    for key in ("behavior", "feature", "function", "task", "driver"):
+        value = request.get(key)
+        if isinstance(value, str):
+            candidates.append(value)
+    peripherals = request.get("peripherals")
+    if isinstance(peripherals, list):
+        for peripheral in peripherals:
+            if isinstance(peripheral, str):
+                candidates.append(peripheral)
+            elif isinstance(peripheral, dict):
+                for key in ("name", "type", "driver"):
+                    value = peripheral.get(key)
+                    if isinstance(value, str):
+                        candidates.append(value)
+    return SEVEN_SEGMENT_CONTEXT_RE.search(" ".join(candidates)) is not None
+
+
+def precise_seven_segment_request(request: dict[str, Any] | None) -> bool:
+    if not request_mentions_seven_segment(request):
+        return False
+    assert isinstance(request, dict)
+    behavior = request.get("behavior", "")
+    board = request.get("board")
+    visual_order = (
+        board.get("visual_order_left_to_right")
+        if isinstance(board, dict)
+        else None
+    )
+    digit_count = request.get("digit_count")
+    is_four_digit = (
+        isinstance(behavior, str)
+        and FOUR_DIGIT_SEVEN_SEGMENT_RE.search(behavior) is not None
+    ) or digit_count == 4 or (
+        isinstance(visual_order, list) and len(visual_order) == 4
+    )
+    if not is_four_digit:
+        return False
+    timing = request.get("timing") if isinstance(request, dict) else None
+    return isinstance(timing, dict) and timing.get("precision") == "precise"
 
 
 def occupy_words(
@@ -1154,6 +1231,117 @@ def audit_oled_i2c_practices(file_result: Dict[str, Any]) -> List[Dict[str, Any]
     return findings
 
 
+def audit_precise_seven_segment(
+    files: list[dict[str, Any]],
+    request: dict[str, Any] | None,
+    request_path: Path | None,
+) -> list[dict[str, Any]]:
+    """Apply the E1 timing/layout guards for precise four-digit scan tasks.
+
+    These guards are intentionally scoped by the structured request. Generic GPIO,
+    OLED, non-four-digit and non-precise seven-segment sources do not carry this
+    board-level runtime contract.
+    """
+    if not precise_seven_segment_request(request):
+        return []
+
+    findings: list[dict[str, Any]] = []
+    all_instructions = [
+        instruction
+        for file_result in files
+        for instruction in file_result.get("_instructions", [])
+    ]
+    all_instructions.sort(key=lambda item: (str(item.get("file", "")), item.get("address", 0)))
+
+    for file_result in files:
+        instructions = file_result.get("_instructions", [])
+        for previous, current in zip(instructions, instructions[1:]):
+            if current.get("address") != previous.get("address", -2) + 1:
+                continue
+            current_sram = collect_sram_addresses(current.get("args", ""))
+            if not instruction_reads_sram(previous) or not current_sram:
+                continue
+            findings.append(
+                make_finding(
+                    "HK-7SEG-008",
+                    "BLOCKER",
+                    file_result["path"],
+                    current.get("line"),
+                    f"SRAM read/RMW is followed by another SRAM access at {previous.get('source')} -> {current.get('source')}",
+                    "On the hardware-verified scan path, a SRAM read or read-modify-write followed immediately by another SRAM access can destabilize display state on this MCU/toolchain combination.",
+                    "Insert NOP or another explicit non-SRAM instruction after the SRAM read/RMW before the next SRAM access, then recalculate timing.",
+                )
+            )
+
+        for index, skip in enumerate(instructions):
+            if skip.get("op") not in SKIP_OPS or index + 2 >= len(instructions):
+                continue
+            skipped = instructions[index + 1]
+            landed = instructions[index + 2]
+            if skipped.get("address") != skip.get("address", -2) + 1:
+                continue
+            if landed.get("address") != skipped.get("address", -2) + 1:
+                continue
+            if not collect_sram_addresses(landed.get("args", "")):
+                continue
+            findings.append(
+                make_finding(
+                    "HK-7SEG-009",
+                    "BLOCKER",
+                    file_result["path"],
+                    landed.get("line"),
+                    f"{skip.get('source')} skips {skipped.get('source')} and lands directly on SRAM access {landed.get('source')}",
+                    "The skip path has no timing spacer; this pattern caused the failed countdown scan to run with unstable frame/state behavior.",
+                    "Keep the skipped instruction slot occupied by an explicit NOP before the next SRAM access.",
+                )
+            )
+
+    sck_write = any(
+        instruction.get("op") == "MOV"
+        and [part.upper() for part in split_values(instruction.get("args", ""))]
+        == ["SCK_PS", "A"]
+        for instruction in all_instructions
+    )
+    if not sck_write:
+        findings.append(
+            make_finding(
+                "HK-7SEG-010",
+                "BLOCKER",
+                request_path or (files[0]["path"] if files else "<request>"),
+                None,
+                "precise seven-segment timing task has no explicit MOV SCK_PS,A",
+                "The cycle audit alone does not prove the runtime divider; the working E1 driver explicitly programs the 2 MHz instruction clock.",
+                "Load the confirmed SCK_PS value into A and execute MOV SCK_PS,A before timing-critical scan code.",
+            )
+        )
+
+    vector_entries = [
+        instruction
+        for instruction in all_instructions
+        if instruction.get("address") == 0x0008
+    ]
+    vector_entry = vector_entries[0] if len(vector_entries) == 1 else None
+    if vector_entry is None or vector_entry.get("op") != "RETI":
+        if not vector_entries:
+            evidence = "program address 008H has no instruction"
+        elif len(vector_entries) > 1:
+            evidence = f"program address 008H has {len(vector_entries)} source instructions"
+        else:
+            evidence = "program word 008H is not RETI"
+        findings.append(
+            make_finding(
+                "HK-7SEG-010",
+                "BLOCKER",
+                request_path or (files[0]["path"] if files else "<request>"),
+                vector_entry.get("line") if vector_entry is not None else None,
+                evidence,
+                "A missing or occupied interrupt entry can redirect runtime execution even when the main-loop source passes static syntax and cycle checks.",
+                "Reserve exactly one source instruction at ORG 008H and make it RETI.",
+            )
+        )
+    return findings
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Check HK64S825 ASM source/layout rules; this does not replace compiler or hardware acceptance."
@@ -1368,6 +1556,7 @@ def main(argv: list[str] | None = None) -> int:
     loop_audit_calls = 0
     gpio_audit_calls = 0
     oled_i2c_audit_calls = 0
+    seven_segment_audit_calls = 0
     loop_execution_findings: list[dict[str, Any]] = []
     gpio_execution_findings: list[dict[str, Any]] = []
     oled_i2c_execution_findings: list[dict[str, Any]] = []
@@ -1458,6 +1647,11 @@ def main(argv: list[str] | None = None) -> int:
         instruction_effects,
     )
     findings.extend(timing_findings)
+    if precise_seven_segment_request(request_context):
+        seven_segment_audit_calls = 1
+        findings.extend(
+            audit_precise_seven_segment(files, request_context, args.request)
+        )
     for file_result in files:
         file_result.pop("_instructions", None)
         file_result.pop("_equ_symbols", None)
@@ -1514,6 +1708,20 @@ def main(argv: list[str] | None = None) -> int:
         audited=oled_i2c_audit_calls > 0,
         unavailable_status="not_applicable",
     )
+    semantic_audits = {
+        "gpio_contract": gpio_audit,
+        "loop_semantics": loop_audit,
+        "oled_i2c": oled_i2c_audit,
+        "timing": timing_audits,
+    }
+    if seven_segment_audit_calls:
+        semantic_audits["seven_segment"] = semantic_audit_summary(
+            SEVEN_SEGMENT_AUDIT_RULE_IDS,
+            findings,
+            execution_findings=[],
+            audited=True,
+            unavailable_status="unavailable",
+        )
     payload = {
         "schema_version": "1.0.0",
         "toolchain": args.toolchain,
@@ -1526,12 +1734,7 @@ def main(argv: list[str] | None = None) -> int:
         "map_files": [str(path.resolve()) for path in args.maps],
         "files": files,
         "table_pairs": table_pairs,
-        "semantic_audits": {
-            "gpio_contract": gpio_audit,
-            "loop_semantics": loop_audit,
-            "oled_i2c": oled_i2c_audit,
-            "timing": timing_audits,
-        },
+        "semantic_audits": semantic_audits,
         "findings": findings,
         "summary": {
             "blockers": severity_counts["BLOCKER"],
