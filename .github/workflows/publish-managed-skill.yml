@@ -1,0 +1,112 @@
+name: Publish managed HK8 Skill
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "writing-hk8-mcu-asm/**"
+      - ".github/workflows/publish-managed-skill.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-managed-hk8-skill
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      SKILL_NAME: writing-hk8-mcu-asm
+      UPDATE_BASE_URL: https://tzlapi.qzz.io/hk-ai-platform
+      UPDATE_SERVER: 154.219.120.25
+      UPDATE_USER: root
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package and hash Skill
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
+          commit="${GITHUB_SHA}"
+          output="${RUNNER_TEMP}/managed-skill"
+          archive_name="${SKILL_NAME}-${commit}.zip"
+          mkdir -p "${output}"
+          export VERSION="${version}" COMMIT="${commit}" OUTPUT="${output}" ARCHIVE_NAME="${archive_name}"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import struct
+          import zipfile
+          from pathlib import Path
+
+          skill = os.environ["SKILL_NAME"]
+          root = Path(skill)
+          output = Path(os.environ["OUTPUT"])
+          archive = output / os.environ["ARCHIVE_NAME"]
+          files = sorted(path for path in root.rglob("*") if path.is_file())
+          digest = hashlib.sha256()
+          for path in files:
+              relative = path.relative_to(root).as_posix().encode("utf-8")
+              content = path.read_bytes()
+              digest.update(struct.pack("<Q", len(relative)))
+              digest.update(relative)
+              digest.update(struct.pack("<Q", len(content)))
+              digest.update(content)
+          with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as package:
+              for path in files:
+                  package.write(path, path.relative_to(root).as_posix())
+          archive_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
+          manifest = {
+              "schemaVersion": 1,
+              "skill": skill,
+              "version": os.environ["VERSION"],
+              "commit": os.environ["COMMIT"],
+              "contentSha256": digest.hexdigest(),
+              "archiveSha256": archive_hash,
+              "url": f'{os.environ["UPDATE_BASE_URL"]}/skills/{skill}/{archive.name}',
+              "minAppVersion": "0.1.28",
+          }
+          (output / "latest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          print(json.dumps(manifest, indent=2))
+          PY
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "archive=${output}/${archive_name}" >> "${GITHUB_OUTPUT}"
+          echo "manifest=${output}/latest.json" >> "${GITHUB_OUTPUT}"
+          echo "archive_name=${archive_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish public Skill release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="skill-${{ steps.package.outputs.version }}"
+          gh release create "${tag}" \
+            "${{ steps.package.outputs.archive }}" \
+            "${{ steps.package.outputs.manifest }}#latest.json" \
+            --title "HK8 Skill ${{ steps.package.outputs.version }}" \
+            --notes "自动同步 ${GITHUB_SHA}：8 位 MCU Skill 热更新包。" \
+            --latest
+
+      - name: Upload to managed update server
+        env:
+          SSHPASS: ${{ secrets.HK_SKILL_SERVER_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sshpass
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${UPDATE_SERVER}" >> ~/.ssh/known_hosts
+          remote="/srv/hk-ai-platform-updates/current/skills/${SKILL_NAME}"
+          incoming="${remote}/.incoming-${GITHUB_RUN_ID}"
+          sshpass -e ssh "${UPDATE_USER}@${UPDATE_SERVER}" "mkdir -p '${incoming}'"
+          sshpass -e scp "${{ steps.package.outputs.archive }}" "${UPDATE_USER}@${UPDATE_SERVER}:${incoming}/${{ steps.package.outputs.archive_name }}"
+          sshpass -e scp "${{ steps.package.outputs.manifest }}" "${UPDATE_USER}@${UPDATE_SERVER}:${incoming}/latest.json"
+          sshpass -e ssh "${UPDATE_USER}@${UPDATE_SERVER}" "set -eu; mv '${incoming}/${{ steps.package.outputs.archive_name }}' '${remote}/${{ steps.package.outputs.archive_name }}'; mv '${incoming}/latest.json' '${remote}/latest.json'; rmdir '${incoming}'"
