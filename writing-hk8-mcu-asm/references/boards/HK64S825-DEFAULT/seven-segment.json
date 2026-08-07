@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "board_profile_id": "HK64S825-DEFAULT",
+  "chip": "HK64S825",
+  "status": "ready",
+  "selection_policy": "user_must_explicitly_confirm_profile_id",
+  "input_provenance": {
+    "wiring": "user_confirmed",
+    "clock": "user_confirmed",
+    "electrical": "user_confirmed",
+    "recorded_on": "2026-08-07"
+  },
+  "clock": {
+    "osc_hz": 16000000,
+    "sck_ps": 52,
+    "effective_sck_hz": 2000000
+  },
+  "pins": {
+    "segments": {
+      "port": "PB",
+      "bits": [0, 1, 2, 3, 4, 5, 6, 7],
+      "direction": "output",
+      "drive": "push_pull",
+      "active_level": "dynamic",
+      "initial_level": "low",
+      "preserve_unowned_bits": false,
+      "port_ownership": "exclusive"
+    },
+    "digit_select_high": {
+      "port": "PA",
+      "bits": [2, 3],
+      "direction": "output",
+      "drive": "push_pull",
+      "active_level": "high",
+      "initial_state": "off",
+      "preserve_unowned_bits": true,
+      "port_ownership": "shared"
+    },
+    "digit_select_low": {
+      "port": "PA",
+      "bits": [5, 6],
+      "direction": "output",
+      "drive": "push_pull",
+      "active_level": "low",
+      "initial_state": "off",
+      "preserve_unowned_bits": true,
+      "port_ownership": "shared"
+    }
+  },
+  "seven_segment": {
+    "driver": "gpio_dynamic_scan",
+    "segment_pin": "segments",
+    "segment_mapping": {
+      "A": 7,
+      "B": 6,
+      "C": 5,
+      "D": 4,
+      "E": 3,
+      "F": 2,
+      "G": 1,
+      "DP": 0
+    },
+    "external_inversion": {
+      "status": "confirmed",
+      "segments": false,
+      "digit_select": false
+    },
+    "current_limit": {
+      "status": "confirmed",
+      "description": "用户确认逐段限流与峰值驱动能力满足动态扫描要求"
+    },
+    "drive_capability_confirmed": true,
+    "separator": {
+      "type": "visual_digit_dp",
+      "visual_index": 1,
+      "mode": "steady_on"
+    },
+    "digits": [
+      {
+        "visual_index": 0,
+        "logical_name": "COM2",
+        "pin_contract": "digit_select_low",
+        "bit": 5,
+        "topology": "common_cathode",
+        "com_active_level": "low",
+        "segment_active_level": "high"
+      },
+      {
+        "visual_index": 1,
+        "logical_name": "COM3",
+        "pin_contract": "digit_select_low",
+        "bit": 6,
+        "topology": "common_cathode",
+        "com_active_level": "low",
+        "segment_active_level": "high"
+      },
+      {
+        "visual_index": 2,
+        "logical_name": "COM0",
+        "pin_contract": "digit_select_high",
+        "bit": 2,
+        "topology": "common_anode",
+        "com_active_level": "high",
+        "segment_active_level": "low"
+      },
+      {
+        "visual_index": 3,
+        "logical_name": "COM1",
+        "pin_contract": "digit_select_high",
+        "bit": 3,
+        "topology": "common_anode",
+        "com_active_level": "high",
+        "segment_active_level": "low"
+      }
+    ]
+  },
+  "countdown_defaults": {
+    "terminal_behavior": "hold",
+    "separator": "profile",
+    "tick_us": 1000000,
+    "tolerance_percent": 0.02,
+    "frame_rate_hz": 250,
+    "scan_slot_min_us": 700,
+    "scan_slot_max_us": 1300
+  },
+  "evidence": {
+    "level": "E1",
+    "status": "user_confirmed_normal_display",
+    "scope": "11:11 倒计时在当前板上正常显示；不等同于全部硬件验收",
+    "confirmed_on": "2026-08-07",
+    "run_id": "916f5c7f00da4db984054d597c8258ea",
+    "source_sha256": "23230e3a457e6fd794d918516ecbfc0eff8a7967e1081fbf71943ba508b2d547",
+    "hex_sha256": "fe2cb16ed1ba062d8b9343ce57ea19f42df8cdbf5e71eddd555dd25a60415b14",
+    "bin_sha256": "46174d0b9b24eee52572e8ef8cfeb66d4965b52e7ab452dfa84030595c92c9e3",
+    "map_sha256": "8513fc0088f51370ff4f21edc142adedd883cff7e2f129d55f3b927753e0768a",
+    "timing": {
+      "label": "FIRST_SECOND_HOLD",
+      "cycles": 2000023,
+      "actual_us": 1000011.5,
+      "target_us": 1000000,
+      "error_percent": 0.00115
+    }
+  },
+  "unresolved_inputs": []
+}

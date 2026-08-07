@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "board_profile_id": "USER-4DIGIT-MIXED-PA-PB",
+  "chip": "HK64S825",
+  "status": "draft",
+  "selection_policy": "user_must_explicitly_confirm_profile_id",
+  "input_provenance": {
+    "wiring": "user_provided",
+    "clock": "user_provided",
+    "recorded_on": "2026-08-06"
+  },
+  "clock": {
+    "osc_hz": 16000000,
+    "sck_ps": 52
+  },
+  "pins": {
+    "segments": {
+      "port": "PB",
+      "bits": [0, 1, 2, 3, 4, 5, 6, 7],
+      "direction": "output",
+      "drive": "push_pull",
+      "active_level": "dynamic",
+      "initial_level": "high",
+      "preserve_unowned_bits": false,
+      "port_ownership": "exclusive"
+    },
+    "digits_cc": {
+      "port": "PA",
+      "bits": [5, 6],
+      "direction": "output",
+      "drive": "push_pull",
+      "active_level": "low",
+      "initial_state": "off",
+      "preserve_unowned_bits": true,
+      "port_ownership": "shared"
+    },
+    "digits_ca": {
+      "port": "PA",
+      "bits": [2, 3],
+      "direction": "output",
+      "drive": "push_pull",
+      "active_level": "high",
+      "initial_state": "off",
+      "preserve_unowned_bits": true,
+      "port_ownership": "shared"
+    }
+  },
+  "seven_segment": {
+    "driver": "gpio_dynamic_scan",
+    "segment_pin": "segments",
+    "segment_mapping": {
+      "A": 7,
+      "B": 6,
+      "C": 5,
+      "D": 4,
+      "E": 3,
+      "F": 2,
+      "G": 1,
+      "DP": 0
+    },
+    "external_inversion": {
+      "status": "unconfirmed",
+      "segments": null,
+      "digit_select": null
+    },
+    "current_limit": {
+      "status": "unconfirmed",
+      "description": null
+    },
+    "drive_capability_confirmed": false,
+    "digits": [
+      {
+        "visual_index": 0,
+        "pin_contract": "digits_cc",
+        "bit": 5,
+        "topology": "common_cathode",
+        "com_active_level": "low",
+        "segment_active_level": "high"
+      },
+      {
+        "visual_index": 1,
+        "pin_contract": "digits_cc",
+        "bit": 6,
+        "topology": "common_cathode",
+        "com_active_level": "low",
+        "segment_active_level": "high"
+      },
+      {
+        "visual_index": 2,
+        "pin_contract": "digits_ca",
+        "bit": 2,
+        "topology": "common_anode",
+        "com_active_level": "high",
+        "segment_active_level": "low"
+      },
+      {
+        "visual_index": 3,
+        "pin_contract": "digits_ca",
+        "bit": 3,
+        "topology": "common_anode",
+        "com_active_level": "high",
+        "segment_active_level": "low"
+      }
+    ]
+  },
+  "unresolved_inputs": [
+    "external_inversion.segments",
+    "external_inversion.digit_select",
+    "current_limit.description",
+    "drive_capability_confirmed"
+  ],
+  "promotion_requirement": "所有 unresolved_inputs 经用户或 E1 证据确认后才可改为 ready"
+}

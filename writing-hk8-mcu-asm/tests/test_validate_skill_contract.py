@@ -13,6 +13,7 @@ from pathlib import Path
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = SKILL_ROOT / "scripts" / "validate_skill.py"
 SPEC_ROOT = SKILL_ROOT / "references" / "spec"
+WORKFLOW_ROOT = SKILL_ROOT / "references" / "workflows"
 PORTABLE_RUNTIME_SCRIPTS = [
     SKILL_ROOT / "scripts" / "hk8asm.py",
     SKILL_ROOT / "scripts" / "builtin_compiler.py",
@@ -20,6 +21,8 @@ PORTABLE_RUNTIME_SCRIPTS = [
     SKILL_ROOT / "scripts" / "bdf_to_ssd1306.py",
     SKILL_ROOT / "scripts" / "ssd1306_page_bitmap.py",
     SKILL_ROOT / "scripts" / "install.py",
+    SKILL_ROOT / "scripts" / "generate_seven_segment.py",
+    SKILL_ROOT / "scripts" / "generate_countdown.py",
     SKILL_ROOT / "scripts" / "validate_skill.py",
     SPEC_ROOT / "tools" / "asm_static_check.py",
     SPEC_ROOT / "tools" / "asm_semantic_gates.py",
@@ -55,6 +58,9 @@ class ValidateSkillContractTests(unittest.TestCase):
     def spec_text(self, relative_path: str) -> str:
         return (SPEC_ROOT / relative_path).read_text(encoding="utf-8")
 
+    def workflow_text(self, relative_path: str) -> str:
+        return (WORKFLOW_ROOT / relative_path).read_text(encoding="utf-8")
+
     def test_current_skill_structure_is_valid(self) -> None:
         result = self.run_validator(str(SKILL_ROOT))
         self.assertEqual(0, result.returncode, result.stderr or result.stdout)
@@ -81,6 +87,52 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("内置编译模块", openai_text)
         self.assertNotIn("Generate HK8 ASM", openai_text)
 
+    def test_registered_board_prompt_lists_ids_without_reading_profiles(self) -> None:
+        skill_text = self.skill_text()
+        openai_text = (SKILL_ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        for phrase in (
+            "只枚举 `references/boards/` 的一级非隐藏子目录名",
+            "当前已有的 board_profile_id",
+            "A <board_profile_id>",
+            "不得默认选择第一项",
+            "不得试读未选择 profile 的文件",
+        ):
+            self.assertIn(phrase, skill_text)
+        for phrase in (
+            "完整列出已有 board_profile_id",
+            "用户只回复 A",
+            "默认第一项",
+        ):
+            self.assertIn(phrase, openai_text)
+
+    def test_e1_countdown_fast_path_is_machine_readable_and_fail_closed(self) -> None:
+        board_path = (
+            SKILL_ROOT
+            / "references"
+            / "boards"
+            / "HK64S825-DEFAULT"
+            / "seven-segment.json"
+        )
+        board = json.loads(board_path.read_text(encoding="utf-8"))
+        self.assertEqual("ready", board["status"])
+        self.assertEqual(
+            "user_must_explicitly_confirm_profile_id", board["selection_policy"]
+        )
+        self.assertEqual([], board["unresolved_inputs"])
+        self.assertEqual("E1", board["evidence"]["level"])
+        self.assertEqual(
+            "user_confirmed_normal_display", board["evidence"]["status"]
+        )
+        self.assertIn("不等同于全部硬件验收", board["evidence"]["scope"])
+        skill_text = self.skill_text()
+        for phrase in (
+            "已确认 E1 profile 的倒计时快速路径",
+            "scripts/generate_countdown.py",
+            "--board-profile",
+            "validate_spec.py --runtime-only",
+        ):
+            self.assertIn(phrase, skill_text)
+
     def test_bdf_font_pipeline_is_packaged_with_provenance(self) -> None:
         font_root = SKILL_ROOT / "references" / "fonts"
         font = font_root / "wenquanyi_bitmap_song_16px_ascii_date_cn.bdf"
@@ -97,14 +149,19 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("GPL v2 with font embedding exception", notice_text)
         self.assertIn("b4bc0413cee9fb", notice_text)
         self.assertIn("GNU GENERAL PUBLIC LICENSE", license_text.read_text(encoding="utf-8"))
-        skill_text = self.skill_text()
+        oled_documents = "\n".join(
+            (
+                self.workflow_text("oled.md"),
+                self.spec_text("05-GPIO-I2C-OLED驱动规范.md"),
+            )
+        )
         for phrase in (
             "scripts/bdf_to_ssd1306.py",
             "wenquanyi_bitmap_song_16px_ascii_date_cn.bdf",
-            "不能直接发送给 SSD1306",
+            "不是 SSD1306 page 数据",
             "fontDisplay",
         ):
-            self.assertIn(phrase, skill_text)
+            self.assertIn(phrase, oled_documents)
 
     def test_public_skill_surfaces_name_only_hk64s825(self) -> None:
         retired_names = ["HK64S8" + suffix for suffix in ("X", "x", "101")]
@@ -306,19 +363,16 @@ class ValidateSkillContractTests(unittest.TestCase):
         self.assertIn("不生成候选 ASM", behavior)
 
     def test_oled_i2c_electrical_questions_are_resolved_before_generation(self) -> None:
-        skill_text = self.skill_text()
-        required_section = skill_text.split("## 必需输入", 1)[1].split(
-            "## 规则读取策略", 1
-        )[0]
+        workflow = self.workflow_text("oled.md")
         for phrase in (
             "创建候选源码前必须确认 SDA、SCL 各自是否配置 `POD`",
-            "候选源码前必须确认 I2C 上拉来源",
-            "已确认的 SDA 引脚是否设置 POD",
-            "已确认的 SCL 引脚是否设置 POD",
+            "确认 I2C 上拉来源",
+            "SDA 是否设置 POD",
+            "SCL 是否设置 POD",
             "I2C 上拉来源是什么",
             "不得先生成候选、运行静态检查或编译后，再以 POD 或上拉缺口为由中止",
         ):
-            self.assertIn(phrase, required_section)
+            self.assertIn(phrase, workflow)
 
     def test_generation_rules_prevent_copying_examples_and_heavy_led_init(self) -> None:
         skill_text = self.skill_text()
@@ -391,19 +445,19 @@ class ValidateSkillContractTests(unittest.TestCase):
             self.assertIn(phrase, combined)
 
     def test_oled_direction_diagnosis_separates_independent_axes(self) -> None:
-        skill_text = self.skill_text()
+        oled_workflow = self.workflow_text("oled.md")
         oled_spec = self.spec_text("05-GPIO-I2C-OLED驱动规范.md")
-        combined = "\n".join((skill_text, oled_spec))
+        combined = "\n".join((oled_workflow, oled_spec))
         self.assertIn("控制器整屏映射", combined)
         self.assertIn("字块排列", combined)
         self.assertIn("单块列方向", combined)
-        self.assertIn("每次只改变一个变量", combined)
+        self.assertIn("每轮只改变上述一个维度", combined)
         self.assertIn("不得交换字块顺序", combined)
         self.assertIn("未经当前板实验证据不得同时叠加", combined)
-        self.assertIn("不能跨字库生成器套用", combined)
+        self.assertIn("不能从另一种字库格式类推", combined)
         self.assertIn("mirror_x_within_glyphs", combined)
         self.assertIn("mirror_y", combined)
-        self.assertIn("交换 page 顺序并反转每个 byte 的 bit 顺序", combined)
+        self.assertIn("交换上下 page，并反转每个 byte 的 bit", combined)
         self.assertIn("scripts/ssd1306_page_bitmap.py", combined)
         self.assertIn("display.asset", combined)
         self.assertIn("未烧录复验的方向组合只能标为候选", combined)
@@ -441,6 +495,7 @@ class ValidateSkillContractTests(unittest.TestCase):
         combined = "\n".join(
             (
                 self.skill_text(),
+                self.workflow_text("oled.md"),
                 self.spec_text("04-程序布局-ORG-查表规范.md"),
                 self.spec_text("05-GPIO-I2C-OLED驱动规范.md"),
             )
@@ -448,7 +503,7 @@ class ValidateSkillContractTests(unittest.TestCase):
         for phrase in (
             "汉字、ASCII 字母、Logo、头像、图片",
             "DB + TABL/TABH",
-            "source_encoding: \"db\"",
+            "source_encoding=db",
             "orientation_profile",
             "table_sender",
             "TABLE_PAIR",

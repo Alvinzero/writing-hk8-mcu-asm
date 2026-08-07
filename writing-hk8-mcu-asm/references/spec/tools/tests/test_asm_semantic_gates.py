@@ -8,6 +8,8 @@ from pathlib import Path
 from references.spec.tools.asm_semantic_gates import (
     DelayResult,
     _simulate_delay,
+    audit_gpio_contract,
+    collect_gpio_effects,
     derive_sck_hz,
     effect_cycles,
     load_instruction_effects,
@@ -413,6 +415,22 @@ class ClockAndDelayTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     simulate_delay(model, "DELAY", 1_000_000, self.effects)
 
+    def test_delay_simulator_counts_nested_gpio_subroutine(self):
+        model = file_model(
+            [
+                (0, "CALL", "WRITE_PIN"),
+                (1, "RET", ""),
+                (5, "BSET", "PB_PIO,7"),
+                (6, "BCLR", "PB_PIO,7"),
+                (7, "RET", ""),
+            ],
+            labels={"HOLD_STATE": 0, "WRITE_PIN": 5},
+        )
+
+        result = simulate_delay(model, "HOLD_STATE", 1_000_000, self.effects)
+
+        self.assertEqual(result.cycles, 10)
+
     def test_unsupported_forms_missing_effect_step_cap_and_no_ret_fail_closed(self):
         cases = [
             (file_model([(0, "MOV", "80H,#1"), (1, "RET", "")]), self.effects, 20),
@@ -451,6 +469,67 @@ class ClockAndDelayTests(unittest.TestCase):
                         effects,
                         max_steps=max_steps,
                     )
+
+
+class ExclusivePortGpioTests(unittest.TestCase):
+    @staticmethod
+    def request(*, ownership: str = "exclusive") -> dict:
+        return {
+            "pins": {
+                "segments": {
+                    "port": "PB",
+                    "bits": list(range(8)),
+                    "direction": "output",
+                    "drive": "push_pull",
+                    "active_level": "dynamic",
+                    "initial_level": "high",
+                    "preserve_unowned_bits": ownership != "exclusive",
+                    "port_ownership": ownership,
+                }
+            }
+        }
+
+    @staticmethod
+    def model() -> dict:
+        return file_model(
+            [
+                (0, "MOV", "A,#00H"),
+                (1, "MOV", "PB_POD,A"),
+                (2, "MOV", "A,#0FFH"),
+                (3, "MOV", "PB_PIO,A"),
+                (4, "MOV", "A,#0FFH"),
+                (5, "MOV", "PB_POE,A"),
+                (6, "MOV", "A,80H"),
+                (7, "MOV", "PB_PIO,A"),
+                (8, "RET", ""),
+            ],
+            labels={"RESET": 0},
+        )
+
+    def test_constant_and_dynamic_whole_port_writes_are_classified(self):
+        effects = collect_gpio_effects(self.model())
+
+        self.assertEqual(
+            [effect["kind"] for effect in effects],
+            [
+                "whole_constant",
+                "whole_constant",
+                "whole_constant",
+                "whole_dynamic",
+            ],
+        )
+
+    def test_exclusive_full_port_allows_dynamic_segment_write(self):
+        issues = audit_gpio_contract(self.model(), self.request())
+
+        self.assertEqual(issues, [])
+
+    def test_shared_port_rejects_dynamic_whole_port_write(self):
+        issues = audit_gpio_contract(self.model(), self.request(ownership="shared"))
+
+        self.assertTrue(
+            any("unknown GPIO write" in issue["evidence"] for issue in issues)
+        )
 
 
 if __name__ == "__main__":

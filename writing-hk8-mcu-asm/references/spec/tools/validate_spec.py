@@ -61,12 +61,25 @@ EXPECTED_FILES = [
     "templates/ai-task-request.example.json",
     "templates/ai-review-output.example.json",
     "tools/asm_static_check.py",
+    "tools/asm_semantic_gates.py",
     "tools/build_analysis_snapshot.py",
     "tools/validate_spec.py",
     "tools/README.md",
     "tools/tests/test_asm_static_check.py",
     "tools/tests/test_build_analysis_snapshot_cli.py",
     "tools/tests/test_validate_spec.py",
+]
+RUNTIME_EXCLUDED_PREFIXES = (
+    "analysis/",
+    "templates/",
+    "tools/tests/",
+)
+RUNTIME_EXCLUDED_FILES = {"tools/build_analysis_snapshot.py"}
+RUNTIME_EXPECTED_FILES = [
+    relative
+    for relative in EXPECTED_FILES
+    if relative not in RUNTIME_EXCLUDED_FILES
+    and not relative.startswith(RUNTIME_EXCLUDED_PREFIXES)
 ]
 
 TEXT_SUFFIXES = {".md", ".json", ".csv", ".py", ".asm", ".example"}
@@ -123,8 +136,10 @@ def load_json(path: Path, findings: list[dict[str, Any]]) -> Any | None:
         return None
 
 
-def check_required_files(root: Path, findings: list[dict[str, Any]]) -> None:
-    for relative in EXPECTED_FILES:
+def check_required_files(
+    root: Path, findings: list[dict[str, Any]], expected_files: list[str]
+) -> None:
+    for relative in expected_files:
         path = root / relative
         if not path.is_file():
             add_finding(findings, "missing-file", path, f"required package file is missing: {relative}")
@@ -816,13 +831,19 @@ def check_template_validation(
         )
 
 
-def validate(root: Path) -> dict[str, Any]:
+def validate(root: Path, *, runtime_only: bool = False) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
-    checks: dict[str, Any] = {}
+    checks: dict[str, Any] = {
+        "validation_mode": "runtime-only" if runtime_only else "full"
+    }
     if not root.is_dir():
         add_finding(findings, "missing-root", root, "spec root is not a directory")
     else:
-        check_required_files(root, findings)
+        check_required_files(
+            root,
+            findings,
+            RUNTIME_EXPECTED_FILES if runtime_only else EXPECTED_FILES,
+        )
         checks["utf8_text_files"] = check_utf8(root, findings)
         checks["json_files"], loaded = check_all_json(root, findings)
         check_rules(root, loaded, findings, checks)
@@ -836,20 +857,31 @@ def validate(root: Path) -> dict[str, Any]:
             checks,
             findings,
         )
-        check_automated_rule_tests(
-            root,
-            rules if isinstance(rules, list) else [],
-            rules_schema if isinstance(rules_schema, dict) else {},
-            checks,
-            findings,
-        )
+        if not runtime_only:
+            check_automated_rule_tests(
+                root,
+                rules if isinstance(rules, list) else [],
+                rules_schema if isinstance(rules_schema, dict) else {},
+                checks,
+                findings,
+            )
         check_instruction_reference(root, loaded, findings, checks)
         check_metadata_references(root, loaded, findings, checks)
-        checks["relative_markdown_links_checked"] = check_markdown_links(root, findings)
+        if runtime_only:
+            checks["runtime_skipped_checks"] = [
+                "automated_rule_tests",
+                "markdown_links_to_development_files",
+                "examples",
+                "template_validation",
+                "template_static_checks",
+            ]
+        else:
+            checks["relative_markdown_links_checked"] = check_markdown_links(root, findings)
         checks["placeholder_files_checked"] = check_placeholders(root, findings)
-        check_examples(root, loaded, findings)
-        check_template_validation(root, loaded, findings, checks)
-        check_templates(root, findings, checks)
+        if not runtime_only:
+            check_examples(root, loaded, findings)
+            check_template_validation(root, loaded, findings, checks)
+            check_templates(root, findings, checks)
 
     errors = sum(1 for item in findings if item["severity"] == "ERROR")
     return {
@@ -867,6 +899,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("root", nargs="?", type=Path, default=Path.cwd(), help="spec package root")
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    parser.add_argument(
+        "--runtime-only",
+        action="store_true",
+        help="validate the reduced runtime package without development-only assets",
+    )
     return parser
 
 
@@ -885,7 +922,7 @@ def render_text(payload: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    payload = validate(args.root.expanduser())
+    payload = validate(args.root.expanduser(), runtime_only=args.runtime_only)
     print(json.dumps(payload, ensure_ascii=False, indent=2) if args.json else render_text(payload))
     return int(payload["summary"]["exit_code"])
 

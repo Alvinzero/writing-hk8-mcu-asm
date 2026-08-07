@@ -278,7 +278,7 @@ def is_technical_comment_token(token: str, code_identifiers: set[str]) -> bool:
     return is_bundled_technical_comment_token(token) or token.upper() in code_identifiers
 
 
-def validate_chinese_explanatory_comments(source: Path) -> dict[str, Any]:
+def inspect_chinese_explanatory_comments(source: Path) -> dict[str, Any]:
     try:
         text = source.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeError) as exc:
@@ -302,11 +302,22 @@ def validate_chinese_explanatory_comments(source: Path) -> dict[str, Any]:
             for token in IDENTIFIER_RE.findall(content)
             if re.search(r"[A-Za-z]", token)
         ]
-        if not all(
-            is_technical_comment_token(token, code_identifiers)
-            for token in latin_tokens
-        ):
-            issues.append({"line": line_number, "rule": "chinese_explanatory_comment"})
+        invalid_tokens = sorted(
+            {
+                token
+                for token in latin_tokens
+                if not is_technical_comment_token(token, code_identifiers)
+            }
+        )
+        if invalid_tokens:
+            issues.append(
+                {
+                    "line": line_number,
+                    "rule": "chinese_explanatory_comment",
+                    "tokens": invalid_tokens,
+                    "reason": "unapproved_latin_tokens",
+                }
+            )
             continue
         if CHINESE_TEXT_RE.search(content):
             continue
@@ -314,14 +325,31 @@ def validate_chinese_explanatory_comments(source: Path) -> dict[str, Any]:
             continue
         if len(latin_tokens) == 1 and latin_tokens[0].upper() in code_identifiers:
             continue
-        issues.append({"line": line_number, "rule": "chinese_explanatory_comment"})
+        issues.append(
+            {
+                "line": line_number,
+                "rule": "chinese_explanatory_comment",
+                "tokens": latin_tokens,
+                "reason": "explanatory_comment_has_no_chinese_text",
+            }
+        )
+    return {
+        "status": "fail" if issues else "pass",
+        "comments_checked": checked,
+        "issues": issues,
+    }
+
+
+def validate_chinese_explanatory_comments(source: Path) -> dict[str, Any]:
+    report = inspect_chinese_explanatory_comments(source)
+    issues = report["issues"]
     if issues:
         raise GateError(
             "STATIC_CHECK_FAILED",
             "ASM explanatory comments must use Chinese",
             details=issues,
         )
-    return {"status": "pass", "comments_checked": checked}
+    return {"status": "pass", "comments_checked": report["comments_checked"]}
 
 
 def validate_clock_contract(request: dict[str, Any], profile: dict[str, Any]) -> None:
@@ -484,20 +512,216 @@ def validate_output_pin_contract(name: str, pin: dict[str, Any]) -> None:
         "INVALID_REQUEST",
         f"pins.{name}.drive is invalid",
     )
+    active_level = pin.get("active_level")
     require(
-        pin.get("active_level") in {"high", "low"},
+        active_level in {"high", "low", "dynamic"},
         "INVALID_REQUEST",
         f"pins.{name}.active_level is invalid",
     )
-    require(
-        pin.get("initial_state") in {"on", "off"},
-        "INVALID_REQUEST",
-        f"pins.{name}.initial_state is invalid",
-    )
+    if active_level == "dynamic":
+        require(
+            pin.get("initial_level") in {"high", "low"},
+            "INVALID_REQUEST",
+            f"pins.{name}.initial_level is required for dynamic polarity",
+        )
+        require(
+            "initial_state" not in pin,
+            "INVALID_REQUEST",
+            f"pins.{name}.initial_state is not valid for dynamic polarity",
+        )
+    else:
+        require(
+            pin.get("initial_state") in {"on", "off"},
+            "INVALID_REQUEST",
+            f"pins.{name}.initial_state is invalid",
+        )
     require(
         isinstance(pin.get("preserve_unowned_bits"), bool),
         "INVALID_REQUEST",
         f"pins.{name}.preserve_unowned_bits must be boolean",
+    )
+    ownership = pin.get("port_ownership")
+    require(
+        ownership is None or ownership in {"exclusive", "shared"},
+        "INVALID_REQUEST",
+        f"pins.{name}.port_ownership must be exclusive or shared when provided",
+    )
+    if ownership == "exclusive":
+        require(
+            set(bits) == set(range(8)),
+            "INVALID_REQUEST",
+            f"pins.{name} exclusive port ownership requires bits 0..7",
+        )
+        require(
+            pin["preserve_unowned_bits"] is False,
+            "INVALID_REQUEST",
+            f"pins.{name} exclusive port ownership must not preserve unowned bits",
+        )
+    elif ownership == "shared":
+        require(
+            pin["preserve_unowned_bits"] is True,
+            "INVALID_REQUEST",
+            f"pins.{name} shared port ownership must preserve unowned bits",
+        )
+
+
+def validate_seven_segment_contract(
+    request: dict[str, Any], pins: dict[str, Any]
+) -> None:
+    contract = request.get("seven_segment")
+    if contract is None:
+        return
+    require(
+        isinstance(contract, dict),
+        "INVALID_REQUEST",
+        "seven_segment must be an object",
+    )
+    require(
+        contract.get("driver") == "gpio_dynamic_scan",
+        "INVALID_REQUEST",
+        "seven_segment.driver must be gpio_dynamic_scan",
+    )
+    segment_pin_name = contract.get("segment_pin")
+    require(
+        is_non_empty_string(segment_pin_name),
+        "INVALID_REQUEST",
+        "seven_segment.segment_pin is required",
+    )
+    segment_pin = pins.get(segment_pin_name)
+    require(
+        isinstance(segment_pin, dict)
+        and segment_pin.get("direction") == "output",
+        "INVALID_REQUEST",
+        "seven_segment.segment_pin must reference an output PinContract",
+    )
+    require(
+        segment_pin.get("active_level") == "dynamic",
+        "INVALID_REQUEST",
+        "seven_segment segment PinContract must use active_level dynamic",
+    )
+    require(
+        segment_pin.get("port_ownership") == "exclusive",
+        "INVALID_REQUEST",
+        "seven_segment segment PinContract must own its full port exclusively",
+    )
+    mapping = contract.get("segment_mapping")
+    expected_segments = {"A", "B", "C", "D", "E", "F", "G", "DP"}
+    require(
+        isinstance(mapping, dict)
+        and set(mapping) == expected_segments
+        and all(
+            isinstance(bit, int)
+            and not isinstance(bit, bool)
+            and 0 <= bit <= 7
+            for bit in mapping.values()
+        )
+        and len(set(mapping.values())) == 8,
+        "INVALID_REQUEST",
+        "seven_segment.segment_mapping must map A-G/DP to unique bits 0..7",
+    )
+    inversion = contract.get("external_inversion")
+    require(
+        isinstance(inversion, dict)
+        and inversion.get("status") == "confirmed"
+        and isinstance(inversion.get("segments"), bool)
+        and isinstance(inversion.get("digit_select"), bool),
+        "BOARD_INPUT_UNCONFIRMED",
+        "seven_segment external inversion must be explicitly confirmed",
+    )
+    current_limit = contract.get("current_limit")
+    require(
+        isinstance(current_limit, dict)
+        and current_limit.get("status") == "confirmed"
+        and is_non_empty_string(current_limit.get("description")),
+        "BOARD_INPUT_UNCONFIRMED",
+        "seven_segment current limiting must be explicitly confirmed",
+    )
+    require(
+        contract.get("drive_capability_confirmed") is True,
+        "BOARD_INPUT_UNCONFIRMED",
+        "seven_segment GPIO drive capability must be explicitly confirmed",
+    )
+    digits = contract.get("digits")
+    require(
+        isinstance(digits, list) and bool(digits),
+        "INVALID_REQUEST",
+        "seven_segment.digits must be a non-empty array",
+    )
+    require(
+        len(digits) <= 8,
+        "INVALID_REQUEST",
+        "seven_segment.digits supports at most 8 digits",
+    )
+    visual_indices: list[int] = []
+    physical_digits: set[tuple[str, int]] = set()
+    segment_inverted = inversion["segments"]
+    for index, digit in enumerate(digits):
+        require(
+            isinstance(digit, dict),
+            "INVALID_REQUEST",
+            f"seven_segment.digits[{index}] must be an object",
+        )
+        visual_index = digit.get("visual_index")
+        require(
+            isinstance(visual_index, int)
+            and not isinstance(visual_index, bool)
+            and visual_index >= 0,
+            "INVALID_REQUEST",
+            f"seven_segment.digits[{index}].visual_index is invalid",
+        )
+        visual_indices.append(visual_index)
+        pin_name = digit.get("pin_contract")
+        pin = pins.get(pin_name)
+        bit = digit.get("bit")
+        require(
+            isinstance(pin, dict)
+            and pin.get("direction") == "output"
+            and pin.get("active_level") in {"high", "low"},
+            "INVALID_REQUEST",
+            f"seven_segment.digits[{index}].pin_contract is invalid",
+        )
+        require(
+            isinstance(bit, int)
+            and not isinstance(bit, bool)
+            and bit in pin.get("bits", []),
+            "INVALID_REQUEST",
+            f"seven_segment.digits[{index}].bit is outside its PinContract",
+        )
+        physical_digit = (pin["port"], bit)
+        require(
+            physical_digit not in physical_digits,
+            "INVALID_REQUEST",
+            "seven_segment.digits must reference unique COM pins",
+        )
+        physical_digits.add(physical_digit)
+        com_active_level = digit.get("com_active_level")
+        require(
+            com_active_level == pin["active_level"],
+            "INVALID_REQUEST",
+            f"seven_segment.digits[{index}].com_active_level must match its PinContract",
+        )
+        topology = digit.get("topology")
+        require(
+            topology in {"common_anode", "common_cathode"},
+            "INVALID_REQUEST",
+            f"seven_segment.digits[{index}].topology is invalid",
+        )
+        expected_segment_level = (
+            "high" if topology == "common_cathode" else "low"
+        )
+        if segment_inverted:
+            expected_segment_level = (
+                "low" if expected_segment_level == "high" else "high"
+            )
+        require(
+            digit.get("segment_active_level") == expected_segment_level,
+            "INVALID_REQUEST",
+            f"seven_segment.digits[{index}].segment_active_level conflicts with topology and inversion",
+        )
+    require(
+        sorted(visual_indices) == list(range(len(digits))),
+        "INVALID_REQUEST",
+        "seven_segment visual_index values must be contiguous from zero",
     )
 
 
@@ -1458,6 +1682,7 @@ def validate_request(request: dict[str, Any], profile: dict[str, Any], config: d
                 "INVALID_REQUEST",
                 "GPIO output tasks require at least one structured output pin contract",
             )
+    validate_seven_segment_contract(request, pins if isinstance(pins, dict) else {})
     peripherals = request.get("peripherals")
     require(isinstance(peripherals, list), "INVALID_REQUEST", "peripherals must be an array")
     require(not contains_unresolved(peripherals), "INVALID_REQUEST", "peripherals contain unresolved values")
@@ -1801,9 +2026,18 @@ def require_declared_compile_artifacts(run_dir: Path, compile_result: dict[str, 
         )
 
 
-def save_failure(run_dir: Path, run: dict[str, Any], stage: str, code: str, message: str) -> None:
+def save_failure(
+    run_dir: Path,
+    run: dict[str, Any],
+    stage: str,
+    code: str,
+    message: str,
+    details: Any = None,
+) -> None:
     run["state"] = "FAILED"
     run["failure"] = {"stage": stage, "code": code, "message": message, "at": now_utc()}
+    if details is not None:
+        run["failure"]["details"] = sanitize_diagnostic_details(details)
     append_history(run, "FAILED", stage=stage, code=code)
     evidence = {
         "schema_version": 1,
@@ -1828,7 +2062,7 @@ def static_check(
     map_files: list[Path] | None = None,
     defer_table_map: bool = False,
 ) -> dict[str, Any]:
-    comment_language = validate_chinese_explanatory_comments(source)
+    comment_language = inspect_chinese_explanatory_comments(source)
     request = read_json(run_dir / "request.json", "RUN_INVALID")
     display_asset_audit = audit_display_asset(
         request, source, run_dir / DISPLAY_ASSET_SNAPSHOT, profile
@@ -2003,8 +2237,15 @@ def static_check(
             if section["status"] != expected_status:
                 reject_checker_payload()
 
-        if expected_exit_code != 0:
-            raise GateError("STATIC_CHECK_FAILED", "Spec static checker failed", details=result)
+        if expected_exit_code != 0 or comment_language["status"] != "pass":
+            raise GateError(
+                "STATIC_CHECK_FAILED",
+                "Candidate static checks failed",
+                details={
+                    "comment_language": comment_language,
+                    "spec_static_check": result,
+                },
+            )
         static_result = {
             "status": "pass",
             "checker": "asm_static_check.py",
@@ -2039,8 +2280,15 @@ def static_check(
     for pattern in rules["forbidden_patterns"]:
         if pattern.upper() in upper_text:
             issues.append({"rule": "forbidden_pattern", "pattern": pattern})
-    if issues:
-        raise GateError("STATIC_CHECK_FAILED", "Candidate failed static checks", details=issues)
+    if issues or comment_language["status"] != "pass":
+        raise GateError(
+            "STATIC_CHECK_FAILED",
+            "Candidate static checks failed",
+            details={
+                "comment_language": comment_language,
+                "profile_checks": issues,
+            },
+        )
     static_result = {
         "status": "pass",
         "checks": 1 + len(rules["required_patterns"]) + len(rules["forbidden_patterns"]),
@@ -2057,11 +2305,53 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
     return run_doctor(profile, config)
 
 
+def command_lint(args: argparse.Namespace) -> dict[str, Any]:
+    profile = normalize_profile_paths(
+        read_json(args.profile, "INVALID_PROFILE"), args.profile.parent
+    )
+    config = read_json(args.config, "INVALID_CONFIG")
+    request = read_json(args.request, "INVALID_REQUEST")
+    validate_profile(profile)
+    validate_config(config)
+    validate_request(request, profile, config)
+    require(
+        args.source.is_file(),
+        "SOURCE_NOT_FOUND",
+        f"Candidate source does not exist: {args.source}",
+    )
+    with tempfile.TemporaryDirectory(prefix="hk8asm-lint-") as temp:
+        lint_dir = Path(temp)
+        write_json(lint_dir / "profile.json", profile)
+        shutil.copy2(args.request, lint_dir / "request.json")
+        source_copy = lint_dir / "src" / "candidate.asm"
+        source_copy.parent.mkdir(parents=True)
+        shutil.copy2(args.source, source_copy)
+        display = request.get("display")
+        asset = display.get("asset") if isinstance(display, dict) else None
+        if isinstance(asset, dict):
+            manifest = (args.request.resolve().parent / asset["manifest"]).resolve()
+            require(
+                manifest.is_file(),
+                "DISPLAY_ASSET_MISMATCH",
+                f"Display asset manifest does not exist: {manifest}",
+            )
+            snapshot = lint_dir / DISPLAY_ASSET_SNAPSHOT
+            snapshot.parent.mkdir(parents=True)
+            shutil.copy2(manifest, snapshot)
+        result = static_check(source_copy, profile, lint_dir)
+    return {
+        "code": "LINT_PASSED",
+        "source_sha256": sha256_file(args.source),
+        "static": result,
+    }
+
+
 def command_new_run(args: argparse.Namespace) -> dict[str, Any]:
     profile = normalize_profile_paths(read_json(args.profile, "INVALID_PROFILE"), args.profile.parent)
     config = read_json(args.config, "INVALID_CONFIG")
     request = read_json(args.request, "INVALID_REQUEST")
-    run_doctor(profile, config)
+    if not getattr(args, "doctor_ready", False):
+        run_doctor(profile, config)
     validate_request(request, profile, config)
     require(args.source.is_file(), "SOURCE_NOT_FOUND", f"Candidate source does not exist: {args.source}")
     display = request.get("display")
@@ -2145,9 +2435,12 @@ def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
             run_dir,
             defer_table_map=requires_table_map,
         )
-        run_doctor(profile, config)
+        if not getattr(args, "doctor_ready", False):
+            run_doctor(profile, config)
     except GateError as exc:
-        save_failure(run_dir, run, "preflight", exc.code, exc.message)
+        save_failure(
+            run_dir, run, "preflight", exc.code, exc.message, exc.details
+        )
         raise
 
     artifact = run_dir / "build" / "firmware.hex"
@@ -2186,7 +2479,7 @@ def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
         save_failure(run_dir, run, "compile", "COMPILE_FAILED", exc.message)
         raise GateError("COMPILE_FAILED", "Compiler gate failed") from exc
     except GateError as exc:
-        save_failure(run_dir, run, "compile", exc.code, exc.message)
+        save_failure(run_dir, run, "compile", exc.code, exc.message, exc.details)
         raise
 
     if requires_table_map:
@@ -2210,7 +2503,14 @@ def command_close_loop(args: argparse.Namespace) -> dict[str, Any]:
                 map_files=[map_path],
             )
         except GateError as exc:
-            save_failure(run_dir, run, "postbuild-static", exc.code, exc.message)
+            save_failure(
+                run_dir,
+                run,
+                "postbuild-static",
+                exc.code,
+                exc.message,
+                exc.details,
+            )
             raise
 
     run["state"] = "BUILT"
@@ -2315,6 +2615,54 @@ def command_release(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def command_quick_release(args: argparse.Namespace) -> dict[str, Any]:
+    profile = normalize_profile_paths(
+        read_json(args.profile, "INVALID_PROFILE"), args.profile.parent
+    )
+    config = read_json(args.config, "INVALID_CONFIG")
+    run_doctor(profile, config)
+    command_new_run(
+        argparse.Namespace(
+            profile=args.profile,
+            config=args.config,
+            request=args.request,
+            source=args.source,
+            run_dir=args.run_dir,
+            doctor_ready=True,
+        )
+    )
+    command_close_loop(
+        argparse.Namespace(run_dir=args.run_dir, doctor_ready=True)
+    )
+    receipt = command_release(
+        argparse.Namespace(run_dir=args.run_dir, output=args.output)
+    )
+    evidence_path = args.run_dir / "evidence.json"
+    evidence = read_json(evidence_path, "INVALID_EVIDENCE")
+    gates = evidence.get("gates", {}) if isinstance(evidence, dict) else {}
+    static_result = gates.get("static", {}) if isinstance(gates, dict) else {}
+    compile_result = gates.get("compile", {}) if isinstance(gates, dict) else {}
+    semantic_audits = (
+        static_result.get("semantic_audits", {})
+        if isinstance(static_result, dict)
+        else {}
+    )
+    return {
+        "workflow": "quick-release",
+        **receipt,
+        "evidence_sha256": sha256_file(evidence_path),
+        "compiler": {
+            "toolchain": compile_result.get("toolchain"),
+            "tool_version": compile_result.get("tool_version"),
+        },
+        "warnings": compile_result.get("warnings", []),
+        "artifacts": compile_result.get("artifacts", {}),
+        "metrics": compile_result.get("metrics", {}),
+        "static_summary": static_result.get("summary", {}),
+        "timing_audit": semantic_audits.get("timing", []),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hk8asm", description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2323,6 +2671,15 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--profile", required=True, type=Path)
     doctor.add_argument("--config", required=True, type=Path)
     doctor.set_defaults(handler=command_doctor)
+
+    lint = subparsers.add_parser(
+        "lint", help="Run aggregated source checks without creating a persistent run"
+    )
+    lint.add_argument("--profile", required=True, type=Path)
+    lint.add_argument("--config", required=True, type=Path)
+    lint.add_argument("--request", required=True, type=Path)
+    lint.add_argument("--source", required=True, type=Path)
+    lint.set_defaults(handler=command_lint)
 
     new_run = subparsers.add_parser("new-run", help="Validate and snapshot a candidate run")
     new_run.add_argument("--profile", required=True, type=Path)
@@ -2340,6 +2697,17 @@ def build_parser() -> argparse.ArgumentParser:
     release.add_argument("--run-dir", required=True, type=Path)
     release.add_argument("--output", required=True, type=Path)
     release.set_defaults(handler=command_release)
+
+    quick_release = subparsers.add_parser(
+        "quick-release", help="Create, check, compile, and release in one command"
+    )
+    quick_release.add_argument("--profile", required=True, type=Path)
+    quick_release.add_argument("--config", required=True, type=Path)
+    quick_release.add_argument("--request", required=True, type=Path)
+    quick_release.add_argument("--source", required=True, type=Path)
+    quick_release.add_argument("--run-dir", required=True, type=Path)
+    quick_release.add_argument("--output", required=True, type=Path)
+    quick_release.set_defaults(handler=command_quick_release)
     return parser
 
 

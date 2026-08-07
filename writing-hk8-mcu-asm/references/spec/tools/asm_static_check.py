@@ -1449,10 +1449,30 @@ def structured_output_contract_ports(request: dict[str, Any]) -> set[str] | None
             )
             or len(set(bits)) != len(bits)
             or pin.get("drive") not in {"push_pull", "open_drain"}
-            or pin.get("active_level") not in {"high", "low"}
-            or pin.get("initial_state") not in {"on", "off"}
+            or pin.get("active_level") not in {"high", "low", "dynamic"}
+            or (
+                pin.get("active_level") == "dynamic"
+                and pin.get("initial_level") not in {"high", "low"}
+            )
+            or (
+                pin.get("active_level") in {"high", "low"}
+                and pin.get("initial_state") not in {"on", "off"}
+            )
             or not isinstance(pin.get("preserve_unowned_bits"), bool)
             or pin.get("configure_drive_mode", True) not in {True, False}
+            or pin.get("port_ownership")
+            not in {None, "exclusive", "shared"}
+            or (
+                pin.get("port_ownership") == "exclusive"
+                and (
+                    set(bits) != set(range(8))
+                    or pin.get("preserve_unowned_bits") is not False
+                )
+            )
+            or (
+                pin.get("port_ownership") == "shared"
+                and pin.get("preserve_unowned_bits") is not True
+            )
         ):
             return None
         ports.add(port.upper())

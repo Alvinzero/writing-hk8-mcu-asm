@@ -22,6 +22,7 @@ REQUIRED_SPEC_FILES = (
     "rules/register-reference.json",
     "rules/register-alias-policy.json",
     "tools/asm_static_check.py",
+    "tools/asm_semantic_gates.py",
     "tools/validate_spec.py",
 )
 
@@ -81,6 +82,8 @@ def validate(root: Path) -> list[str]:
         "scripts/hk8asm.py",
         "scripts/builtin_compiler.py",
         "scripts/compiler_adapter.py",
+        "scripts/generate_seven_segment.py",
+        "scripts/generate_countdown.py",
         "scripts/ssd1306_page_bitmap.py",
         "scripts/install.py",
         "scripts/validate_skill.py",

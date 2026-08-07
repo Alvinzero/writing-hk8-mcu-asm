@@ -14,11 +14,19 @@ VALIDATOR = SPEC / "tools" / "validate_spec.py"
 
 
 class ValidateSpecCliTests(unittest.TestCase):
-    def run_validator_process(self, root: Path, *, force_fallback: bool = False):
+    def run_validator_process(
+        self,
+        root: Path,
+        *,
+        force_fallback: bool = False,
+        runtime_only: bool = False,
+    ):
         command = [sys.executable]
         if force_fallback:
             command.append("-S")
         command.extend([str(VALIDATOR), str(root), "--json"])
+        if runtime_only:
+            command.append("--runtime-only")
         return subprocess.run(
             command,
             text=True,
@@ -135,6 +143,39 @@ class ValidateSpecCliTests(unittest.TestCase):
         self.assertEqual(payload["checks"]["register_sheet_row_count"], 407)
         self.assertTrue(payload["checks"]["instruction_metadata_exact_snapshot"])
         self.assertTrue(payload["checks"]["register_metadata_exact_snapshot"])
+
+    def test_runtime_only_accepts_reduced_install_package(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            copied = self.copy_spec(Path(tmp))
+            for relative in ("analysis", "templates", "tools/tests"):
+                shutil.rmtree(copied / relative)
+            (copied / "tools" / "build_analysis_snapshot.py").unlink()
+            completed = self.run_validator_process(copied, runtime_only=True)
+            payload = json.loads(completed.stdout)
+
+        self.assertEqual(0, completed.returncode, payload)
+        self.assertEqual("runtime-only", payload["checks"]["validation_mode"])
+        self.assertEqual(87, payload["checks"]["rule_count"])
+        self.assertEqual(65, payload["checks"]["instruction_variant_count"])
+        self.assertEqual(96, payload["checks"]["register_reference_count"])
+        self.assertFalse(payload["findings"])
+
+    def test_runtime_only_still_requires_release_checker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            copied = self.copy_spec(Path(tmp))
+            (copied / "tools" / "asm_semantic_gates.py").unlink()
+            completed = self.run_validator_process(copied, runtime_only=True)
+            payload = json.loads(completed.stdout)
+
+        self.assertEqual(2, completed.returncode, payload)
+        self.assertTrue(
+            any(
+                item["code"] == "missing-file"
+                and item["path"].endswith("asm_semantic_gates.py")
+                for item in payload["findings"]
+            ),
+            payload,
+        )
 
     def test_automated_checker_rules_are_bound_to_exact_test_methods(self):
         completed, payload = self.run_validator(SPEC)

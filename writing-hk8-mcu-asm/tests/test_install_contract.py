@@ -61,6 +61,8 @@ class InstallContractTests(unittest.TestCase):
         self.assertTrue((destination / "SKILL.md").is_file())
         self.assertTrue((destination / "scripts" / "hk8asm.py").is_file())
         self.assertTrue((destination / "scripts" / "builtin_compiler.py").is_file())
+        self.assertTrue((destination / "scripts" / "generate_seven_segment.py").is_file())
+        self.assertTrue((destination / "scripts" / "generate_countdown.py").is_file())
         self.assertTrue((destination / "scripts" / "ssd1306_page_bitmap.py").is_file())
         self.assertTrue((destination / "references" / "profiles" / "HK64S825.profile.json").is_file())
         self.assertTrue((destination / "references" / "configs" / "builtin-config.json").is_file())
@@ -68,6 +70,25 @@ class InstallContractTests(unittest.TestCase):
         self.assertTrue((destination / "references" / "spec" / "rules" / "asm-rules.json").is_file())
         self.assertTrue((destination / "references" / "spec" / "tools" / "asm_static_check.py").is_file())
         self.assertTrue((destination / "references" / "spec" / "tools" / "validate_spec.py").is_file())
+        self.assertTrue((destination / "references" / "workflows" / "oled.md").is_file())
+        self.assertTrue(
+            (
+                destination
+                / "references"
+                / "boards"
+                / "USER-4DIGIT-MIXED-PA-PB"
+                / "seven-segment.json"
+            ).is_file()
+        )
+        self.assertTrue(
+            (
+                destination
+                / "references"
+                / "boards"
+                / "HK64S825-DEFAULT"
+                / "seven-segment.json"
+            ).is_file()
+        )
         self.assertFalse((destination / "tests").exists())
         self.assertFalse((destination / "evals").exists())
         self.assertFalse((destination / "docs").exists())
@@ -94,6 +115,28 @@ class InstallContractTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(0, validation.returncode, validation.stderr or validation.stdout)
+        runtime_validation = subprocess.run(
+            [
+                sys.executable,
+                str(destination / "references" / "spec" / "tools" / "validate_spec.py"),
+                str(destination / "references" / "spec"),
+                "--runtime-only",
+                "--json",
+            ],
+            cwd=destination,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(
+            0,
+            runtime_validation.returncode,
+            runtime_validation.stderr or runtime_validation.stdout,
+        )
+        self.assertEqual(
+            "runtime-only",
+            json.loads(runtime_validation.stdout)["checks"]["validation_mode"],
+        )
 
     def test_existing_target_requires_force(self) -> None:
         first = self.run_install(

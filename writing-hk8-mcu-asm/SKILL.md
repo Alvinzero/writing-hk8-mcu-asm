@@ -11,7 +11,7 @@ description: 用于生成、修改、审查或编译公司 HK64S825 8 位 MCU �
 
 先从用户请求中解析目标芯片型号：
 
-- 若用户请求已经明确包含 `HK64S825`，例如“已确认 HK64S825”“HK64S825 ASM 闭环”“HK64S825 OLED”或等价表述，视为型号已确认；不得再要求用户回复“是/否”或重复确认型号，直接进入需求解析和缺口检查。芯片已确认不等于开发板已确认；存在板级缺口时必须先询问，不得生成候选源码。
+- 若用户请求已经明确包含 `HK64S825`，或显式调用 `$writing-hk8-mcu-asm`/`/writing-hk8-mcu-asm`，视为型号已确认；不得再要求用户回复“是/否”或重复确认型号，直接进入需求解析和缺口检查。芯片已确认不等于开发板已确认；存在板级缺口时必须先询问，不得生成候选源码。
 - 若用户请求明确写出其他芯片型号，立即停止并说明暂不支持，不得猜测架构、寄存器或指令集。
 - 若用户请求没有提供目标型号，第一条回复只询问并确认芯片型号，不得输出 ASM：
 
@@ -39,56 +39,39 @@ description: 用于生成、修改、审查或编译公司 HK64S825 8 位 MCU �
 
 在候选源码生成之前，把确认来源写入 `request.input_provenance`：`board`、GPIO 任务的 `pins`、时序任务的 `clock` 只能取 `user_provided` 或 `user_confirmed_profile`。这些值是用户确认记录，智能体不得代替用户填写。缺少 board 来源时列入 `unresolved_inputs` 并以 `BOARD_PROFILE_UNCONFIRMED` 停止；缺少 pins/clock 来源时以 `BOARD_INPUT_UNCONFIRMED` 停止。不得创建候选 ASM、`new-run` 或编译后再补来源。
 
-已注册 board profile 只在用户明确选择对应 ID 后读取。用户选择自定义开发板时，只收集当前功能需要的最小板级参数，不要求无关硬件信息。
+已注册 board profile 只在用户明确选择对应 ID 后读取。需要向用户推荐已注册 profile 时，必须先以本 `SKILL.md` 所在目录为根，只枚举 `references/boards/` 的一级非隐藏子目录名，按字典序完整列出为当前已有的 `board_profile_id`。枚举目录名只用于展示 ID，不等于读取或采用板级资料；用户选择前不得打开、解析或概述任何 profile 文件，也不得根据目录名猜测适用性、状态或接线。目录中没有 ID 时，明确说明当前没有已注册 profile，不得继续把“选择已注册 profile”标为推荐。用户选择自定义开发板时，只收集当前功能需要的最小板级参数，不要求无关硬件信息。
 
-数码管板级信息未明确时，第一批最多询问三题：
+数码管板级信息未明确且存在已注册 ID 时，第一题必须把实际枚举结果填入以下模板，不得只写“选择已注册 board profile”而省略 ID：
 
 ```text
-1. 数码管通过什么方式驱动？
-A. HK64S825 GPIO 直接动态扫描
-B. 使用驱动芯片或移位寄存器
-C. 不确定/我不知道
+当前已有的 board_profile_id：
+- `<实际 ID 1>`
+- `<实际 ID 2>`
 
-2. 你能提供哪种板级资料？
-A. 明确的 board profile ID
-B. 原理图或段线/位选引脚表
-C. 不确定/我不知道
+A. 选择已注册 board profile（推荐；有多个 ID 时回复 `A <board_profile_id>`）
+B. 我提供本板数码管接线表
+C. 先做逐段逐位硬件探测程序
+D. 不确定 / 我不知道
+```
 
-3. 位数和极性是否已知？
-A. 已知位数，且知道各位共阳/共阴与有效电平
-B. 只知道位数
-C. 不确定/我不知道
+用户也可以直接回复列表中的完整 `board_profile_id`。只有一个 ID 时，选项 A 必须直接写出该 ID，用户只回复 `A` 即视为明确选择；有多个 ID 时，用户只回复 `A` 仍不构成板级确认，必须原样重列 ID 并只追问具体 ID，不得默认选择第一项，也不得重复询问已经回答的分类问题。
+
+用户选择提供接线表时，熟悉硬件的用户可在一次回复中按下列格式提供当前任务所需字段，不必先回答分类问卷：
+
+```text
+驱动：GPIO 动态扫描 / 驱动芯片型号
+段线：A=..., B=..., C=..., D=..., E=..., F=..., G=..., DP=...
+视觉位序：左起 COM 引脚、共阳/共阴、MCU 选通电平
+反相：段线与位选是否有外部反相
+时钟：OSC=..., SCK_PS=...
+电气：共享 GPIO、限流方式、峰值驱动能力是否确认
 ```
 
 GPIO 直驱时还必须确认 A-G/DP 逐段引脚、从左到右的逐位 COM 引脚、每位有效电平、外部三极管/MOS 是否反相、OSC/SCK_PS、共享 GPIO 和限流/驱动方式。任一项未知时不得生成正式显示 ASM；用户明确要求硬件探测时，可另建逐段逐位 probe，探测结论经用户确认后再建立 board profile。
 
-OLED/I2C 的 `POD` 与上拉是附加硬门禁：board/SDA/SCL 确认后、创建候选源码前必须确认 SDA、SCL 各自是否配置 `POD`，并且候选源码前必须确认 I2C 上拉来源。只有用户已在当前请求中逐引脚明确说明，才可跳过对应问题；不得从“传统 I2C”、旧代码或默认模板猜测。不得先生成候选、运行静态检查或编译后，再以 POD 或上拉缺口为由中止。
+OLED/I2C 任务必须在候选生成前读取 `references/workflows/oled.md`，并按其中问卷确认逐引脚 POD、上拉、地址、方向和资产输入。普通 GPIO/数码管任务不得加载该文件。
 
-OLED 查表显示还必须在候选生成前解析芯片型号、主频、MTP 容量、分辨率、I2C 地址、SDA/SCL、上拉/开漏方式、显示方向和是否反色。当前已验证板级参数或用户已明确给出的值直接采用，不得重复询问；资料库和请求都没有的参数才作为缺口，按一次最多三题的选择题规则分批确认。
-
-未明确时依次询问以下 A/B/C/D 选择题，一次最多三题：
-
-```text
-1. 已确认的 SDA 引脚是否设置 POD？
-A. 设置 POD
-B. 不设置 POD
-C. 不确定/我不知道
-
-2. 已确认的 SCL 引脚是否设置 POD？
-A. 不设置 POD
-B. 设置 POD
-C. 不确定/我不知道
-
-3. I2C 上拉来源是什么？
-A. 外部上拉电阻（推荐）
-B. 芯片内部 PB_PPU
-C. 外部上拉与内部 PB_PPU 同时使用
-D. 不确定/我不知道
-```
-
-两根线都要在 PinContract 中分别记录 `configure_drive_mode`；选择设置 POD 的引脚按开漏显式置位对应 `PB_POD`，选择不设置的引脚写 `configure_drive_mode: false`。上拉选项必须落实到 `PB_PPU` 初始化或外部上拉说明中。若用户选择“不确定/我不知道”且当前已验证 board profile 也没有明确答案，将其列入 `unresolved_inputs`，停在候选生成之前。
-
-缺口问题必须以 A/B/C/D 选择题呈现，用户只需要回复选项字母。一次最多提出 3 个选择题；每题 2 到 4 个选项，默认或推荐选项必须标注“推荐”，并且必须包含“不确定/我不知道”选项。不得要求用户自由填写一长串板级参数；若确实需要非选项数据，例如显示文本、图片字模或真实文件路径，先说明原因，再只收集当前任务必需的最小数据。
+缺口问题必须以 A/B/C/D 选择题呈现；除多个 board profile ID 的选择题外，用户只需要回复选项字母。一次最多提出 3 个选择题；每题 2 到 4 个选项，默认或推荐选项必须标注“推荐”，并且必须包含“不确定/我不知道”选项。不得要求用户自由填写一长串板级参数；若确实需要非选项数据，例如 `board_profile_id`、显示文本、图片字模或真实文件路径，先说明原因，再只收集当前任务必需的最小数据。
 
 编译器默认来自资料包内置配置：`scripts/builtin_compiler.py`，批准版本为 `builtin-hk64s825-assembler-2`。默认不需要用户提供本机 IDE、外部 ASMC 或 HK_ASM_Compiler 路径。禁止扫盘、遍历本机目录或猜测 IDE/CLI 路径；不得使用 Get-ChildItem、os.walk、rglob、where 或全盘搜索寻找编译器。
 
@@ -98,11 +81,11 @@ D. 不确定/我不知道
 
 只读取当前任务相关规则，不得加载无关 OLED、数码管或 analysis 快照资料。不得把大型规则 JSON 整份载入上下文；使用文本搜索或结构化解析，只检索候选源码实际使用的 mnemonic、SFR、rule ID 和当前功能章节。
 
-- 所有任务：读取 `references/spec/AGENTS.md` 和 `09-AI智能体生成与审查协议.md` 的相关段落；从 `asm-rules.json`、`instruction-reference.json`、`register-reference.json`、`register-alias-policy.json` 定向查询实际使用项。
+- 通用生成任务：读取 `references/spec/AGENTS.md` 和 `09-AI智能体生成与审查协议.md` 的相关段落；从 `asm-rules.json`、`instruction-reference.json`、`register-reference.json`、`register-alias-policy.json` 定向查询实际使用项。命中下述“已确认 E1 profile 的倒计时快速路径”时不重复读取这些文件，由受限生成器和完整 `quick-release` 门禁执行已有规则。
 - LED/GPIO：再读取 `05-GPIO-I2C-OLED驱动规范.md` 中 GPIO/LED 相关段落和必要 checklist。
-- OLED：再读取 `05-GPIO-I2C-OLED驱动规范.md` 中 I2C/OLED 相关段落。
+- OLED：读取 `references/workflows/oled.md`，再读取 `05-GPIO-I2C-OLED驱动规范.md` 中 I2C/OLED 相关段落。
 - OLED 字形出现“窗口尺寸正确但字形不完整、像多个字符拼接”时，再读取 `08-踩坑案例与症状诊断手册.md` 的 OLED 查表索引案例。
-- 数码管：先读取通用 `06-数码管动态扫描规范.md`；只有用户明确选择已注册 profile 后，才读取 `references/boards/<board_profile_id>/seven-segment.md`，不得枚举或试读其他板级目录来替用户选板。
+- 数码管：板级缺口提问前只允许枚举 `references/boards/` 的一级目录名并向用户展示全部 ID。用户明确选择后，若存在 `references/boards/<board_profile_id>/seven-segment.json`，优先读取机器 profile；命中倒计时快速路径时不再读取通用规范。其他数码管任务再读取 `06-数码管动态扫描规范.md` 和所选 profile 的 `seven-segment.md`；不得试读未选择 profile 的文件来替用户选板。
 - 构建/编译：读取 `07-构建-烧录-验收规范.md` 中编译相关段落、profile/config 和 adapter 配置。
 
 禁止复制 templates、example 或 sample ASM 作为候选源码。示例文件只作反例或格式参考，不进入生成上下文；不得把示例改名、删注释、局部替换后当成新代码。不得搜索与用户显示内容相同的现成答案。必须根据已确认的当前需求、板级契约、芯片规则、寄存器和时序重新撰写候选 ASM。
@@ -144,40 +127,9 @@ D. 不确定/我不知道
 
 WDT 未明确关闭时，任何可见延时、长忙等或周期循环必须插入 `CLRWDT`。`CLRWDT` 要放在忙等循环内部或足够短的循环层级内，不能只在初始化或主循环入口偶尔执行；如果确认 WDT 已关闭，必须在文件头写明 OPTION/WDT 依据。
 
-## OLED 任务硬门禁
+## OLED 专项路由
 
-生成 OLED/SSD1306 ASM 时，读取本 Skill 的 `05-GPIO-I2C-OLED驱动规范.md`。项目经验、旧示例和模板冲突时，以当前 `HK64S825` 目标、已编译证据和实板验证结论为准；带其他旧芯片型号的文件只能作为反例或历史线索，不得作为候选源码模板。
-
-至少保证：
-
-- 目标芯片为 `HK64S825`，不得出现旧芯片型号标注。
-- 在创建候选源码前完成用户已确认 SDA/SCL 的逐引脚 `POD` 选择和 I2C 上拉来源确认；缺少任一项不得开始静态检查或编译。
-- OLED 亮屏只初始化已确认 PinContract 所在端口的目标 PPU/POE/PIO 位，建立上拉、输出使能和 SDA/SCL idle high。不得为了“完整初始化”无证批量写目标端口的 POD/INS/PPD/PSL；只有用户确认的 board profile、E1 证据或用户明确要求证明需要时才加。
-- 用户或已确认板级依据明确某个 SDA/SCL 引脚不配置 POD 时，结构化 PinContract 写 `configure_drive_mode: false`，但仍必须通过 `PIO` 先于 `POE`、位所有权和 ACK 释放检查；不得把该例外用于普通 GPIO。
-- I2C 第 9 个时钟前释放 SDA；ACK 采样必须读 `PB_INS`，不得读 `PB_PIO`，因为 PB_PIO 可能是输出锁存而不是真实引脚电平。亮屏最小路径可以采样记录 ACK 但不直接停机；若实现 NACK 错误路径，必须确认读法真实且不会 false NACK 后再 STOP/重试/进安全状态。
-- OLED 上电后必须先执行上电稳定延时，例如 `DELAY_100MS`，再发送 `0xAE`、初始化命令或数据事务。
-- I2C 发送 bit 前必须复核 `BTSZ` 语义：`BTSZ R,b` 是 bit=0 跳过下一条；MSB-first 发送 bit7 的已验证布局是 `BTSZ 80H,7` 后 bit7=1 跳到 `BSET PB_PIO,7`，bit7=0 走 `BCLR PB_PIO,7`，不得把 0/1 分支反写。
-- I2C 时序不得靠随机增删 `NOP` 猜测修复；普通编译 release 给出 clock/cycle 依据，硬件阶段再测 SCL/timing。
-- SSD1306 初始化必须包含 charge pump `8D/14`，并设置 column/page range 后进入 `0x40` 数据模式。
-- 只有用户明确选择 `HK64S825-DEFAULT` 后，才可采用其 SSD1306 128x64、地址、SDA/SCL、控制字节和 `A1H + C0H` 等注册板基线；其他 board 必须从用户资料或新 probe 建立自己的参数。“资产原始列顺序”只对已经记录来源和实板结果的同一种字模格式成立，不能跨字库生成器套用。
-- 当前板 5x7 ASCII 数字/斜杠已用 `2026/7/24` 实板验证：字符按文本顺序发送，每个字符保持标准 5 列加 1 空列的原始列顺序；标准 5x7 列字节必须先做 bit 顺序反转，再作为 SSD1306 page byte 发送。该结论只覆盖单 page 的标准 5x7 常量，禁止直接推广到 8x16、16x16、汉字、Logo 或其他多 page 资产。
-- 自定义、多 page 或混合字符宽度的字模在创建候选源码前，必须建立资产清单并运行 `python scripts/ssd1306_page_bitmap.py <asset-manifest.json>`。清单必须固定宽高、按文本顺序排列的字符块及各自宽度、源格式 `ssd1306-page-lsb-top`、逐字符水平变换、垂直变换、源/输出 byte count 和 SHA256；转换器输出的点阵预览必须保持文本块顺序。只有用户明确选择 `HK64S825-DEFAULT` 时，正式资产才声明 `orientation_profile: "hk64s825-default-a1-c0-page-lsb-top-v1"`。
-- 水平和垂直修正必须按像素坐标定义：`mirror_x_within_glyphs` 只反转每个字符块内部的列，不得反转整行；多 page 的 `mirror_y` 必须反转全部像素行，等价于交换 page 顺序并反转每个 byte 的 bit 顺序，不能只交换 page 或只做 bit 反转。
-- 汉字、ASCII 字母、Logo、头像、图片及多 page 字模的正式显示数据默认且强制使用 `DB + TABL/TABH` 查表，不得展开成连续 `MOV A,#xxH / CALL I2C_SEND`。请求中的 `display.asset` 必须写 `source_encoding: "db"`、匹配当前 board 的 `orientation_profile`、DB 的 `source_label` 和查表函数 `table_sender`；源码必须有精确的 `; 查表配对 TABLE_PAIR: TABLE,SENDER`。`inline_i2c_send` 仅允许用户明确要求的无文本总线/方向探针，须声明 `role: "probe"` 且最多 8 bytes，不能作为正式文字或图片 release。
-- 上述显示资产还必须提供相对 manifest 路径、byte count 和源/输出 SHA256。`new-run` 必须校验方向 profile 与请求 board 匹配，并校验 manifest 的 `source.format` 和两个镜像参数与 profile 完全一致；再从指定 DB 重新提取实际字节并核对转换输出，检查 sender 含 `TABL -> 重载索引 -> TABH`。`close-loop` 必须重复资产审计，并在编译后使用最终 MAP 证明每个 table/sender pair 同一 256-word page；最终静态 evidence 为 0 warning，manifest 作为 run 快照参与 release hash 门禁。显式无文本 probe 豁免方向 profile。
-- 排查方向错误时，分别判断控制器整屏列/行映射、同一行中字块排列顺序、单个字模内部列方向，不得把三者混为一次整行翻转。使用左右和上下均不对称的测试图，每次只改变一个变量并记录实板结果；字块位置正确但每个字块左右镜像时，不得交换字块顺序。
-- 当前板 16 像素高 `2026年8月1号` 已实板确认的唯一基线是 `A1H + C0H`、源格式 `ssd1306-page-lsb-top`、`mirror_x_within_glyphs=false`、`mirror_y=true`。其中 `mirror_y=true` 对 8 像素高资产等价于逐 byte bit 反转，对 16 像素高资产等价于交换上下 page 并反转每个 byte 的 bit；不得再由“上下左右都反了”的照片症状直接推导 `true/true`。换板或换源格式时使用无文本非对称 probe，每次只改一个轴，实板确认后建立新的方向 profile。
-- 标准中文和 ASCII 字符默认使用 `scripts/bdf_to_ssd1306.py` 从 BDF 源字模生成，再经 `ssd1306_page_bitmap.py` 审计并写入 `DB + TABL/TABH`。随 Skill 提供的字库登记在 `scripts/bdf_to_ssd1306.py` 的 `APPROVED_FONTS` 中：`wenquanyi_bitmap_song_16px_ascii_date_cn.bdf`（可打印 ASCII 与“年、月、号、中、国、￥”，101 字）和 `wenquanyi_bitmap_song_16px_gb2312.bdf`（可打印 ASCII、全角标点与 GB2312 一级二级，7539 字）。文字资产只能来自已登记字库，新增字库必须先登记 SHA256；字库体积与 MTP 无关，它只是取模查询源，写入芯片的永远只有当前文本用到的字，禁止把完整字库写入 HK64S825 的 1K MTP。
-- 每行文本在生成资产前先跑 `python scripts/plan_text_line.py --text "<本行文本>"`，取其给出的 `--text`、`--widths`、字节数和居中列范围。字模按 word 存放、发送器每轮发一次 `TABL` 再一次 `TABH`，因此每行字节数必须为偶数；行宽为奇数时该工具在行尾追加一列 1 像素空白凑偶数。不得为了凑偶数加宽字形：格宽超过字形 `DWIDTH` 时 `crop_glyph_cell` 会拒绝，release 门禁也用同一函数逐字形重建比对。
-- 基线由 `layout_baseline` 按本行实际字形推导，不接受人工传入的任意基线。只用 `cell_height - 3` 会让 `y_offset` 为 `-3` 的字形（`g j p q y` 与 `( ) / J ] _ { | }` 等）在任何 `cell_height` 下都恰好溢出一行；纯汉字资产的推导结果与该公式相同，故既有资产不受影响。
-- 正式文字资产必须把 `layout[].kind` 固定为 `text`，并由同一确定性转换器记录每个字符的 Unicode codepoint、字符宽度、逐字 glyph SHA256、生成器版本、字体 ID 和固定字体 SHA256。`new-run` 与 `close-loop` 必须从 Skill 内置固定字体逐字节重建源字模，再核对 manifest 和 ASM DB；禁止复用只有 label 和自填 SHA256 的旧字模。字体缺字、宽度不符、来源字段缺失、不同 Unicode codepoint 得到相同 glyph 或重建结果不一致时必须失败关闭，错误码为 `DISPLAY_GLYPH_PROVENANCE_MISMATCH`，不得回退到旧清单、临时手绘或模型猜测的点阵。
-- SHA256 只能证明某组字节未变化，不能证明这些字节代表 label 声称的字符；点阵预览只用于人工诊断，不能代替 Unicode 语义门禁。标准文字的一致性定义是“相同文本 + 相同字体 SHA256 + 相同生成器版本 + 相同尺寸/方向 profile => 相同逐字 glyph SHA256 和最终 DB”。
-- 使用文泉驿子集时必须保留 `references/fonts/NOTICE-wenquanyi-bitmap-song.txt`。两个子集都从上游 `bdf/wenquanyi_12pt.bdf`（SHA256 `b4bc0413...4247a28`，6759714 字节）按 `ENCODING` 机械提取，点阵字节、`DWIDTH`、`BBX` 与上游逐字节一致；核对上游哈希前先核对字节数，截断的下载会得到不同哈希并静默丢掉后段字形。该字体源文件标注为 GPL v2 with font embedding exception；`u8g2_wqy` 的 MIT 包装许可证不替代字体本身的许可证。U8g2 的 `u8g2_font_*` 数组是专用 RLE 格式，不能直接发送给 SSD1306。`fontDisplay` 的二进制字库和取模 EXE 未提供清晰再分发授权，禁止纳入正式 Skill 或交付 ASM。
-- 为保留已实板验证的纯图片/Logo，可继续使用带来源证据的 image manifest。正式文字不得通过 `--base-manifest` 保留未重建字块；若使用该模式升级历史文字资产，必须把所有 `layout[].kind=text` 字块列入 `--replace-label`，使每个字符都由固定字体重建。
-- 每个 GDDRAM 数据字节必须使用 SSD1306 page 格式：bit0 是该 page 顶部像素，bit7 是该 page 底部像素；禁止把字模按普通横向行扫描直接发送。
-- 多字符、汉字、Logo、头像或位图必须先设置与数据量一致的水平寻址窗口，再严格按 page → 当前行字块/图片块 → 列发送。两个 16x16 汉字必须依次发送 page0 的第 1 个字 16 列、page0 的第 2 个字 16 列、page1 的第 1 个字 16 列、page1 的第 2 个字 16 列，不得按“完整第 1 字两页后再完整第 2 字两页”的顺序发送。
-- 可见亮屏不得只用 `A5H/AFH` 或裸 `AFH/AEH` 证明亮灭；必须先写入 1024 字节 `0xFF` 到 GDDRAM。8 位计数器实现 1024 字节时，必须审查低字节 `00H` 配合高计数 `04H` 的 4×256 结构，闪烁可在此后用 `AFH/AEH` 开关显示输出，或用精确 1024 byte 的 `FF/00` 重刷实现。
-- 除复位/中断向量等必要位置外，避免无意义 `ORG` 空洞；编译后检查 code size、warning 和 hash。
+OLED/SSD1306/I2C 显示任务必须读取并执行 `references/workflows/oled.md`；主 Skill 不再重复载入其资产、方向和字体细则。
 
 ## 快速路径
 
@@ -191,6 +143,23 @@ WDT 未明确关闭时，任何可见延时、长忙等或周期循环必须插�
 
 复杂任务按涉及模块增量读取资料；不要先加载整个 spec 目录。
 
+## 已确认 E1 profile 的倒计时快速路径
+
+同时满足以下条件时直接使用此路径：用户已明确选择一个 `seven-segment.json` 机器 profile；profile 为 `status=ready`、`unresolved_inputs=[]`，并记录 `evidence.level=E1` 与 `evidence.status=user_confirmed_normal_display`；功能是四位 `MM:SS` 逐秒倒计时，终点为 `00:00` 保持，分隔符为 profile 默认的视觉第二位 DP 或不显示。
+
+1. 只读取用户已选择的 `seven-segment.json`，从当前请求解析 `MM:SS`、终点行为和分隔符；不要重新询问 profile 已确认的接线、时钟、反相、限流或驱动能力。
+2. 不读取 analysis、templates、示例 ASM、检查器源码或通用数码管规范，不手工重做段码表和周期推导。运行 `scripts/generate_countdown.py`，由受限生成器校验机器 profile、求解扫描周期并生成完整 request 与候选 ASM。
+3. 生成后直接运行一次 `quick-release`。不要预先单独运行 `doctor` 或 `lint`；`quick-release` 已包含 doctor、静态检查、真实内置编译和 release。失败时依据聚合诊断修订后再重跑一次完整门禁。
+4. 只消费 `quick-release` 的 JSON 回执；其中已直接包含 evidence hash、编译器版本、warning、HEX/BIN/MAP 路径与 hash、代码规模、静态摘要和 timing audit，无需再逐个读取这些文件。
+5. E1 状态只表示用户确认该倒计时正常显示，不得扩大为全部硬件验收通过，也不得把内置编译 release 描述为公司编译器兼容。
+
+```powershell
+python scripts/generate_countdown.py --profile references/profiles/HK64S825.profile.json --board-profile references/boards/<board_profile_id>/seven-segment.json --start 11:11 --source candidate.asm --output-request request.json
+python scripts/hk8asm.py quick-release --profile references/profiles/HK64S825.profile.json --config references/configs/builtin-config.json --request request.json --source candidate.asm --run-dir .hk8asm/run-id --output verified.asm
+```
+
+`--terminal-behavior` 当前只支持 `hold`。`--separator` 可取 `profile`、`visual-digit-2-dp` 或 `none`。生成器是受限程序化生成器，不复制 template/example，也不替代其他数码管功能的通用生成流程。
+
 ## 闭环命令
 
 运行环境要求 Python 3.7+。`hk8asm.py`、`scripts/builtin_compiler.py` 和其他内置脚本只依赖标准库，不要求 Python 3.8 或 Python 3.10。默认 profile/config 已使用可移植占位符：`$PYTHON` 会展开为当前运行 `hk8asm.py` 的 Python，`$SKILL_ROOT` 会展开为当前 Skill 根目录。若机器默认 `python` 不可用或低于 3.7，应改用系统中可用的 `python3`、`py -3.7`、`py -3.8` 或智能体自带 Python 运行闭环命令；不得因为缺少 Python 3.10 而阻断 ASM 编译 release。
@@ -199,12 +168,16 @@ WDT 未明确关闭时，任何可见延时、长忙等或周期循环必须插�
 
 ```powershell
 python scripts/hk8asm.py doctor --profile references/profiles/HK64S825.profile.json --config references/configs/builtin-config.json
+python scripts/hk8asm.py lint --profile references/profiles/HK64S825.profile.json --config references/configs/builtin-config.json --request request.json --source candidate.asm
 python scripts/hk8asm.py new-run --profile references/profiles/HK64S825.profile.json --config references/configs/builtin-config.json --request request.json --source candidate.asm --run-dir .hk8asm/run-id
 python scripts/hk8asm.py close-loop --run-dir .hk8asm/run-id
 python scripts/hk8asm.py release --run-dir .hk8asm/run-id --output verified.asm
+python scripts/hk8asm.py quick-release --profile references/profiles/HK64S825.profile.json --config references/configs/builtin-config.json --request request.json --source candidate.asm --run-dir .hk8asm/run-id --output verified.asm
 ```
 
-`doctor` 探测 compiler adapter 和批准工具版本；`new-run` 把输入快照到隔离运行目录；`close-loop` 执行静态检查和目标编译，并保存 source/artifact/evidence hash；`release` 是唯一允许释放已编译 ASM 的命令。
+`lint` 一次聚合中文注释和语义问题，不创建持久 run；`quick-release` 在一次命令中执行 doctor、快照、检查、编译和 release，并直接返回完整发布凭据。`release` 仍是唯一允许释放已编译 ASM 的状态转换。
+
+完整板级契约的“全部段亮/全灭循环”可先运行 `scripts/generate_seven_segment.py`，由生成器求解扫描延时和帧数，并把 `HOLD_ON/HOLD_OFF` 写成完整周期审计目标。生成器只支持其声明的受限功能，不替代通用 ASM 生成。
 
 内置编译器说明：
 
@@ -223,7 +196,7 @@ python scripts/hk8asm.py release --run-dir .hk8asm/run-id --output verified.asm
 
 ## 硬门禁
 
-- release 模式下，候选 ASM 在 release 前只能存在于隔离运行目录中。
+- release 以 `new-run` 内的源码快照为唯一候选；工作区源文件只可作为 `lint/new-run/quick-release` 输入，门禁通过前不得向用户展示或交付。
 - Profile 提供 `spec_root` 和 `static_check` 时，静态检查必须使用内置规范检查器。
 - 编译 warning 一律视为失败，除非明确列入 `allowed_warnings`。
 - 目标编译必须使用批准版本的内置编译模块或用户明确配置的外部 ASMC；源码、产物和 evidence 必须通过 hash 绑定。
@@ -255,6 +228,12 @@ python scripts/install.py --target codex-user --mode copy
 python scripts/install.py --target claude-user --mode copy
 python scripts/install.py --target codex-project --project-dir <project> --mode copy
 python scripts/install.py --target claude-project --project-dir <project> --mode copy
+```
+
+开发源的完整规范包使用 `validate_spec.py` 默认模式自检；精简安装副本不携带 analysis、templates 和开发测试，必须使用 `validate_spec.py --runtime-only`：
+
+```powershell
+python references/spec/tools/validate_spec.py references/spec --runtime-only
 ```
 
 默认使用 `copy` 生成精简的可移植安装副本；`symlink` 仅用于本仓库开发调试，会暴露测试和开发资料，不用于分发。Codex 可用 `$writing-hk8-mcu-asm` 显式调用；Claude Code 可用 `/writing-hk8-mcu-asm` 显式调用。描述匹配时也可以隐式触发。

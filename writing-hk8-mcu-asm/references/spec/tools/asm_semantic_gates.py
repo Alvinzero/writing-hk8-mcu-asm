@@ -109,6 +109,8 @@ REQUIRED_COUNTER_EFFECTS = {
 }
 SUPPORTED_DELAY_OPS = {
     "MOV",
+    "BSET",
+    "BCLR",
     "NOP",
     "CLRWDT",
     "DECR",
@@ -120,6 +122,7 @@ SUPPORTED_DELAY_OPS = {
     "SZ",
     "SZR",
     "JMP",
+    "CALL",
     "RET",
 }
 SUPPORTED_DELAY_FORMS = {
@@ -268,10 +271,13 @@ def _simulate_delay(
                     forms[index] = "load-register"
                 elif source.upper() == "A" and destination != "A":
                     effect_key = "MOV R,A"
-                    register_operands[index] = _delay_register(
-                        destination, equ_symbols, line
-                    )
-                    forms[index] = "store-register"
+                    if destination in GPIO_STATE_REGISTERS or destination == "SCK_PS":
+                        forms[index] = "store-opaque"
+                    else:
+                        register_operands[index] = _delay_register(
+                            destination, equ_symbols, line
+                        )
+                        forms[index] = "store-register"
                 else:
                     raise ValueError(f"unsupported MOV form at line {line}")
             elif op in {"NOP", "CLRWDT", "RET"}:
@@ -292,13 +298,20 @@ def _simulate_delay(
                 register_operands[index] = _delay_register(
                     args[0], equ_symbols, line
                 )
-            elif op == "JMP":
+            elif op in {"BSET", "BCLR"}:
+                if len(args) != 2 or not args[0]:
+                    raise ValueError(f"unsupported {op} operands at line {line}")
+                bit = resolve_byte(args[1], equ_symbols)
+                if bit is None or not 0 <= bit <= 7:
+                    raise ValueError(f"unsupported {op} bit at line {line}")
+                forms[index] = "opaque-bit-write"
+            elif op in {"JMP", "CALL"}:
                 if len(args) != 1 or not args[0]:
-                    raise ValueError(f"unsupported JMP operands at line {line}")
+                    raise ValueError(f"unsupported {op} operands at line {line}")
                 target = resolve_direct_target_address(file_model, instruction)
                 if target is None:
                     raise ValueError(
-                        f"jump target cannot be resolved at line {line}: {args[0]}"
+                        f"{op.lower()} target cannot be resolved at line {line}: {args[0]}"
                     )
                 direct_targets[index] = target
 
@@ -342,6 +355,7 @@ def _simulate_delay(
     registers: dict[int, int] = {}
     clrwdt_count = 0
     steps = 0
+    call_stack: list[int] = []
 
     def accelerated_countdown(
         start_address: int,
@@ -440,6 +454,9 @@ def _simulate_delay(
                 if accumulator is None:
                     raise ValueError(f"A is unknown at line {line}")
                 registers[register] = accumulator
+            elif form == "store-opaque":
+                if accumulator is None:
+                    raise ValueError(f"A is unknown at line {line}")
             else:
                 raise ValueError(f"unsupported MOV form at line {line}")
             cycles += cycle
@@ -450,6 +467,11 @@ def _simulate_delay(
             cycles += cycle
             if op == "CLRWDT":
                 clrwdt_count += 1
+            pc = next_word(pc)
+            continue
+
+        if op in {"BSET", "BCLR"}:
+            cycles += cycle
             pc = next_word(pc)
             continue
 
@@ -505,8 +527,22 @@ def _simulate_delay(
             pc = target
             continue
 
+        if op == "CALL":
+            if len(call_stack) >= 32:
+                raise ValueError("delay routine call depth exceeds 32")
+            return_address = next_word(pc)
+            target = direct_targets[_index]
+            fetch(target)
+            call_stack.append(return_address)
+            cycles += cycle
+            pc = target
+            continue
+
         if op == "RET":
             cycles += cycle
+            if call_stack:
+                pc = call_stack.pop()
+                continue
             return DelayResult(
                 label=label,
                 cycles=cycles,
@@ -1011,6 +1047,37 @@ def collect_gpio_effects(file_model: dict[str, Any]) -> list[dict[str, Any]]:
                         "kind": "bit",
                     }
                 )
+        if index > 0 and instruction["op"] == "MOV":
+            store_args = split_args(instruction["args"])
+            load = instructions[index - 1]
+            load_args = split_args(load["args"])
+            if (
+                len(store_args) == 2
+                and store_args[1].upper() == "A"
+                and store_args[0].upper() in GPIO_STATE_REGISTERS
+                and load["op"] == "MOV"
+                and len(load_args) == 2
+                and load_args[0].upper() == "A"
+                and load_args[1].startswith("#")
+            ):
+                value = resolve_byte(load_args[1], equ_symbols)
+                if value is not None:
+                    safe_write_indices.add(index)
+                    effects.append(
+                        {
+                            "register": store_args[0].upper(),
+                            "set_bits": {
+                                bit for bit in range(8) if value & (1 << bit)
+                            },
+                            "clear_bits": {
+                                bit for bit in range(8) if not value & (1 << bit)
+                            },
+                            "line": instruction["line"],
+                            "index": index,
+                            "source": instruction["source"],
+                            "kind": "whole_constant",
+                        }
+                    )
         if index + 2 >= len(instructions):
             continue
         load, logic, store = instructions[index : index + 3]
@@ -1054,6 +1121,15 @@ def collect_gpio_effects(file_model: dict[str, Any]) -> list[dict[str, Any]]:
         register = gpio_written_register(instruction)
         if register not in GPIO_STATE_REGISTERS or index in safe_write_indices:
             continue
+        args = split_args(instruction["args"])
+        kind = (
+            "whole_dynamic"
+            if instruction["op"] == "MOV"
+            and len(args) == 2
+            and args[0].upper() == register
+            and args[1].upper() == "A"
+            else "unknown"
+        )
         effects.append(
             {
                 "register": register,
@@ -1062,7 +1138,7 @@ def collect_gpio_effects(file_model: dict[str, Any]) -> list[dict[str, Any]]:
                 "line": instruction["line"],
                 "index": index,
                 "source": instruction["source"],
-                "kind": "unknown",
+                "kind": kind,
             }
         )
     return sorted(effects, key=lambda effect: (effect["line"], effect["index"]))
@@ -1214,9 +1290,16 @@ def audit_gpio_contract(
             contract_errors.append(
                 f"pins.{pin_name}.drive must be push_pull or open_drain"
             )
-        if active_level not in {"high", "low"}:
-            contract_errors.append(f"pins.{pin_name}.active_level must be high or low")
-        if initial_state not in {"on", "off"}:
+        if active_level not in {"high", "low", "dynamic"}:
+            contract_errors.append(
+                f"pins.{pin_name}.active_level must be high, low, or dynamic"
+            )
+        if active_level == "dynamic":
+            if pin.get("initial_level") not in {"high", "low"}:
+                contract_errors.append(
+                    f"pins.{pin_name}.initial_level must be high or low for dynamic polarity"
+                )
+        elif initial_state not in {"on", "off"}:
             contract_errors.append(f"pins.{pin_name}.initial_state must be on or off")
         if not isinstance(pin.get("preserve_unowned_bits"), bool):
             contract_errors.append(
@@ -1225,6 +1308,23 @@ def audit_gpio_contract(
         if pin.get("configure_drive_mode", True) not in {True, False}:
             contract_errors.append(
                 f"pins.{pin_name}.configure_drive_mode must be boolean when present"
+            )
+        ownership = pin.get("port_ownership")
+        if ownership not in {None, "exclusive", "shared"}:
+            contract_errors.append(
+                f"pins.{pin_name}.port_ownership must be exclusive or shared"
+            )
+        elif ownership == "exclusive" and (
+            not bits_are_valid
+            or set(bits) != set(range(8))
+            or pin.get("preserve_unowned_bits") is not False
+        ):
+            contract_errors.append(
+                f"pins.{pin_name} exclusive ownership requires bits 0..7 and preserve_unowned_bits=false"
+            )
+        elif ownership == "shared" and pin.get("preserve_unowned_bits") is not True:
+            contract_errors.append(
+                f"pins.{pin_name} shared ownership requires preserve_unowned_bits=true"
             )
         if contract_errors:
             issues.append(
@@ -1252,11 +1352,22 @@ def audit_gpio_contract(
         owned_bits_by_port.setdefault(port, set()).update(owned_bits)
 
     contract_ports = set(owned_bits_by_port)
+    exclusive_ports = {
+        contract["port"]
+        for contract in contracts
+        if contract["pin"].get("port_ownership") == "exclusive"
+        and contract["owned_bits"] == set(range(8))
+    }
     for effect in effects:
-        if effect["kind"] != "unknown":
+        if effect["kind"] not in {"unknown", "whole_dynamic"}:
             continue
         port = effect["register"].split("_", 1)[0]
         if port not in contract_ports:
+            continue
+        if (
+            port in exclusive_ports
+            and effect["kind"] == "whole_dynamic"
+        ):
             continue
         issues.append(
             make_issue(
@@ -1310,13 +1421,17 @@ def audit_gpio_contract(
         drive = pin["drive"]
         configure_drive_mode = pin.get("configure_drive_mode", True)
         active_level = pin["active_level"]
-        initial_state = pin["initial_state"]
+        initial_state = pin.get("initial_state")
 
         mode_register = f"{port}_POD"
         data_register = f"{port}_PIO"
         enable_register = f"{port}_POE"
         mode_action = "clear_bits" if drive == "push_pull" else "set_bits"
-        initial_high = (initial_state == "on") == (active_level == "high")
+        initial_high = (
+            pin.get("initial_level") == "high"
+            if active_level == "dynamic"
+            else (initial_state == "on") == (active_level == "high")
+        )
         data_action = "set_bits" if initial_high else "clear_bits"
 
         for bit in sorted(owned_bits):

@@ -7,7 +7,10 @@
 ```powershell
 python tools/validate_spec.py <spec-root>
 python tools/validate_spec.py <spec-root> --json
+python tools/validate_spec.py <spec-root> --runtime-only
 ```
+
+`--runtime-only` 用于不携带 `analysis/`、`templates/`、`tools/tests/` 和 `build_analysis_snapshot.py` 的精简安装副本；它仍检查 release 所需文档、规则、指令/寄存器引用和静态检查器。开发源和 CI 继续使用默认完整模式。
 
 检查范围包括：必需文件、UTF-8、JSON/Schema、87 条规则、65 个指令探针、65 条 instruction metadata、407 行/96 个 register metadata、INC/metadata OPEN、Markdown 相对链接、模板源码哈希，以及模板静态检查的正反例。
 

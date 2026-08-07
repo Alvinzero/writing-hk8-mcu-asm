@@ -2286,7 +2286,8 @@ raise SystemExit(__EXIT_CODE__)
         loop_payload = self.payload(loop)
         self.assertEqual("STATIC_CHECK_FAILED", loop_payload["code"])
         finding_rule_ids = {
-            finding["rule_id"] for finding in loop_payload["details"]["findings"]
+            finding["rule_id"]
+            for finding in loop_payload["details"]["spec_static_check"]["findings"]
         }
         self.assertTrue(
             {"HK-GPIO-002", "HK-SYN-012", "HK-SYN-013", "HK-WDT-002"}
@@ -2705,7 +2706,7 @@ raise SystemExit(__EXIT_CODE__)
                 self.assertEqual("STATIC_CHECK_FAILED", payload["code"])
                 self.assertEqual(
                     "chinese_explanatory_comment",
-                    payload["details"][0]["rule"],
+                    payload["details"]["comment_language"]["issues"][0]["rule"],
                 )
 
     def test_comment_gate_rejects_english_sentence_made_from_source_labels(self) -> None:
@@ -2722,7 +2723,10 @@ raise SystemExit(__EXIT_CODE__)
         self.assertNotEqual(0, loop.returncode)
         payload = self.payload(loop)
         self.assertEqual("STATIC_CHECK_FAILED", payload["code"])
-        self.assertEqual("chinese_explanatory_comment", payload["details"][0]["rule"])
+        self.assertEqual(
+            "chinese_explanatory_comment",
+            payload["details"]["comment_language"]["issues"][0]["rule"],
+        )
 
     def test_chinese_comment_allows_bundled_technical_identifiers(self) -> None:
         self.source_path.write_text(
@@ -3118,6 +3122,89 @@ raise SystemExit(__EXIT_CODE__)
             self.assertEqual("COMPILE_PASSED", self.payload(result)["code"])
             run_state = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
             self.assertEqual(0, run_state["flash_attempts"])
+
+    def test_lint_aggregates_comment_and_profile_findings_without_run(self) -> None:
+        self.source_path.write_text(
+            "; English prose is rejected\nORG 0x0000\nSTART:\nNOP\nEND\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_cli(
+            "lint",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+        )
+
+        self.assertEqual(2, result.returncode)
+        payload = self.payload(result)
+        self.assertEqual("STATIC_CHECK_FAILED", payload["code"])
+        details = payload["details"]
+        self.assertEqual("fail", details["comment_language"]["status"])
+        self.assertTrue(details["comment_language"]["issues"][0]["tokens"])
+        self.assertTrue(details["profile_checks"])
+        self.assertFalse(any(self.root.glob("hk8asm-lint-*")))
+
+    def test_quick_release_runs_the_full_compile_release_workflow(self) -> None:
+        run_dir = self.root / "quick-release-run"
+        output = self.root / "quick-release-verified.asm"
+
+        result = self.run_cli(
+            "quick-release",
+            "--profile",
+            str(self.profile_path),
+            "--config",
+            str(self.config_path),
+            "--request",
+            str(self.request_path),
+            "--source",
+            str(self.source_path),
+            "--run-dir",
+            str(run_dir),
+            "--output",
+            str(output),
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+        payload = self.payload(result)
+        self.assertEqual("RELEASED", payload["code"])
+        self.assertEqual("quick-release", payload["workflow"])
+        evidence_path = run_dir / "evidence.json"
+        self.assertEqual(
+            hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+            payload["evidence_sha256"],
+        )
+        self.assertEqual("sim-1.0", payload["compiler"]["tool_version"])
+        self.assertEqual([], payload["warnings"])
+        self.assertIsInstance(payload["artifacts"], dict)
+        self.assertIsInstance(payload["metrics"], dict)
+        self.assertIsInstance(payload["static_summary"], dict)
+        self.assertIsInstance(payload["timing_audit"], list)
+        self.assertTrue(output.is_file())
+        run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual("RELEASED", run["state"])
+
+    def test_close_loop_failure_evidence_keeps_aggregated_details(self) -> None:
+        self.source_path.write_text(
+            "; English prose is rejected\nORG 0x0000\nSTART:\nNOP\nEND\n",
+            encoding="utf-8",
+        )
+        run_dir = self.new_run("aggregated-failure")
+
+        result = self.run_cli("close-loop", "--run-dir", str(run_dir))
+
+        self.assertEqual(2, result.returncode)
+        evidence = json.loads(
+            (run_dir / "evidence.json").read_text(encoding="utf-8")
+        )
+        details = evidence["failure"]["details"]
+        self.assertEqual("fail", details["comment_language"]["status"])
+        self.assertTrue(details["profile_checks"])
 
 
 if __name__ == "__main__":

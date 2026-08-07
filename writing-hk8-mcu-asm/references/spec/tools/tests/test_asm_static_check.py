@@ -2032,7 +2032,7 @@ class AsmStaticCheckCliTests(unittest.TestCase):
             request=gpio_request(),
         )
         findings = self.assert_gpio_blocker(completed, payload)
-        self.assertIn("unknown GPIO write", findings[0]["evidence"])
+        self.assertIn("task-unowned bits", findings[0]["evidence"])
 
     def test_gpio_rejects_unknown_register_write_after_a_valid_sequence(self):
         completed, payload = self.run_checker(
