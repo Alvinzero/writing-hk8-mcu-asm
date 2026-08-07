@@ -34,9 +34,17 @@ jobs:
           version="$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
           commit="${GITHUB_SHA}"
           output="${RUNNER_TEMP}/managed-skill"
+          portable_project="${RUNNER_TEMP}/portable-project"
           archive_name="${SKILL_NAME}-${commit}.zip"
-          mkdir -p "${output}"
-          export VERSION="${version}" COMMIT="${commit}" OUTPUT="${output}" ARCHIVE_NAME="${archive_name}"
+          mkdir -p "${output}" "${portable_project}"
+          python3 "${SKILL_NAME}/scripts/install.py" \
+            --target codex-project \
+            --project-dir "${portable_project}" \
+            --mode copy \
+            --force
+          skill_root="${portable_project}/.agents/skills/${SKILL_NAME}"
+          python3 "${skill_root}/scripts/validate_skill.py" "${skill_root}"
+          export VERSION="${version}" COMMIT="${commit}" OUTPUT="${output}" ARCHIVE_NAME="${archive_name}" SKILL_ROOT="${skill_root}"
           python3 - <<'PY'
           import hashlib
           import json
@@ -46,7 +54,7 @@ jobs:
           from pathlib import Path
 
           skill = os.environ["SKILL_NAME"]
-          root = Path(skill)
+          root = Path(os.environ["SKILL_ROOT"])
           output = Path(os.environ["OUTPUT"])
           archive = output / os.environ["ARCHIVE_NAME"]
           files = sorted(path for path in root.rglob("*") if path.is_file())
