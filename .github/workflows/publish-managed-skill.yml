@@ -87,12 +87,19 @@ jobs:
         run: |
           set -euo pipefail
           tag="skill-${{ steps.package.outputs.version }}"
-          gh release create "${tag}" \
-            "${{ steps.package.outputs.archive }}" \
-            "${{ steps.package.outputs.manifest }}#latest.json" \
-            --title "HK8 Skill ${{ steps.package.outputs.version }}" \
-            --notes "自动同步 ${GITHUB_SHA}：8 位 MCU Skill 热更新包。" \
-            --latest
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" \
+              "${{ steps.package.outputs.archive }}" \
+              "${{ steps.package.outputs.manifest }}#latest.json" \
+              --clobber
+          else
+            gh release create "${tag}" \
+              "${{ steps.package.outputs.archive }}" \
+              "${{ steps.package.outputs.manifest }}#latest.json" \
+              --title "HK8 Skill ${{ steps.package.outputs.version }}" \
+              --notes "自动同步 ${GITHUB_SHA}：8 位 MCU Skill 热更新包。" \
+              --latest
+          fi
 
       - name: Upload to managed update server
         env:
