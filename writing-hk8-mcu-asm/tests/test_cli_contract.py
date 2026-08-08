@@ -36,7 +36,7 @@ STANDARD_TEXT_FONT = (
     / "wenquanyi_bitmap_song_16px_ascii_date_cn.bdf"
 )
 INSTRUCTION_REFERENCE = SKILL_ROOT / "references" / "spec" / "rules" / "instruction-reference.json"
-OLED_ORIENTATION_PROFILE_ID = "hk64s825-default-a1-c0-page-lsb-top-v1"
+OLED_ORIENTATION_PROFILE_ID = "hk64s825-4digit-mixed-pa-pb-e1-a1-c0-page-lsb-top-v1"
 REQUIRED_FAKE_COMPILER_FILES = (
     "src/core/assembler.py",
     "src/core/output_generator.py",
@@ -192,7 +192,7 @@ class ClosedLoopCliContractTests(unittest.TestCase):
         request["pins"]["led_outputs"]["bits"] = [0, 3, 5]
         request["peripherals"] = [{"name": "gpio"}]
         request["memory_limits"] = {"rom_bytes": 2048, "ram_bytes": 128}
-        request["board"] = {"id": "HK64S825-DEFAULT"}
+        request["board"] = {"id": "HK64S825-4DIGIT-MIXED-PA-PB-E1"}
         request["acceptance"] = []
         return request
 
@@ -858,7 +858,7 @@ raise SystemExit(__EXIT_CODE__)
     def test_multi_page_asset_is_audited_and_bound_to_evidence(self) -> None:
         manifest_path, _output_bytes = self.configure_multi_page_display_asset()
         request = json.loads(self.request_path.read_text(encoding="utf-8"))
-        request["board"] = {"id": "HK64S825-DEFAULT"}
+        request["board"] = {"id": "HK64S825-4DIGIT-MIXED-PA-PB-E1"}
         request["memory_limits"] = {"rom_bytes": 2048, "ram_bytes": 64}
         self._write_json(self.request_path, request)
         run_dir = self.root / "display-asset-pass"
@@ -910,7 +910,7 @@ raise SystemExit(__EXIT_CODE__)
     def test_db_display_close_loop_rechecks_table_pair_with_final_map(self) -> None:
         self.configure_multi_page_display_asset()
         request = json.loads(self.request_path.read_text(encoding="utf-8"))
-        request["board"] = {"id": "HK64S825-DEFAULT"}
+        request["board"] = {"id": "HK64S825-4DIGIT-MIXED-PA-PB-E1"}
         request["memory_limits"] = {"rom_bytes": 2048, "ram_bytes": 64}
         self._write_json(self.request_path, request)
         run_dir = self.root / "display-asset-db-final-map"
@@ -2096,7 +2096,7 @@ raise SystemExit(__EXIT_CODE__)
         self._write_json(self.profile_path, profile)
         request = self.structured_gpio_request()
         request["timing"] = {"precision": "approximate"}
-        request["board"] = {"id": "HK64S825-DEFAULT"}
+        request["board"] = {"id": "HK64S825-4DIGIT-MIXED-PA-PB-E1"}
         request["memory_limits"] = {"rom_bytes": 2048, "ram_bytes": 128}
         self._write_json(self.request_path, request)
         self.source_path.write_text(BULK_GPIO_WARNING_SOURCE, encoding="utf-8")
@@ -2170,7 +2170,7 @@ raise SystemExit(__EXIT_CODE__)
 
     def test_bundled_canonical_config_uses_builtin_compiler_without_local_toolchain_config(self) -> None:
         request = self.request()
-        request["board"] = {"id": "HK64S825-DEFAULT"}
+        request["board"] = {"id": "HK64S825-4DIGIT-MIXED-PA-PB-E1"}
         request["memory_limits"] = {"rom_bytes": 2048, "ram_bytes": 128}
         self._write_json(self.request_path, request)
         self.source_path.write_text(
@@ -2237,7 +2237,7 @@ raise SystemExit(__EXIT_CODE__)
 
     def test_documented_relative_run_dir_works_with_builtin_compiler(self) -> None:
         request = self.minimal_non_gpio_request()
-        request["board"] = {"id": "HK64S825-DEFAULT"}
+        request["board"] = {"id": "HK64S825-4DIGIT-MIXED-PA-PB-E1"}
         self._write_json(self.request_path, request)
         self.source_path.write_text(
             "; CHIP: HK64S825\n"

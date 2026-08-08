@@ -47,6 +47,6 @@ D. 不确定/我不知道
 
 ## 当前已验证方向边界
 
-只有用户明确选择 `HK64S825-DEFAULT` 时，才可使用 `hk64s825-default-a1-c0-page-lsb-top-v1`：`A1H + C0H`、`ssd1306-page-lsb-top`、`mirror_x_within_glyphs=false`、`mirror_y=true`。
+只有用户明确选择 `HK64S825-4DIGIT-MIXED-PA-PB-E1` 时，才可使用 `hk64s825-4digit-mixed-pa-pb-e1-a1-c0-page-lsb-top-v1`：`A1H + C0H`、`ssd1306-page-lsb-top`、`mirror_x_within_glyphs=false`、`mirror_y=true`。
 
 该结论不能跨板或跨源格式推广。5x7 单 page、16 像素多 page 和整屏方向必须分开判断；水平修正只作用于单个 glyph，垂直镜像同时交换 page 并反转 byte bit。完整细节和字体授权边界以 `references/spec/05-GPIO-I2C-OLED驱动规范.md`、`09-AI智能体生成与审查协议.md` 为准。

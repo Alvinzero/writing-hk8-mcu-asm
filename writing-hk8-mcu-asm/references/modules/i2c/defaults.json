@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "module_id": "i2c",
+  "status": "ready",
+  "contains_board_facts": false,
+  "board_binding": "required_separately",
+  "request_defaults": {
+    "driver": "software_bitbang",
+    "bit_order": "msb_first",
+    "ack_source": "input_sense",
+    "target_toolchain": "builtin_compiler",
+    "allowed_warnings": [],
+    "allow_nonvolatile_changes": false
+  },
+  "required_task_inputs": [
+    "sda_pin_contract",
+    "scl_pin_contract",
+    "per_pin_drive_mode",
+    "pullup_source",
+    "bus_address",
+    "clock_contract"
+  ]
+}

@@ -41,6 +41,14 @@ description: 用于生成、修改、审查或编译公司 HK64S825 8 位 MCU �
 
 已注册 board profile 只在用户明确选择对应 ID 后读取。需要向用户推荐已注册 profile 时，必须先以本 `SKILL.md` 所在目录为根，只枚举 `references/boards/` 的一级非隐藏子目录名，按字典序完整列出为当前已有的 `board_profile_id`。枚举目录名只用于展示 ID，不等于读取或采用板级资料；用户选择前不得打开、解析或概述任何 profile 文件，也不得根据目录名猜测适用性、状态或接线。目录中没有 ID 时，明确说明当前没有已注册 profile，不得继续把“选择已注册 profile”标为推荐。用户选择自定义开发板时，只收集当前功能需要的最小板级参数，不要求无关硬件信息。
 
+`references/boards/aliases.json` 只保存旧 ID 到 canonical ID 的弃用映射，不是可选板目录，不得列入推荐列表。用户明确说出一个已弃用旧 ID 时才读取该映射，向用户说明替代 ID，并按 canonical profile 继续；request 同时记录用户选择的 ID 和 canonical ID。
+
+## 模块默认配置
+
+识别当前功能模块后，只读取对应的 `references/modules/<module>/defaults.json`：`gpio`、`led`、`i2c`、`seven-segment` 或 `oled`。模块默认配置只提供软件工作流、初始化顺序、行为默认值和门禁，不包含 GPIO 映射、有效电平、OSC、反相、限流或驱动能力，不能满足 `board/pins/clock` 来源要求，也不能代替用户选择 board profile。
+
+模块默认配置不是可复制 ASM 模板。候选源码仍由受限生成器或当前任务规则程序化生成，并必须通过完整 release 门禁。
+
 数码管板级信息未明确且存在已注册 ID 时，第一题必须把实际枚举结果填入以下模板，不得只写“选择已注册 board profile”而省略 ID：
 
 ```text
@@ -148,7 +156,7 @@ OLED/SSD1306/I2C 显示任务必须读取并执行 `references/workflows/oled.md
 同时满足以下条件时直接使用此路径：用户已明确选择一个 `seven-segment.json` 机器 profile；profile 为 `status=ready`、`unresolved_inputs=[]`，并记录 `evidence.level=E1` 与 `evidence.status=user_confirmed_normal_display`；功能是四位 `MM:SS` 逐秒倒计时，终点为 `00:00` 保持，分隔符为 profile 默认的视觉第二位 DP 或不显示。
 
 1. 只读取用户已选择的 `seven-segment.json`，从当前请求解析 `MM:SS`、终点行为和分隔符；不要重新询问 profile 已确认的接线、时钟、反相、限流或驱动能力。
-2. 不读取 analysis、templates、示例 ASM、检查器源码或通用数码管规范，不手工重做段码表和周期推导。运行 `scripts/generate_countdown.py`，由受限生成器校验机器 profile、求解扫描周期并生成完整 request 与候选 ASM。
+2. 读取 `references/modules/seven-segment/defaults.json`，不读取 analysis、templates、示例 ASM、检查器源码或通用数码管规范，不手工重做段码表和周期推导。运行 `scripts/generate_countdown.py`，由受限生成器合并板级 profile 与模块默认值、求解扫描周期并生成完整 request 与候选 ASM。
 3. 生成后直接运行一次 `quick-release`。不要预先单独运行 `doctor` 或 `lint`；`quick-release` 已包含 doctor、静态检查、真实内置编译和 release。失败时依据聚合诊断修订后再重跑一次完整门禁。
 4. 只消费 `quick-release` 的 JSON 回执；其中已直接包含 evidence hash、编译器版本、warning、HEX/BIN/MAP 路径与 hash、代码规模、静态摘要和 timing audit，无需再逐个读取这些文件。
 5. E1 状态只表示用户确认该倒计时正常显示，不得扩大为全部硬件验收通过，也不得把内置编译 release 描述为公司编译器兼容。

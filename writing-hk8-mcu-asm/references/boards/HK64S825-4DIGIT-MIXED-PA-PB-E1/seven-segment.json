@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "board_profile_id": "HK64S825-DEFAULT",
+  "board_profile_id": "HK64S825-4DIGIT-MIXED-PA-PB-E1",
   "chip": "HK64S825",
   "status": "ready",
   "selection_policy": "user_must_explicitly_confirm_profile_id",
@@ -113,15 +113,6 @@
         "segment_active_level": "low"
       }
     ]
-  },
-  "countdown_defaults": {
-    "terminal_behavior": "hold",
-    "separator": "profile",
-    "tick_us": 1000000,
-    "tolerance_percent": 0.02,
-    "frame_rate_hz": 250,
-    "scan_slot_min_us": 700,
-    "scan_slot_max_us": 1300
   },
   "evidence": {
     "level": "E1",

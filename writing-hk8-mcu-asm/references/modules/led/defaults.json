@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "module_id": "led",
+  "status": "ready",
+  "contains_board_facts": false,
+  "board_binding": "required_separately",
+  "request_defaults": {
+    "driver": "gpio",
+    "target_toolchain": "builtin_compiler",
+    "allowed_warnings": [],
+    "allow_nonvolatile_changes": false,
+    "safe_initial_state": "off"
+  },
+  "supported_operations": [
+    "steady",
+    "blink"
+  ],
+  "required_task_inputs": [
+    "operation",
+    "led_pin_contract",
+    "active_level",
+    "drive_mode",
+    "board_or_user_pin_provenance"
+  ]
+}

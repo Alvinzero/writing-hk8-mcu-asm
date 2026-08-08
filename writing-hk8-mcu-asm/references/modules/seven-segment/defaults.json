@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "module_id": "seven_segment",
+  "status": "ready",
+  "contains_board_facts": false,
+  "board_binding": "required_separately",
+  "request_defaults": {
+    "driver": "gpio_dynamic_scan",
+    "target_toolchain": "builtin_compiler",
+    "allowed_warnings": [],
+    "allow_nonvolatile_changes": false,
+    "state_update_boundary": "complete_scan_frame"
+  },
+  "countdown": {
+    "terminal_behavior": "hold",
+    "separator": "profile",
+    "tick_us": 1000000,
+    "tolerance_percent": 0.02,
+    "frame_rate_hz": 250,
+    "scan_slot_min_us": 700,
+    "scan_slot_max_us": 1300
+  },
+  "supported_operations": [
+    "toggle_all_segments",
+    "mm_ss_countdown"
+  ],
+  "required_task_inputs": [
+    "operation",
+    "selected_board_profile",
+    "display_value_or_start_time"
+  ]
+}

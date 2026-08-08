@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "module_id": "gpio",
+  "status": "ready",
+  "contains_board_facts": false,
+  "board_binding": "required_separately",
+  "request_defaults": {
+    "target_toolchain": "builtin_compiler",
+    "allowed_warnings": [],
+    "allow_nonvolatile_changes": false,
+    "initialization_order": [
+      "configure_drive_mode",
+      "preload_safe_output_latch",
+      "enable_output"
+    ],
+    "shared_port_policy": "preserve_unowned_bits"
+  },
+  "required_task_inputs": [
+    "behavior",
+    "pin_contracts",
+    "board_or_user_pin_provenance"
+  ]
+}

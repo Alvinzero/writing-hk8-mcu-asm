@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "board_id": "HK64S825-DEFAULT",
+  "board_id": "HK64S825-4DIGIT-MIXED-PA-PB-E1",
   "_comment": "默认使用 Skill 内置 HK64S825 编译器，不需要扫描本机 IDE 或手填外部工具链路径。$PYTHON 会展开为当前运行 hk8asm.py 的 Python，$SKILL_ROOT 会展开为当前 Skill 根目录。若公司后续要求使用官方 ASMC，可另建本地 config 指向 scripts/compiler_adapter.py。",
   "simulate": {},
   "adapters": {

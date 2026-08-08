@@ -26,7 +26,7 @@
 
 `board` 与 GPIO `pins` 只接受 `user_provided` 或 `user_confirmed_profile`。使用时钟时，`clock` 也必须来自这两个来源。缺少板级确认返回 `BOARD_PROFILE_UNCONFIRMED`；缺少引脚或时钟来源返回 `BOARD_INPUT_UNCONFIRMED`。来源字段是交付声明，Skill 明确禁止模型代替用户填写确认。
 
-内置编译配置只描述工具链，不再绑定 `HK64S825-DEFAULT`。外部烧录/回读配置仍可带 `board_id`，此时必须与请求板号一致。
+内置编译配置只描述工具链，不再绑定 `HK64S825-4DIGIT-MIXED-PA-PB-E1`。外部烧录/回读配置仍可带 `board_id`，此时必须与请求板号一致。
 
 ## 数码管流程
 
@@ -36,7 +36,7 @@
 
 ## 资料隔离
 
-`references/spec/06-数码管动态扫描规范.md` 只保留通用算法和必需输入。当前板映射迁入 `references/boards/HK64S825-DEFAULT/seven-segment.md`，仅在用户明确选择该 profile 后读取。删除与常见用户请求完全重合的固定 `1234` ASM 模板，避免评测答案泄漏。
+`references/spec/06-数码管动态扫描规范.md` 只保留通用算法和必需输入。当前板映射迁入 `references/boards/HK64S825-4DIGIT-MIXED-PA-PB-E1/seven-segment.md`，仅在用户明确选择该 profile 后读取。删除与常见用户请求完全重合的固定 `1234` ASM 模板，避免评测答案泄漏。
 
 ## 验证
 

@@ -87,6 +87,12 @@ def validate(root: Path) -> list[str]:
         "scripts/ssd1306_page_bitmap.py",
         "scripts/install.py",
         "scripts/validate_skill.py",
+        "references/boards/aliases.json",
+        "references/modules/gpio/defaults.json",
+        "references/modules/led/defaults.json",
+        "references/modules/i2c/defaults.json",
+        "references/modules/seven-segment/defaults.json",
+        "references/modules/oled/defaults.json",
         "references/spec",
     ):
         if not (root / relative).exists():

@@ -39,7 +39,7 @@
 - 禁止把汉字、ASCII 字母、Logo、头像、图片或多 page 字模的正式显示数据展开成连续立即数发送；必须使用 `DB + TABL/TABH`。立即数只允许显式无文本 probe，且最多 8 bytes。
 - 禁止把当前板 5x7 ASCII 的单 page bit 反转结论直接套用到 8x16、16x16、汉字或其他多 page 资产；多页垂直镜像必须同时处理 page 顺序和 byte bit 顺序。
 - 禁止以整行逆序修复“文本顺序正确、每个字符左右镜像”；水平修正必须限制在 manifest 声明的各字符块内部。
-- 禁止根据照片中的最终镜像症状直接猜两个变换轴。当前 `HK64S825-DEFAULT` 正式资产只允许 profile `hk64s825-default-a1-c0-page-lsb-top-v1`：`A1H+C0H`、`ssd1306-page-lsb-top`、`mirror_x_within_glyphs=false`、`mirror_y=true`；换板或换源格式必须用 probe 建立新 profile。
+- 禁止根据照片中的最终镜像症状直接猜两个变换轴。当前 `HK64S825-4DIGIT-MIXED-PA-PB-E1` 正式资产只允许 profile `hk64s825-4digit-mixed-pa-pb-e1-a1-c0-page-lsb-top-v1`：`A1H+C0H`、`ssd1306-page-lsb-top`、`mirror_x_within_glyphs=false`、`mirror_y=true`；换板或换源格式必须用 probe 建立新 profile。
 - 禁止让一个跨页通用 `TABL/TABH` 函数读取多个 256-word 页。
 - 禁止 `JMP/CALL` 直接使用数字字面量；使用标签或 `EQU` 符号。
 - 禁止接受任何地址覆盖、跳转截断或未知指令 warning。

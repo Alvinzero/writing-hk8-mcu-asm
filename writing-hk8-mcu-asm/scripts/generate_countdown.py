@@ -22,6 +22,10 @@ from hk8asm import (
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT))
+BOARD_ALIASES = SKILL_ROOT / "references" / "boards" / "aliases.json"
+DEFAULT_MODULE_DEFAULTS = (
+    SKILL_ROOT / "references" / "modules" / "seven-segment" / "defaults.json"
+)
 
 from references.spec.tools.asm_semantic_gates import derive_sck_hz
 
@@ -176,6 +180,45 @@ def solve_timing(
     return result
 
 
+def resolve_board_profile_path(path: Path) -> Tuple[Path, str]:
+    requested_id = path.parent.name
+    if path.is_file():
+        return path, requested_id
+    aliases = read_json(BOARD_ALIASES, "INVALID_BOARD_PROFILE_ALIASES")
+    alias_map = aliases.get("aliases") if isinstance(aliases, dict) else None
+    alias = alias_map.get(requested_id) if isinstance(alias_map, dict) else None
+    require(
+        isinstance(alias, dict)
+        and alias.get("status") == "deprecated"
+        and isinstance(alias.get("canonical_id"), str),
+        "board profile does not exist and no deprecated alias resolves it",
+    )
+    resolved = (
+        SKILL_ROOT
+        / "references"
+        / "boards"
+        / alias["canonical_id"]
+        / path.name
+    )
+    require(resolved.is_file(), "deprecated board profile alias target is missing")
+    return resolved, requested_id
+
+
+def validate_module_defaults(module: Dict[str, Any]) -> Dict[str, Any]:
+    require(module.get("schema_version") == 1, "module defaults schema_version must be 1")
+    require(module.get("module_id") == "seven_segment", "module defaults must target seven_segment")
+    require(module.get("status") == "ready", "module defaults must have status=ready")
+    require(
+        module.get("contains_board_facts") is False
+        and module.get("board_binding") == "required_separately",
+        "module defaults must not contain or replace board facts",
+    )
+    countdown = module.get("countdown")
+    require(isinstance(countdown, dict), "module countdown defaults are required")
+    require(countdown.get("terminal_behavior") == "hold", "module countdown terminal behavior must be hold")
+    return countdown
+
+
 def validate_board_profile(board: Dict[str, Any], path: Path) -> None:
     require(board.get("schema_version") == 1, "board profile schema_version must be 1")
     require(board.get("chip") == "HK64S825", "board profile chip must be HK64S825")
@@ -263,6 +306,8 @@ def resolve_separator(board: Dict[str, Any], selection: str) -> Optional[int]:
 def build_request(
     board: Dict[str, Any],
     board_path: Path,
+    selected_board_profile_id: str,
+    request_defaults: Dict[str, Any],
     source_path: Path,
     start: str,
     separator_index: Optional[int],
@@ -280,7 +325,7 @@ def build_request(
             "mode": "steady_on",
         }
         separator_text = "visual_index_1_dp_steady"
-    defaults = board["countdown_defaults"]
+    defaults = request_defaults
     tolerance = defaults["tolerance_percent"]
     request = {
         "schema_version": 1,
@@ -293,6 +338,7 @@ def build_request(
         },
         "board": {
             "id": board["board_profile_id"],
+            "selected_id": selected_board_profile_id,
             "profile_file": board_path.name,
             "profile_sha256": sha256_file(board_path),
             "evidence_status": board["evidence"]["status"],
@@ -713,7 +759,9 @@ def render_source(
 
 
 def generate(args: argparse.Namespace) -> Dict[str, Any]:
-    board_path = args.board_profile.expanduser()
+    board_path, selected_board_profile_id = resolve_board_profile_path(
+        args.board_profile.expanduser()
+    )
     board = read_json(board_path, "INVALID_BOARD_PROFILE")
     require(isinstance(board, dict), "board profile must be a JSON object")
     validate_board_profile(board, board_path)
@@ -733,13 +781,16 @@ def generate(args: argparse.Namespace) -> Dict[str, Any]:
         sck_hz == clock["effective_sck_hz"],
         "board effective_sck_hz does not match the chip clock model",
     )
-    defaults = board.get("countdown_defaults")
-    require(isinstance(defaults, dict), "board countdown_defaults are required")
+    module_defaults = read_json(
+        args.module_defaults.expanduser(), "INVALID_MODULE_DEFAULTS"
+    )
+    require(isinstance(module_defaults, dict), "module defaults must be a JSON object")
+    defaults = validate_module_defaults(module_defaults)
     for name in ("tick_us", "tolerance_percent", "scan_slot_min_us", "scan_slot_max_us"):
-        require(finite_positive(defaults.get(name)), "countdown_defaults.%s must be positive" % name)
+        require(finite_positive(defaults.get(name)), "module countdown.%s must be positive" % name)
     require(
         isinstance(defaults.get("frame_rate_hz"), int),
-        "countdown_defaults.frame_rate_hz must be an integer",
+        "module countdown.frame_rate_hz must be an integer",
     )
     timing = solve_timing(
         4,
@@ -759,6 +810,8 @@ def generate(args: argparse.Namespace) -> Dict[str, Any]:
     request = build_request(
         board,
         board_path,
+        selected_board_profile_id,
+        defaults,
         args.source,
         args.start,
         separator_index,
@@ -775,6 +828,7 @@ def generate(args: argparse.Namespace) -> Dict[str, Any]:
         "status": "ok",
         "code": "COUNTDOWN_GENERATED",
         "board_profile_id": board["board_profile_id"],
+        "selected_board_profile_id": selected_board_profile_id,
         "source": str(args.source.resolve()),
         "request": str(args.output_request.resolve()),
         "start": args.start,
@@ -795,6 +849,12 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         type=Path,
         help="explicitly selected machine-readable seven-segment board profile",
+    )
+    parser.add_argument(
+        "--module-defaults",
+        type=Path,
+        default=DEFAULT_MODULE_DEFAULTS,
+        help="board-independent seven-segment module defaults",
     )
     parser.add_argument("--start", required=True, help="countdown start in MM:SS")
     parser.add_argument(

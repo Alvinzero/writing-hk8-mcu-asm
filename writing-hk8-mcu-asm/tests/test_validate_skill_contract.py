@@ -110,7 +110,7 @@ class ValidateSkillContractTests(unittest.TestCase):
             SKILL_ROOT
             / "references"
             / "boards"
-            / "HK64S825-DEFAULT"
+            / "HK64S825-4DIGIT-MIXED-PA-PB-E1"
             / "seven-segment.json"
         )
         board = json.loads(board_path.read_text(encoding="utf-8"))
@@ -132,6 +132,43 @@ class ValidateSkillContractTests(unittest.TestCase):
             "validate_spec.py --runtime-only",
         ):
             self.assertIn(phrase, skill_text)
+
+    def test_module_defaults_are_board_independent_and_old_board_id_is_an_alias(self) -> None:
+        module_root = SKILL_ROOT / "references" / "modules"
+        expected_modules = {"gpio", "led", "i2c", "seven-segment", "oled"}
+        self.assertEqual(
+            expected_modules,
+            {path.name for path in module_root.iterdir() if path.is_dir()},
+        )
+        for module_id in expected_modules:
+            with self.subTest(module=module_id):
+                defaults = json.loads(
+                    (module_root / module_id / "defaults.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                self.assertEqual("ready", defaults["status"])
+                self.assertFalse(defaults["contains_board_facts"])
+                self.assertEqual("required_separately", defaults["board_binding"])
+                self.assertNotIn("pins", defaults)
+                self.assertNotIn("clock", defaults)
+
+        aliases = json.loads(
+            (SKILL_ROOT / "references" / "boards" / "aliases.json").read_text(
+                encoding="utf-8"
+            )
+        )["aliases"]
+        self.assertEqual(
+            "HK64S825-4DIGIT-MIXED-PA-PB-E1",
+            aliases["HK64S825-DEFAULT"]["canonical_id"],
+        )
+        self.assertEqual("deprecated", aliases["HK64S825-DEFAULT"]["status"])
+        self.assertFalse(
+            (SKILL_ROOT / "references" / "boards" / "HK64S825-DEFAULT").exists()
+        )
+        skill_text = self.skill_text()
+        self.assertIn("## 模块默认配置", skill_text)
+        self.assertIn("不能代替用户选择 board profile", skill_text)
 
     def test_bdf_font_pipeline_is_packaged_with_provenance(self) -> None:
         font_root = SKILL_ROOT / "references" / "fonts"
@@ -635,7 +672,7 @@ class ValidateSkillContractTests(unittest.TestCase):
             self.assertIn(phrase, behavior)
 
     def test_canonical_oled_orientation_profile_records_hardware_baseline(self) -> None:
-        expected_id = "hk64s825-default-a1-c0-page-lsb-top-v1"
+        expected_id = "hk64s825-4digit-mixed-pa-pb-e1-a1-c0-page-lsb-top-v1"
         for filename in (
             "HK64S825.profile.json",
             "HK64S825.profile.example.json",
@@ -647,7 +684,7 @@ class ValidateSkillContractTests(unittest.TestCase):
                     )
                 )
                 orientation = profile["orientation_profiles"][expected_id]
-                self.assertEqual("HK64S825-DEFAULT", orientation["board_id"])
+                self.assertEqual("HK64S825-4DIGIT-MIXED-PA-PB-E1", orientation["board_id"])
                 self.assertEqual("A1H", orientation["segment_remap"])
                 self.assertEqual("C0H", orientation["com_scan_direction"])
                 self.assertEqual(
@@ -752,7 +789,7 @@ class ValidateSkillContractTests(unittest.TestCase):
             SKILL_ROOT
             / "references"
             / "boards"
-            / "HK64S825-DEFAULT"
+            / "HK64S825-4DIGIT-MIXED-PA-PB-E1"
             / "seven-segment.md"
         )
         self.assertTrue(board_profile.is_file())
@@ -941,7 +978,7 @@ class ValidateSkillContractTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
-        self.assertEqual({"id": "HK64S825-DEFAULT"}, request["board"])
+        self.assertEqual({"id": "HK64S825-4DIGIT-MIXED-PA-PB-E1"}, request["board"])
         self.assertEqual([], request["acceptance"])
         self.assertNotIn("REPLACE_WITH", json.dumps(request, ensure_ascii=False))
 

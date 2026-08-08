@@ -511,7 +511,7 @@ def gpio_request(*, drive: str = "push_pull", active_level: str = "high") -> dic
         "peripherals": [{"name": "gpio"}],
         "timing": {"precision": "approximate"},
         "memory_limits": {"rom_bytes": 2048, "ram_bytes": 64},
-        "board": {"id": "HK64S825-DEFAULT"},
+        "board": {"id": "HK64S825-4DIGIT-MIXED-PA-PB-E1"},
         "acceptance": [],
         "allow_nonvolatile_changes": False,
     }

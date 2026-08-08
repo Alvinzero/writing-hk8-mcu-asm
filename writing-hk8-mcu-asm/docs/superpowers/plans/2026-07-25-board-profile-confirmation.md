@@ -51,7 +51,7 @@
 - Modify: `agents/openai.yaml`
 - Modify: `references/spec/AGENTS.md`
 - Modify: `references/spec/06-数码管动态扫描规范.md`
-- Create: `references/boards/HK64S825-DEFAULT/seven-segment.md`
+- Create: `references/boards/HK64S825-4DIGIT-MIXED-PA-PB-E1/seven-segment.md`
 - Delete: `references/spec/templates/seven-segment-scan.asm`
 - Modify: `evals/evals.json`
 

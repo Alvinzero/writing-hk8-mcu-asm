@@ -17,7 +17,7 @@ BOARD_PROFILE = (
     SKILL_ROOT
     / "references"
     / "boards"
-    / "HK64S825-DEFAULT"
+    / "HK64S825-4DIGIT-MIXED-PA-PB-E1"
     / "seven-segment.json"
 )
 
@@ -83,7 +83,7 @@ class GenerateCountdownTests(unittest.TestCase):
             self.assertEqual(0, generated.returncode, generated.stderr or generated.stdout)
             generation = json.loads(generated.stdout)
             self.assertEqual("COUNTDOWN_GENERATED", generation["code"])
-            self.assertEqual("HK64S825-DEFAULT", generation["board_profile_id"])
+            self.assertEqual("HK64S825-4DIGIT-MIXED-PA-PB-E1", generation["board_profile_id"])
             self.assertEqual(2_000_023, generation["predicted_cycles"])
             self.assertEqual(0.00115, generation["predicted_error_percent"])
 
@@ -144,6 +144,30 @@ class GenerateCountdownTests(unittest.TestCase):
             self.assertEqual(2, generated.returncode)
             self.assertEqual("COUNTDOWN_GENERATION_FAILED", json.loads(generated.stdout)["code"])
             self.assertFalse((root / "candidate.asm").exists())
+
+    def test_deprecated_default_board_id_resolves_to_canonical_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            old_path = (
+                SKILL_ROOT
+                / "references"
+                / "boards"
+                / "HK64S825-DEFAULT"
+                / "seven-segment.json"
+            )
+            self.assertFalse(old_path.exists())
+            generated = self.run_generator(root, board=old_path)
+            self.assertEqual(0, generated.returncode, generated.stderr or generated.stdout)
+            payload = json.loads(generated.stdout)
+            self.assertEqual("HK64S825-DEFAULT", payload["selected_board_profile_id"])
+            self.assertEqual(
+                "HK64S825-4DIGIT-MIXED-PA-PB-E1", payload["board_profile_id"]
+            )
+            request = json.loads((root / "request.json").read_text(encoding="utf-8"))
+            self.assertEqual("HK64S825-DEFAULT", request["board"]["selected_id"])
+            self.assertEqual(
+                "HK64S825-4DIGIT-MIXED-PA-PB-E1", request["board"]["id"]
+            )
 
 
 if __name__ == "__main__":

@@ -1924,7 +1924,7 @@
       "requirement": "跨两个及以上 page 的自定义字模必须使用 ssd1306_page_bitmap.py manifest 固定字符块顺序和宽度、逐字符水平变换、全像素行垂直变换、byte count 与源/输出 SHA256；正式 DB 资产必须声明匹配当前 board 的 orientation_profile。new-run 和 close-loop 必须校验 manifest 的源格式及两个变换值与 profile 一致，并从 ASM 指定 DB 表重新提取实际字节，与转换输出 SHA256 一致。",
       "rationale": "照片中的最终方向是控制器映射、源字模格式和资产变换叠加的结果，不能直接推导两个镜像轴。当前板 E1 基线只需要 mirror_y；5x7 单 page 的 bit 反转不能无条件推广到其他源格式，多页垂直镜像还必须同时交换 page 和反转 byte bit。",
       "bad_example": "看到字符上下左右都反了便设置 mirror_x_within_glyphs=true、mirror_y=true，未声明板级方向 profile；结果在 A1H+C0H 当前板上残留逐字符左右镜像。",
-      "good_example": "请求声明 hk64s825-default-a1-c0-page-lsb-top-v1；manifest 使用 ssd1306-page-lsb-top、mirror_x_within_glyphs=false、mirror_y=true；ASM 实际 192 字节 SHA256 与转换输出一致。",
+      "good_example": "请求声明 hk64s825-4digit-mixed-pa-pb-e1-a1-c0-page-lsb-top-v1；manifest 使用 ssd1306-page-lsb-top、mirror_x_within_glyphs=false、mirror_y=true；ASM 实际 192 字节 SHA256 与转换输出一致。",
       "verification": [
         "ssd1306_page_bitmap.py 校验 manifest、byte count、SHA256 和点阵预览",
         "hk8asm.py new-run/close-loop 校验 orientation_profile、source format 和两个镜像参数",

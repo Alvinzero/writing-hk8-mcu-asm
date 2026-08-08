@@ -23,7 +23,7 @@ OLED 查表任务在候选生成前必须解析芯片型号、主频、MTP 容�
 
 PinContract 必须把 SDA 和 SCL 拆开记录。需要 `POD` 的引脚设为开漏并显式置位对应端口的 POD；不需要 `POD` 的引脚写 `configure_drive_mode: false`。上拉来源必须与对应端口 PPU 写法和板外电阻说明一致。传统 I2C 的开漏与上拉模型只能作为提问依据，不能替代当前板确认。
 
-以下 E1 profile 仅在用户明确选择 `HK64S825-DEFAULT` 后适用，不能作为其他开发板的缺省值：
+以下 E1 profile 仅在用户明确选择 `HK64S825-4DIGIT-MIXED-PA-PB-E1` 后适用，不能作为其他开发板的缺省值：
 
 ```json
 {
@@ -75,11 +75,11 @@ PinContract 必须把 SDA 和 SCL 拆开记录。需要 `POD` 的引脚设为开
 - `mirror_y=false`：像素行保持从上到下。
 - `mirror_y=true`：反转整个资产的像素行。对 16 像素高字模，输出上 page 来自输入下 page 的逐 byte bit 反转，输出下 page 来自输入上 page 的逐 byte bit 反转。
 
-当前 `HK64S825-DEFAULT` 板在 `2026年8月1号` 16 像素高混合字模上的 E1 实板基线为：
+当前 `HK64S825-4DIGIT-MIXED-PA-PB-E1` 板在 `2026年8月1号` 16 像素高混合字模上的 E1 实板基线为：
 
 ```json
 {
-  "orientation_profile": "hk64s825-default-a1-c0-page-lsb-top-v1",
+  "orientation_profile": "hk64s825-4digit-mixed-pa-pb-e1-a1-c0-page-lsb-top-v1",
   "controller_commands": ["A1H", "C0H"],
   "source_format": "ssd1306-page-lsb-top",
   "transform": {

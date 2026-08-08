@@ -46,8 +46,8 @@
     }
   },
   "orientation_profiles": {
-    "hk64s825-default-a1-c0-page-lsb-top-v1": {
-      "board_id": "HK64S825-DEFAULT",
+    "hk64s825-4digit-mixed-pa-pb-e1-a1-c0-page-lsb-top-v1": {
+      "board_id": "HK64S825-4DIGIT-MIXED-PA-PB-E1",
       "controller": "SSD1306",
       "segment_remap": "A1H",
       "com_scan_direction": "C0H",

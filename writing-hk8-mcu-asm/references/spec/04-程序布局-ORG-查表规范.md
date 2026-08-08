@@ -139,7 +139,7 @@ BIN little-endian bytes = [Y, nibble_swap(X)]
 ```json
 {
   "source_encoding": "db",
-  "orientation_profile": "hk64s825-default-a1-c0-page-lsb-top-v1",
+  "orientation_profile": "hk64s825-4digit-mixed-pa-pb-e1-a1-c0-page-lsb-top-v1",
   "source_label": "DATE_DATA",
   "table_sender": "SEND_DATE_DATA"
 }

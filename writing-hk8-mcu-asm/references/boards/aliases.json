@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "aliases": {
+    "HK64S825-DEFAULT": {
+      "canonical_id": "HK64S825-4DIGIT-MIXED-PA-PB-E1",
+      "status": "deprecated",
+      "reason": "旧名称错误暗示芯片或开发板默认接线"
+    }
+  }
+}

@@ -71,6 +71,17 @@ class InstallContractTests(unittest.TestCase):
         self.assertTrue((destination / "references" / "spec" / "tools" / "asm_static_check.py").is_file())
         self.assertTrue((destination / "references" / "spec" / "tools" / "validate_spec.py").is_file())
         self.assertTrue((destination / "references" / "workflows" / "oled.md").is_file())
+        self.assertTrue((destination / "references" / "boards" / "aliases.json").is_file())
+        for module_id in ("gpio", "led", "i2c", "seven-segment", "oled"):
+            self.assertTrue(
+                (
+                    destination
+                    / "references"
+                    / "modules"
+                    / module_id
+                    / "defaults.json"
+                ).is_file()
+            )
         self.assertTrue(
             (
                 destination
@@ -80,12 +91,15 @@ class InstallContractTests(unittest.TestCase):
                 / "seven-segment.json"
             ).is_file()
         )
+        self.assertFalse(
+            (destination / "references" / "boards" / "HK64S825-DEFAULT").exists()
+        )
         self.assertTrue(
             (
                 destination
                 / "references"
                 / "boards"
-                / "HK64S825-DEFAULT"
+                / "HK64S825-4DIGIT-MIXED-PA-PB-E1"
                 / "seven-segment.json"
             ).is_file()
         )

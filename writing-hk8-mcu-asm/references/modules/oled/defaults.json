@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "module_id": "oled",
+  "status": "ready",
+  "contains_board_facts": false,
+  "board_binding": "required_separately",
+  "request_defaults": {
+    "controller": "SSD1306",
+    "transport": "i2c",
+    "source_format": "ssd1306-page-lsb-top",
+    "target_toolchain": "builtin_compiler",
+    "allowed_warnings": [],
+    "allow_nonvolatile_changes": false,
+    "power_settle_required": true
+  },
+  "required_task_inputs": [
+    "resolution",
+    "i2c_address",
+    "selected_board_profile_or_pin_contracts",
+    "orientation_profile_or_probe_result",
+    "display_asset"
+  ],
+  "workflow": "references/workflows/oled.md"
+}

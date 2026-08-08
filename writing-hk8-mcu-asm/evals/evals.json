@@ -42,10 +42,10 @@
     },
     {
       "id": "seven-segment-confirmed-profile-runs",
-      "query": "已确认 HK64S825，并明确使用 board profile HK64S825-DEFAULT，请让四位数码管显示 5072。",
+      "query": "已确认 HK64S825，并明确使用 board profile HK64S825-4DIGIT-MIXED-PA-PB-E1，请让四位数码管显示 5072。",
       "expected_behavior": [
         "记录用户明确确认的 board profile 和 input_provenance=user_confirmed_profile",
-        "只读取 HK64S825-DEFAULT 对应数码管板级资料",
+        "只读取 HK64S825-4DIGIT-MIXED-PA-PB-E1 对应数码管板级资料",
         "完成候选生成、静态检查、编译和 new-run/release 闭环"
       ]
     },
@@ -138,7 +138,7 @@
       "id": "oled-multipage-glyph-orientation-contract",
       "query": "已确认 HK64S825，沿用当前板 A1H+C0H，在 OLED 显示 16 像素高的 2026年8月1号。之前 5x7 日期正确，但这次文本顺序正确、每个字符上下左右都镜像，请深度修复。",
       "expected_behavior": [
-        "使用当前板 E1 profile hk64s825-default-a1-c0-page-lsb-top-v1，保持 A1H+C0H 和文本字符块顺序",
+        "使用当前板 E1 profile hk64s825-4digit-mixed-pa-pb-e1-a1-c0-page-lsb-top-v1，保持 A1H+C0H 和文本字符块顺序",
         "明确 5x7 单 page bit 反转结论不能直接套用到 8x16、16x16 或汉字多 page 资产",
         "建立 ssd1306_page_bitmap.py manifest，按文本顺序记录每个字符块宽度、源 page 字节、两个镜像轴、byte count 和源/输出 SHA256",
         "manifest 固定 ssd1306-page-lsb-top、mirror_x_within_glyphs=false、mirror_y=true；16 像素高垂直补偿同时交换两个 page 并反转每个 byte 的 bit",
