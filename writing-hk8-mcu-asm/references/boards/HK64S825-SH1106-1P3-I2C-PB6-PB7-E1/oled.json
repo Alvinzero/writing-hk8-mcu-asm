@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "board_profile_id": "HK64S825-SH1106-1P3-I2C-PB6-PB7-E1",
+  "chip": "HK64S825",
+  "status": "ready",
+  "selection_policy": "user_must_explicitly_confirm_profile_id",
+  "input_provenance": {
+    "display": "user_confirmed",
+    "wiring": "user_confirmed",
+    "clock": "user_confirmed",
+    "electrical": "user_confirmed",
+    "recorded_on": "2026-08-12"
+  },
+  "clock": {
+    "osc_hz": 16000000,
+    "sck_ps": 52,
+    "effective_sck_hz": 2000000
+  },
+  "pins": {
+    "sda": {
+      "pin": "PB7",
+      "direction": "bidirectional",
+      "configure_drive_mode": false,
+      "pod": false,
+      "pull_up": "internal_pb_ppu",
+      "port_ownership": "exclusive"
+    },
+    "scl": {
+      "pin": "PB6",
+      "direction": "output",
+      "configure_drive_mode": false,
+      "pod": false,
+      "pull_up": "internal_pb_ppu",
+      "port_ownership": "exclusive"
+    }
+  },
+  "i2c": {
+    "implementation": "software_bit_bang",
+    "address_7bit": "0x3C",
+    "write_byte": "0x78",
+    "read_byte": "0x79",
+    "bit_order": "msb_first",
+    "shift_instruction": "RLR",
+    "forbidden_shift_instruction": "RLC",
+    "ack": {
+      "release_sda_before_ninth_clock": true,
+      "sample_register": "PB_INS",
+      "forbidden_sample_register": "PB_PIO"
+    }
+  },
+  "oled": {
+    "controller": "SH1106",
+    "diagonal_inches": 1.3,
+    "visible_width": 128,
+    "visible_height": 64,
+    "controller_columns": 132,
+    "pages": 8,
+    "page_data_format": "ssd1306-page-lsb-top",
+    "column_offset": 2,
+    "addressing": {
+      "mode": "page",
+      "page_commands": "0xB0..0xB7",
+      "visible_column_zero_low_command": "0x02",
+      "visible_column_zero_high_command": "0x10",
+      "controller_column_formula": "visible_x + 2",
+      "forbidden_ssd1306_window_commands": ["0x20", "0x21", "0x22"]
+    },
+    "control_bytes": {
+      "command": "0x00",
+      "data": "0x40"
+    },
+    "orientation_profile": "hk64s825-sh1106-1p3-pb6-pb7-a1-c8-page-lsb-top-v1",
+    "orientation": {
+      "segment_remap": "0xA1",
+      "com_scan_direction": "0xC8",
+      "mirror_x_within_glyphs": false,
+      "mirror_y": false,
+      "bit0_position_within_page": "top"
+    },
+    "initialization_commands": [
+      "0xAE", "0xD5", "0x80", "0xA8", "0x3F", "0xD3", "0x00", "0x40",
+      "0xAD", "0x8B", "0xA1", "0xC8", "0xDA", "0x12", "0x81", "0x80",
+      "0xD9", "0x22", "0xDB", "0x35", "0xA4", "0xA6"
+    ],
+    "display_on_policy": "send_0xAF_after_gddram_write"
+  },
+  "program_layout": {
+    "formal_text_conservative_layout": {
+      "status": "hardware_verified_for_this_application",
+      "table_and_sender_page": 0,
+      "scope": "当前板、当前内置工具链和正式文字程序；不是 HK64S825 的全局跨页查表限制"
+    }
+  },
+  "evidence": {
+    "level": "E1",
+    "status": "user_confirmed_normal_display",
+    "scope": "SH1106 方向探针和 102x24 正式文字在当前板显示正常",
+    "confirmed_on": "2026-08-12",
+    "orientation_probe": {
+      "run_id": "219c88d9b70147108949d059648a78a4",
+      "asm_sha256": "a6d6db730cc8a7685700840c04ff74d5dd5440cb399c135be5f9b794802c369f",
+      "hex_sha256": "d0e4d0bdad54143a2be408314d2dfb75f688d014c8281aa1914a13165075b47f",
+      "marker_sha256": "d50e744865a9afea36890cd7cff9ae844671553b621de43034cb5776ceb57a58",
+      "photo_sha256": "21cfaab22e2d8e1de75453197374de1bbdb709ebdb6918fcdb6177eecf6415c5"
+    },
+    "formal_text": {
+      "run_id": "7724fbdea3124b06a749bd5f76632ec5",
+      "asm_sha256": "de0e8384a8a0d76812a5ae71718efb8528b2ca0c88cddcdd504ee966290fa988",
+      "hex_sha256": "466c65ca2f9abdc22ec061d43e050e9a0c9174a7c44bdd361c03525011bdfd50",
+      "bin_sha256": "e2e40018da3951d7af50d90f8fbacf1dbaf50598bb6eb94efc9e587e11e93fdc",
+      "map_sha256": "857161ab6089e15432ed765210bd550c372914be38ff42a38fc30e890abfcd65",
+      "asset_width": 102,
+      "asset_height": 24,
+      "asset_bytes": 306,
+      "asset_sha256": "60a712ac9266c00f92377cdc55845b815012bdd1a9f2689aa06d25f4f0f48166",
+      "map_symbols": {
+        "table": "TEXT_DATA@0x0020",
+        "sender": "OLED_SHOW_TEXT_PAGE0@0x00C0",
+        "tabl": "0x00D2",
+        "tabh": "0x00D5"
+      }
+    }
+  },
+  "unresolved_inputs": []
+}

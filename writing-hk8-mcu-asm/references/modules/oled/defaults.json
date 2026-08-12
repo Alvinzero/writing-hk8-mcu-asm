@@ -4,8 +4,12 @@
   "status": "ready",
   "contains_board_facts": false,
   "board_binding": "required_separately",
+  "supported_controllers": [
+    "SSD1306",
+    "SH1106"
+  ],
+  "controller_selection": "required_from_user_or_selected_board_profile",
   "request_defaults": {
-    "controller": "SSD1306",
     "transport": "i2c",
     "source_format": "ssd1306-page-lsb-top",
     "target_toolchain": "builtin_compiler",
@@ -14,6 +18,7 @@
     "power_settle_required": true
   },
   "required_task_inputs": [
+    "controller",
     "resolution",
     "i2c_address",
     "selected_board_profile_or_pin_contracts",

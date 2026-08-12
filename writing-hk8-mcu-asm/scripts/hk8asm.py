@@ -884,9 +884,9 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
             f"orientation_profiles.{profile_id}.board_id is required",
         )
         require(
-            orientation.get("controller") == "SSD1306",
+            orientation.get("controller") in {"SSD1306", "SH1106"},
             "INVALID_PROFILE",
-            f"orientation_profiles.{profile_id}.controller must be SSD1306",
+            f"orientation_profiles.{profile_id}.controller must be SSD1306 or SH1106",
         )
         for key, allowed_commands in (
             ("segment_remap", {"A0H", "A1H"}),
@@ -896,7 +896,7 @@ def validate_profile(profile: dict[str, Any], *, require_ready: bool = True) -> 
             require(
                 command in allowed_commands,
                 "INVALID_PROFILE",
-                f"orientation_profiles.{profile_id}.{key} is not a valid SSD1306 orientation command",
+                f"orientation_profiles.{profile_id}.{key} is not a valid OLED orientation command",
             )
         require(
             is_non_empty_string(orientation.get("source_format")),

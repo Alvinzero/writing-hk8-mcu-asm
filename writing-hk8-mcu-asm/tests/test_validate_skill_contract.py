@@ -91,8 +91,11 @@ class ValidateSkillContractTests(unittest.TestCase):
         skill_text = self.skill_text()
         openai_text = (SKILL_ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
         for phrase in (
-            "只枚举 `references/boards/` 的一级非隐藏子目录名",
+            "按当前模块筛选 `references/boards/`",
+            "OLED 只列出存在 `oled.json` 的目录",
+            "数码管只列出存在 `seven-segment.json` 的目录",
             "当前已有的 board_profile_id",
+            "当前已有的 OLED board_profile_id",
             "A <board_profile_id>",
             "不得默认选择第一项",
             "不得试读未选择 profile 的文件",
@@ -169,6 +172,47 @@ class ValidateSkillContractTests(unittest.TestCase):
         skill_text = self.skill_text()
         self.assertIn("## 模块默认配置", skill_text)
         self.assertIn("不能代替用户选择 board profile", skill_text)
+
+    def test_sh1106_board_profile_is_machine_readable_and_consistent(self) -> None:
+        board_id = "HK64S825-SH1106-1P3-I2C-PB6-PB7-E1"
+        orientation_id = "hk64s825-sh1106-1p3-pb6-pb7-a1-c8-page-lsb-top-v1"
+        board = json.loads(
+            (
+                SKILL_ROOT / "references" / "boards" / board_id / "oled.json"
+            ).read_text(encoding="utf-8")
+        )
+        defaults = json.loads(
+            (SKILL_ROOT / "references" / "modules" / "oled" / "defaults.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(board_id, board["board_profile_id"])
+        self.assertEqual("SH1106", board["oled"]["controller"])
+        self.assertEqual((128, 64, 132), (
+            board["oled"]["visible_width"],
+            board["oled"]["visible_height"],
+            board["oled"]["controller_columns"],
+        ))
+        self.assertEqual(2, board["oled"]["column_offset"])
+        self.assertEqual("RLR", board["i2c"]["shift_instruction"])
+        self.assertEqual("PB_INS", board["i2c"]["ack"]["sample_register"])
+        self.assertNotIn("controller", defaults["request_defaults"])
+        self.assertEqual({"SSD1306", "SH1106"}, set(defaults["supported_controllers"]))
+        for filename in ("HK64S825.profile.json", "HK64S825.profile.example.json"):
+            profile = json.loads(
+                (SKILL_ROOT / "references" / "profiles" / filename).read_text(
+                    encoding="utf-8"
+                )
+            )
+            orientation = profile["orientation_profiles"][orientation_id]
+            self.assertEqual(board_id, orientation["board_id"])
+            self.assertEqual("SH1106", orientation["controller"])
+            self.assertEqual("A1H", orientation["segment_remap"])
+            self.assertEqual("C8H", orientation["com_scan_direction"])
+            self.assertEqual(
+                {"mirror_x_within_glyphs": False, "mirror_y": False},
+                orientation["transform"],
+            )
 
     def test_bdf_font_pipeline_is_packaged_with_provenance(self) -> None:
         font_root = SKILL_ROOT / "references" / "fonts"

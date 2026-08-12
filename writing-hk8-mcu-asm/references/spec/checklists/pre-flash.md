@@ -9,6 +9,7 @@
 - [ ] source/project/MAP/BIN/HEX/build log 已归档。
 - [ ] source 到 artifact 的 manifest 完整。
 - [ ] MAP range、ORG、holes、table pages 审计通过。
+- [ ] 当前 SH1106 正式文字若采用 page 0 保守布局，待烧录工件的 MAP 仍证明 table、sender 和实际 `TABL/TABH` 均在 page 0。
 - [ ] DB marker、byte count、BIN/HEX hash 审计通过。
 
 ## B. 目标与安全

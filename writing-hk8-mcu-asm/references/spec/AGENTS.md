@@ -166,8 +166,9 @@ AI 最终输出至少包含：
 
 ## 8. 专项规则
 
-### I2C / SSD1306
+### I2C / SSD1306 / SH1106
 
+- OLED controller 必须来自用户输入或用户明确选择的 `oled.json`，不得保留模块默认控制器。推荐 profile 前只按目标文件是否存在筛选 board 目录，不读取未选择 profile 内容。
 - 明确 7-bit 地址与线上的 8-bit write/read byte。
 - OLED 亮屏默认优先已验证最小初始化：`PB_PPU`、`PB_POE`、`PB_PIO`；无 board profile、E1 证据或用户明确要求时，不得批量写 `PB_POD/PB_INS/PB_PPD/PB_PSL`。
 - 第 9 个 ACK 时钟前释放 SDA 输出使能。
@@ -176,7 +177,9 @@ AI 最终输出至少包含：
 - `BTSZ R,b` 是 bit=0 跳过下一条；I2C bit 发送必须复核 0/1 分支方向，防止地址和数据按位取反。
 - “全亮”链路测试必须真正向 GDDRAM 写 1024 个 `FFH`；`A5H/AFH` 不是唯一证据。
 - 1024 字节填充循环必须证明 exact count；8 位低计数器常用低字节 `00H` 配合高计数 `04H` 实现 4×256。
-- SSD1306 数据为 8 pages × 128 columns；每 byte 纵向 8 pixels，LSB 在页顶部。
+- SSD1306 与当前 SH1106 128x64 profile 的可见数据均为 8 pages × 128 columns；每 byte 纵向 8 pixels，LSB 在页顶部。控制器寻址不得混用。
+- SSD1306 按已确认 addressing mode 使用 window；SH1106 当前 E1 profile 使用 `B0H..B7H` page、可见列 0 的 `02H/10H` 列命令和 `+2` 列偏移，禁止照搬 `20H/21H/22H`。
+- `HK64S825-SH1106-1P3-I2C-PB6-PB7-E1` 使用 `A1H+C8H`、软件双轴不镜像、`RLR` 移位，GDDRAM 写完后才发送 `AFH`。正式文字优先保持 table/sender 在 program page 0；page 1 全黑仅作为 `OPEN-SH1106-TABLE-PAGE1`，不是芯片全局规则。
 - 多 page 或混合宽度字模必须通过 `scripts/ssd1306_page_bitmap.py` 转换和审计。正式 DB 资产必须声明匹配当前 board 的 `orientation_profile`；`hk8asm.py` 必须校验 manifest 的源格式和两个镜像参数与 profile 一致。当前板已验证为不做逐字符水平镜像、只做全像素行垂直补偿。
 
 ### 数码管板级门禁

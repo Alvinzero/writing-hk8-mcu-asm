@@ -56,6 +56,20 @@ PinContract 必须把 SDA 和 SCL 拆开记录。需要 `POD` 的引脚设为开
 - 当前板 5x7 ASCII 数字/斜杠已用 `2026/7/24` 实板验证：文本字符顺序不变，每个字符采用标准 5 列加 1 空列的原始列顺序；标准 5x7 列字节需先做 bit 顺序反转，再作为 SSD1306 page byte 发送。
 - 换板时必须重新确认显示方向，不得把当前板方向无条件用于其他模组。
 
+### 1.3 英寸 SH1106 E1 板级基线
+
+以下结论只在用户明确选择 `HK64S825-SH1106-1P3-I2C-PB6-PB7-E1` 后适用，完整机器契约见该 profile 的 `oled.json`：
+
+- SH1106、可见 128x64、内部 132 列；可见列 0 对应控制器列 2，任意可见列 `x` 对应 `x+2`。
+- `PB7=SDA`、`PB6=SCL`，两根线由 OLED 独占；均不设置 `PB_POD`，使用内部 `PB_PPU`。
+- 7-bit 地址 `3CH`，write/read byte 为 `78H/79H`；命令/数据控制字节为 `00H/40H`。
+- `OSC=16MHz`、`SCK_PS=34H`、实际 SCK=2MHz。
+- 初始化命令为 `AE D5 80 A8 3F D3 00 40 AD 8B A1 C8 DA 12 81 80 D9 22 DB 35 A4 A6`；写完 GDDRAM 后再发 `AFH`。
+- 方向为 `A1H+C8H`，源格式 `ssd1306-page-lsb-top`，`mirror_x_within_glyphs=false`、`mirror_y=false`，page byte 的 bit0 在顶部。
+- I2C byte 移位使用 `RLR` 才与当前 MSB-first 发送分支匹配；不得替换为 `RLC`。第 9 clock 前仍须释放 PB7，并从 `PB_INS` 读取 ACK。
+
+SH1106 使用 page addressing：页命令为 `B0H..B7H`；当前板每页可见列 0 的低/高列命令为 `02H/10H`。不得用 SSD1306 的 `20H/21H/22H` 水平窗口命令替代；每一页开始都要重新发送页地址和低/高列地址。
+
 方向问题必须拆成三个独立维度诊断：
 
 1. 控制器整屏映射：segment remap 决定 GDDRAM 列到面板列的方向，COM scan direction 决定上下方向。
@@ -129,7 +143,7 @@ WDT 未明确关闭时，任何可见延时、长忙等或周期循环都必须�
 
 若确认 WDT 已关闭，文件头必须写明 OPTION/WDT 依据。若 WDT 状态未知，按开启处理。
 
-### PB6/PB7 SSD1306 安全基线
+### PB6/PB7 OLED 安全基线
 
 当前 PB6/PB7 I2C/OLED 的引脚和地址采用已验证基线；`POD` 与上拉来源按任务开始阶段的用户确认生成。未要求 `POD` 的引脚只建立所确认的上拉、`PB_PIO` idle high 和 `PB_POE` 输出使能。
 
@@ -279,14 +293,14 @@ I2C_SEND_CLOCK:
 
 “屏幕偶尔能亮”不能替代波形验证。
 
-## 8. SSD1306 事务分层
+## 8. OLED 事务分层
 
 建议把接口拆成：
 
 1. `I2C_START/STOP/SEND`：字节总线层。
 2. `OLED_CMD`：地址 `0x78` + control `0x00` + command。
 3. `OLED_DATA_BEGIN/END`：地址 `0x78` + control `0x40` + burst data。
-4. `OLED_SET_RANGE`：column/page window。
+4. `OLED_SET_RANGE`：按 controller 选择 SSD1306 window 或 SH1106 page/column address。
 5. `OLED_FILL`、`OLED_WRITE_TABLE`：像素数据层。
 
 `OLED_CMD` 需保存输入 A，因为内部 `I2C_SEND` 会破坏 A：
@@ -307,6 +321,15 @@ OLED_CMD:
 
 `82H` 必须出现在 SRAM allocation 和 clobber 契约中。
 
+寻址层必须按控制器分支：
+
+```text
+SSD1306: 按已确认 addressing mode 使用 20H/21H/22H 等窗口命令
+SH1106:  每页使用 B0H..B7H，再发送 column low/high；当前板可见列 0 为 02H/10H
+```
+
+不得因为两者都是 128x64 就共用一套 `OLED_SET_RANGE`。SH1106 当前板写 128 列时，每页只发送 128 个 data byte，然后重新设置下一页；不得把内部 132 列当作可见宽度发送。
+
 ## 9. 初始化序列不是通用常量
 
 项目已验证序列包含 `AE/D5/80/A8/3F/.../A4/A6/AF`，但以下字段可能因模组改变：
@@ -324,18 +347,18 @@ OLED_CMD:
 
 `A5H` 是 entire display ON mode，`AFH` 是 display ON；它们不能单独证明寻址、数据事务和 GDDRAM 写路径都正确。
 
-可靠链路测试：
+可靠链路测试必须按控制器建立地址：
 
 ```text
-set column range 0..127
-set page range   0..7
+SSD1306: set column range 0..127 and page range 0..7
+SH1106:  for page B0..B7 set visible column zero to controller column 2
 enter data mode  0x40
 send 128 * 8 = 1024 bytes of 0xFF
 ```
 
 循环计数要注意 8-bit 计数器溢出。项目基线使用低字节 `00H` 配合高计数 `04H` 发送 1024 bytes；审查必须确认 exact count，而不是只看循环名字。
 
-## 11. SSD1306 page 数据格式
+## 11. OLED page 数据格式
 
 128×64 基线：
 
@@ -375,7 +398,7 @@ for page in pages:
 3. 再发送 page1 的第 1 个字 16 列。
 4. 再发送 page1 的第 2 个字 16 列。
 
-禁止先发送第 1 个汉字的两个 page，再发送第 2 个汉字的两个 page；该顺序与 SSD1306 水平寻址窗口的列/page 自动递增不一致，会造成字形错位或重排。
+禁止先发送第 1 个汉字的两个 page，再发送第 2 个汉字的两个 page；该顺序与按 page 组织的显示资产不一致，会造成字形错位或重排。SSD1306 水平寻址由窗口自动推进 page；SH1106 必须由软件在每个 page 开始重新发送页和列地址。
 
 ## 12. 图片/字库转换要求
 
@@ -447,6 +470,8 @@ DB 源码按上述逻辑原始 byte sequence 写入，不得根据 BIN 物理排
 | 周期性乱码 | page window、发送 byte count、表跨页 | 根据 HxD 做补偿 |
 | 字符轮廓对但细节错 | SSD1306 page/bit order、源资产转换 | 改 I2C 地址 |
 | page 0 正常、后续块错 | `TABL/TABH` 同页、simulator page-0 缺陷 | 写一个跨页通用 sender |
+| SH1106 只亮左上角或窄小区域 | 误用 SSD1306 window、漏掉 `+2` 列偏移、`RLC/RLR` 与分支不匹配、发送数量不足 | 同时修改初始化、方向和字模 |
+| SH1106 清屏后正式文字全黑 | 显示是否已 `AFH`、立即数 marker、DB/sender MAP page、运行时表索引 | 直接断言所有 page 1 查表均无效 |
 | 偶发花屏 | NACK 处理、时序、供电、共享 SRAM | 只增加随机 NOP |
 
 ## 15. 交付清单
@@ -465,6 +490,9 @@ DB 源码按上述逻辑原始 byte sequence 写入，不得根据 BIN 物理排
 - [ ] 全屏 1024 字节填充循环已确认低字节 `00H` 配合高计数 `04H` 或等价 1024 次结构。
 - [ ] 全亮路径会真正写入 GDDRAM，而不是只发送 `A5H/AFH`。
 - [ ] 资产为 SSD1306 page format，bit0 top。
+- [ ] controller 已由用户或所选 OLED profile 明确；SH1106 没有复用 SSD1306 `20H/21H/22H` 窗口路径。
+- [ ] 当前 1.3 英寸 SH1106 profile 每页使用 `B0H..B7H` 和 `02H/10H` 起始列，写完 GDDRAM 后发送 `AFH`。
+- [ ] 当前 1.3 英寸 SH1106 profile 的 I2C shift 使用 `RLR`，未替换为 `RLC`。
 - [ ] 5x7 的单 page bit 反转结论没有直接套用到 8x16、16x16 或其他多 page 资产。
 - [ ] 自定义/多 page/混合宽度字模已通过 `ssd1306_page_bitmap.py`；manifest、点阵预览、byte count、源/输出 SHA256 和 ASM 实际发送字节一致。
 - [ ] 正式文字已从固定字体 SHA256 按 Unicode codepoint 逐字节重建；每个 `kind=text` 字块的 glyph SHA256 一致，没有复用只有 label 和自填 SHA256 的旧字模。

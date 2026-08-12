@@ -647,6 +647,26 @@ raise SystemExit(__EXIT_CODE__)
         self.assertNotEqual(0, result.returncode)
         self.assertEqual("INVALID_PROFILE", self.payload(result)["code"])
 
+    def test_profile_accepts_sh1106_orientation_controller(self) -> None:
+        profile = self.profile()
+        profile["orientation_profiles"][OLED_ORIENTATION_PROFILE_ID]["controller"] = "SH1106"
+        profile["orientation_profiles"][OLED_ORIENTATION_PROFILE_ID]["com_scan_direction"] = "C8H"
+        self._write_json(self.profile_path, profile)
+        result = self.run_cli(
+            "doctor", "--profile", str(self.profile_path), "--config", str(self.config_path)
+        )
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+
+    def test_profile_rejects_unknown_orientation_controller(self) -> None:
+        profile = self.profile()
+        profile["orientation_profiles"][OLED_ORIENTATION_PROFILE_ID]["controller"] = "UNKNOWN"
+        self._write_json(self.profile_path, profile)
+        result = self.run_cli(
+            "doctor", "--profile", str(self.profile_path), "--config", str(self.config_path)
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("INVALID_PROFILE", self.payload(result)["code"])
+
     def test_profile_rejects_non_finite_clock_divider(self) -> None:
         profile = self.profile()
         profile["clock_model"] = self.clock_model()

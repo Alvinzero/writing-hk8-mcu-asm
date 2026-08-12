@@ -39,7 +39,7 @@ description: 用于生成、修改、审查或编译公司 HK64S825 8 位 MCU �
 
 在候选源码生成之前，把确认来源写入 `request.input_provenance`：`board`、GPIO 任务的 `pins`、时序任务的 `clock` 只能取 `user_provided` 或 `user_confirmed_profile`。这些值是用户确认记录，智能体不得代替用户填写。缺少 board 来源时列入 `unresolved_inputs` 并以 `BOARD_PROFILE_UNCONFIRMED` 停止；缺少 pins/clock 来源时以 `BOARD_INPUT_UNCONFIRMED` 停止。不得创建候选 ASM、`new-run` 或编译后再补来源。
 
-已注册 board profile 只在用户明确选择对应 ID 后读取。需要向用户推荐已注册 profile 时，必须先以本 `SKILL.md` 所在目录为根，只枚举 `references/boards/` 的一级非隐藏子目录名，按字典序完整列出为当前已有的 `board_profile_id`。枚举目录名只用于展示 ID，不等于读取或采用板级资料；用户选择前不得打开、解析或概述任何 profile 文件，也不得根据目录名猜测适用性、状态或接线。目录中没有 ID 时，明确说明当前没有已注册 profile，不得继续把“选择已注册 profile”标为推荐。用户选择自定义开发板时，只收集当前功能需要的最小板级参数，不要求无关硬件信息。
+已注册 board profile 只在用户明确选择对应 ID 后读取。需要向用户推荐已注册 profile 时，必须先以本 `SKILL.md` 所在目录为根，按当前模块筛选 `references/boards/` 的一级非隐藏子目录：数码管只列出存在 `seven-segment.json` 的目录，OLED 只列出存在 `oled.json` 的目录。筛选时只检查目标文件是否存在，不得在用户选择前打开或解析其内容；结果按字典序完整列出为当前模块已有的 `board_profile_id`。目录名只用于展示 ID，不等于读取或采用板级资料；不得根据目录名猜测适用性、状态或接线。当前模块没有 ID 时，明确说明没有已注册 profile，不得继续把“选择已注册 profile”标为推荐。用户选择自定义开发板时，只收集当前功能需要的最小板级参数，不要求无关硬件信息。
 
 `references/boards/aliases.json` 只保存旧 ID 到 canonical ID 的弃用映射，不是可选板目录，不得列入推荐列表。用户明确说出一个已弃用旧 ID 时才读取该映射，向用户说明替代 ID，并按 canonical profile 继续；request 同时记录用户选择的 ID 和 canonical ID。
 
@@ -64,6 +64,20 @@ D. 不确定 / 我不知道
 
 用户也可以直接回复列表中的完整 `board_profile_id`。只有一个 ID 时，选项 A 必须直接写出该 ID，用户只回复 `A` 即视为明确选择；有多个 ID 时，用户只回复 `A` 仍不构成板级确认，必须原样重列 ID 并只追问具体 ID，不得默认选择第一项，也不得重复询问已经回答的分类问题。
 
+OLED 板级信息未明确且存在已注册 ID 时，使用相同枚举规则，但只列出存在 `oled.json` 的 ID：
+
+```text
+当前已有的 OLED board_profile_id：
+- `<实际 OLED ID>`
+
+A. 选择已注册 OLED board profile（推荐；有多个 ID 时回复 `A <board_profile_id>`）
+B. 我提供本板 OLED 控制器、接线和电气参数
+C. 先做最小总线/全亮/方向探测程序
+D. 不确定 / 我不知道
+```
+
+只有一个 OLED ID 时，选项 A 必须直接写出该 ID；用户只回复 `A` 即视为明确选择。选择后读取该 ID 的 `oled.json`，不得继续询问 profile 已确认的参数。
+
 用户选择提供接线表时，熟悉硬件的用户可在一次回复中按下列格式提供当前任务所需字段，不必先回答分类问卷：
 
 ```text
@@ -77,7 +91,7 @@ D. 不确定 / 我不知道
 
 GPIO 直驱时还必须确认 A-G/DP 逐段引脚、从左到右的逐位 COM 引脚、每位有效电平、外部三极管/MOS 是否反相、OSC/SCK_PS、共享 GPIO 和限流/驱动方式。任一项未知时不得生成正式显示 ASM；用户明确要求硬件探测时，可另建逐段逐位 probe，探测结论经用户确认后再建立 board profile。
 
-OLED/I2C 任务必须在候选生成前读取 `references/workflows/oled.md`，并按其中问卷确认逐引脚 POD、上拉、地址、方向和资产输入。普通 GPIO/数码管任务不得加载该文件。
+OLED/I2C 任务必须在候选生成前读取 `references/workflows/oled.md`。用户明确选择 OLED profile 后读取 `references/boards/<board_profile_id>/oled.json`；profile 已确认的控制器、逐引脚 POD、上拉、地址、方向和列偏移不得重复询问。未选择 profile 时按工作流确认这些输入。普通 GPIO/数码管任务不得加载该文件。
 
 缺口问题必须以 A/B/C/D 选择题呈现；除多个 board profile ID 的选择题外，用户只需要回复选项字母。一次最多提出 3 个选择题；每题 2 到 4 个选项，默认或推荐选项必须标注“推荐”，并且必须包含“不确定/我不知道”选项。不得要求用户自由填写一长串板级参数；若确实需要非选项数据，例如 `board_profile_id`、显示文本、图片字模或真实文件路径，先说明原因，再只收集当前任务必需的最小数据。
 
@@ -91,9 +105,9 @@ OLED/I2C 任务必须在候选生成前读取 `references/workflows/oled.md`，�
 
 - 通用生成任务：读取 `references/spec/AGENTS.md` 和 `09-AI智能体生成与审查协议.md` 的相关段落；从 `asm-rules.json`、`instruction-reference.json`、`register-reference.json`、`register-alias-policy.json` 定向查询实际使用项。命中下述“已确认 E1 profile 的倒计时快速路径”时不重复读取这些文件，由受限生成器和完整 `quick-release` 门禁执行已有规则。
 - LED/GPIO：再读取 `05-GPIO-I2C-OLED驱动规范.md` 中 GPIO/LED 相关段落和必要 checklist。
-- OLED：读取 `references/workflows/oled.md`，再读取 `05-GPIO-I2C-OLED驱动规范.md` 中 I2C/OLED 相关段落。
+- OLED：板级缺口提问前只允许按 `oled.json` 是否存在筛选 `references/boards/` 的一级目录，不读取文件内容。用户明确选择后读取所选 `oled.json`，再读取 `references/workflows/oled.md` 和 `05-GPIO-I2C-OLED驱动规范.md` 中 I2C/OLED 相关段落；不得试读未选择 profile 的内容来替用户选板。
 - OLED 字形出现“窗口尺寸正确但字形不完整、像多个字符拼接”时，再读取 `08-踩坑案例与症状诊断手册.md` 的 OLED 查表索引案例。
-- 数码管：板级缺口提问前只允许枚举 `references/boards/` 的一级目录名并向用户展示全部 ID。用户明确选择后，若存在 `references/boards/<board_profile_id>/seven-segment.json`，优先读取机器 profile；命中倒计时快速路径时不再读取通用规范。其他数码管任务再读取 `06-数码管动态扫描规范.md` 和所选 profile 的 `seven-segment.md`；不得试读未选择 profile 的文件来替用户选板。
+- 数码管：板级缺口提问前只允许按 `seven-segment.json` 是否存在筛选 `references/boards/` 的一级目录并展示全部匹配 ID。用户明确选择后读取机器 profile；命中倒计时快速路径时不再读取通用规范。其他数码管任务再读取 `06-数码管动态扫描规范.md` 和所选 profile 的 `seven-segment.md`；不得试读未选择 profile 的文件来替用户选板。
 - 构建/编译：读取 `07-构建-烧录-验收规范.md` 中编译相关段落、profile/config 和 adapter 配置。
 
 禁止复制 templates、example 或 sample ASM 作为候选源码。示例文件只作反例或格式参考，不进入生成上下文；不得把示例改名、删注释、局部替换后当成新代码。不得搜索与用户显示内容相同的现成答案。必须根据已确认的当前需求、板级契约、芯片规则、寄存器和时序重新撰写候选 ASM。
@@ -137,7 +151,7 @@ WDT 未明确关闭时，任何可见延时、长忙等或周期循环必须插�
 
 ## OLED 专项路由
 
-OLED/SSD1306/I2C 显示任务必须读取并执行 `references/workflows/oled.md`；主 Skill 不再重复载入其资产、方向和字体细则。
+OLED/SSD1306/SH1106/I2C 显示任务必须读取并执行 `references/workflows/oled.md`；主 Skill 不再重复载入其资产、方向和字体细则。
 
 ## 快速路径
 

@@ -93,6 +93,8 @@ def validate(root: Path) -> list[str]:
         "references/modules/i2c/defaults.json",
         "references/modules/seven-segment/defaults.json",
         "references/modules/oled/defaults.json",
+        "references/boards/HK64S825-SH1106-1P3-I2C-PB6-PB7-E1/oled.json",
+        "references/boards/HK64S825-SH1106-1P3-I2C-PB6-PB7-E1/oled.md",
         "references/spec",
     ):
         if not (root / relative).exists():
@@ -102,6 +104,43 @@ def validate(root: Path) -> list[str]:
         for relative in REQUIRED_SPEC_FILES:
             if not (spec_root / relative).is_file():
                 findings.append(f"Spec resource missing: references/spec/{relative}")
+    board_path = (
+        root
+        / "references"
+        / "boards"
+        / "HK64S825-SH1106-1P3-I2C-PB6-PB7-E1"
+        / "oled.json"
+    )
+    profile_path = root / "references" / "profiles" / "HK64S825.profile.json"
+    defaults_path = root / "references" / "modules" / "oled" / "defaults.json"
+    if board_path.is_file() and profile_path.is_file() and defaults_path.is_file():
+        try:
+            board = json.loads(board_path.read_text(encoding="utf-8"))
+            profile = json.loads(profile_path.read_text(encoding="utf-8"))
+            defaults = json.loads(defaults_path.read_text(encoding="utf-8"))
+            oled = board["oled"]
+            orientation_id = oled["orientation_profile"]
+            orientation = profile["orientation_profiles"][orientation_id]
+            if board["board_profile_id"] != orientation["board_id"]:
+                findings.append("SH1106 board/orientation profile IDs do not match")
+            if oled["controller"] != "SH1106" or orientation["controller"] != "SH1106":
+                findings.append("SH1106 board/orientation controller is inconsistent")
+            if (oled["visible_width"], oled["visible_height"], oled["column_offset"]) != (
+                128,
+                64,
+                2,
+            ):
+                findings.append("SH1106 visible geometry or column offset changed")
+            if board["i2c"]["shift_instruction"] != "RLR":
+                findings.append("SH1106 I2C shift instruction must remain RLR")
+            if board["i2c"]["ack"]["sample_register"] != "PB_INS":
+                findings.append("SH1106 ACK sampling must remain PB_INS")
+            if "controller" in defaults["request_defaults"]:
+                findings.append("OLED module defaults must not select a controller")
+            if set(defaults["supported_controllers"]) != {"SSD1306", "SH1106"}:
+                findings.append("OLED supported controller list is inconsistent")
+        except (KeyError, OSError, UnicodeError, json.JSONDecodeError, TypeError) as exc:
+            findings.append(f"SH1106 profile contract is invalid: {exc}")
     return findings
 
 

@@ -66,6 +66,28 @@
         "asm_sha256": "6856a0860da8c92e317f3d376e04f985c8b5166e65cdc5e016e61b71ef2b6213",
         "hex_sha256": "72a91967fa990669ea47fcd5af641c5d31b860c9d719ea766d3e3a964ef8b8b8"
       }
+    },
+    "hk64s825-sh1106-1p3-pb6-pb7-a1-c8-page-lsb-top-v1": {
+      "board_id": "HK64S825-SH1106-1P3-I2C-PB6-PB7-E1",
+      "controller": "SH1106",
+      "segment_remap": "A1H",
+      "com_scan_direction": "C8H",
+      "source_format": "ssd1306-page-lsb-top",
+      "transform": {
+        "mirror_x_within_glyphs": false,
+        "mirror_y": false
+      },
+      "evidence": {
+        "level": "E1",
+        "status": "hardware_verified",
+        "verified_on": "2026-08-12",
+        "run_id": "219c88d9b70147108949d059648a78a4",
+        "asset_source_sha256": "d50e744865a9afea36890cd7cff9ae844671553b621de43034cb5776ceb57a58",
+        "asset_output_sha256": "d50e744865a9afea36890cd7cff9ae844671553b621de43034cb5776ceb57a58",
+        "asm_sha256": "a6d6db730cc8a7685700840c04ff74d5dd5440cb399c135be5f9b794802c369f",
+        "hex_sha256": "d0e4d0bdad54143a2be408314d2dfb75f688d014c8281aa1914a13165075b47f",
+        "photo_sha256": "21cfaab22e2d8e1de75453197374de1bbdb709ebdb6918fcdb6177eecf6415c5"
+      }
     }
   },
   "approved_tool_versions": {
